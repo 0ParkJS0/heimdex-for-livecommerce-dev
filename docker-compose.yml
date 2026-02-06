@@ -1,0 +1,121 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: heimdex-postgres
+    environment:
+      POSTGRES_USER: heimdex
+      POSTGRES_PASSWORD: heimdex_dev_password
+      POSTGRES_DB: heimdex
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U heimdex"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  opensearch:
+    build:
+      context: ./infra/opensearch
+      dockerfile: Dockerfile
+    image: heimdex-opensearch:2.11.1-nori
+    container_name: heimdex-opensearch
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: heimdex-minio
+    environment:
+      MINIO_ROOT_USER: heimdex
+      MINIO_ROOT_PASSWORD: heimdex_dev_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: heimdex-api
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://heimdex:heimdex_dev_password@postgres:5432/heimdex
+      - DATABASE_URL_SYNC=postgresql://heimdex:heimdex_dev_password@postgres:5432/heimdex
+      - OPENSEARCH_URL=http://opensearch:9200
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=heimdex
+      - MINIO_SECRET_KEY=heimdex_dev_password
+      - JWT_SECRET_KEY=dev-secret-key-change-in-production
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - ALLOWED_HOSTS=*.app.heimdex.local,localhost
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/api:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ./services/web
+      dockerfile: Dockerfile
+    container_name: heimdex-web
+    environment:
+      - NEXT_PUBLIC_API_URL=http://devorg.app.heimdex.local:8000
+      - NODE_ENV=development
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./services/web:/app
+      - /app/node_modules
+      - /app/.next
+    extra_hosts:
+      - "devorg.app.heimdex.local:host-gateway"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  opensearch_data:
+  minio_data:

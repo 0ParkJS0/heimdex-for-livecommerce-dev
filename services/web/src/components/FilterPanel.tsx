@@ -1,0 +1,149 @@
+"use client";
+
+import { Facets, SearchFilters } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+interface FilterPanelProps {
+  facets: Facets | null;
+  filters: SearchFilters;
+  onFiltersChange: (filters: SearchFilters) => void;
+}
+
+export function FilterPanel({
+  facets,
+  filters,
+  onFiltersChange,
+}: FilterPanelProps) {
+  const toggleSourceType = (type: "gdrive" | "removable_disk") => {
+    const current = filters.source_types || [];
+    const updated = current.includes(type)
+      ? current.filter((t) => t !== type)
+      : [...current, type];
+    onFiltersChange({
+      ...filters,
+      source_types: updated.length > 0 ? updated : undefined,
+    });
+  };
+
+  const toggleLibrary = (id: string) => {
+    const current = filters.library_ids || [];
+    const updated = current.includes(id)
+      ? current.filter((l) => l !== id)
+      : [...current, id];
+    onFiltersChange({
+      ...filters,
+      library_ids: updated.length > 0 ? updated : undefined,
+    });
+  };
+
+  const togglePerson = (id: string) => {
+    const current = filters.person_cluster_ids || [];
+    const updated = current.includes(id)
+      ? current.filter((p) => p !== id)
+      : [...current, id];
+    onFiltersChange({
+      ...filters,
+      person_cluster_ids: updated.length > 0 ? updated : undefined,
+    });
+  };
+
+  const clearFilters = () => {
+    onFiltersChange({});
+  };
+
+  const hasFilters =
+    (filters.source_types?.length ?? 0) > 0 ||
+    (filters.library_ids?.length ?? 0) > 0 ||
+    (filters.person_cluster_ids?.length ?? 0) > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-gray-900">Filters</h3>
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            className="text-xs text-primary-600 hover:text-primary-700"
+          >
+            Clear all
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <h4 className="text-sm font-medium text-gray-700 mb-2">Source Type</h4>
+          <div className="space-y-1">
+            {(facets?.source_types || []).map((item) => (
+              <label
+                key={item.value}
+                className="flex items-center gap-2 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.source_types?.includes(
+                    item.value as "gdrive" | "removable_disk"
+                  )}
+                  onChange={() =>
+                    toggleSourceType(item.value as "gdrive" | "removable_disk")
+                  }
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-600">
+                  {item.value === "gdrive" ? "Google Drive" : "Removable Disk"}
+                </span>
+                <span className="text-xs text-gray-400">({item.count})</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-sm font-medium text-gray-700 mb-2">Libraries</h4>
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {(facets?.libraries || []).map((item) => (
+              <label
+                key={item.value}
+                className="flex items-center gap-2 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.library_ids?.includes(item.value)}
+                  onChange={() => toggleLibrary(item.value)}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-600 truncate">
+                  {item.label || item.value.slice(0, 8)}
+                </span>
+                <span className="text-xs text-gray-400">({item.count})</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-sm font-medium text-gray-700 mb-2">People</h4>
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            {(facets?.people_cluster_ids || []).map((item) => (
+              <label
+                key={item.value}
+                className="flex items-center gap-2 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.person_cluster_ids?.includes(item.value)}
+                  onChange={() => togglePerson(item.value)}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-600 truncate">
+                  {item.label || `Person ${item.value.slice(-4)}`}
+                </span>
+                <span className="text-xs text-gray-400">({item.count})</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
