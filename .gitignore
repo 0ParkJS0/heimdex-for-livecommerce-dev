@@ -1,0 +1,125 @@
+# =============================================================================
+# OS & Editor
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Testing
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.hypothesis/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+pyrightconfig.json
+
+# =============================================================================
+# Node.js / Next.js
+# =============================================================================
+node_modules/
+.next/
+out/
+.nuxt/
+.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+
+# =============================================================================
+# Docker
+# =============================================================================
+# Ignore data volumes (if mounted locally)
+.docker-data/
+
+# =============================================================================
+# Environment & Secrets
+# =============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials.json
+
+# =============================================================================
+# Logs & Temporary Files
+# =============================================================================
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+*.bak
+
+# =============================================================================
+# Database
+# =============================================================================
+*.sqlite3
+*.db
+
+# =============================================================================
+# Project Specific
+# =============================================================================
+# Local data directories
+.data/
+
+# Reports (generated, not source)
+# Uncomment if you don't want to track reports:
+# _reports/
