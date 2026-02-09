@@ -1,23 +1,19 @@
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
+"""Face presence schemas — re-exported from heimdex-media-contracts.
 
-class Interval(BaseModel):
-    start_s: float
-    end_s: float
-    confidence: float
+All types are defined in ``heimdex_media_contracts.faces.schemas``.
+This module exists solely for backward compatibility with existing imports.
+"""
 
-class SceneSummary(BaseModel):
-    scene_id: str
-    present: Optional[bool]  # true / false / unknown
-    confidence: float
+from heimdex_media_contracts.faces.schemas import (  # noqa: F401
+    FacePresenceResponse,
+    IdentityPresence,
+    Interval,
+    SceneSummary,
+)
 
-class IdentityPresence(BaseModel):
-    identity_id: str
-    intervals: List[Interval]
-    scene_summary: List[SceneSummary]
-
-class FacePresenceResponse(BaseModel):
-    video_id: str
-    identities: List[IdentityPresence]
-    meta: dict
+__all__ = [
+    "Interval",
+    "SceneSummary",
+    "IdentityPresence",
+    "FacePresenceResponse",
+]

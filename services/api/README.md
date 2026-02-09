@@ -26,6 +26,17 @@ ruff check app/
 - `users` - User management
 - `libraries` - Video library management
 - `profiles` - Library versioning
-- `search` - Hybrid search (BM25 + kNN)
+- `search` - Hybrid search (BM25 + kNN) with dual-index support (segments + scenes)
 - `people` - Face clusters, drive nicknames
 - `artifacts` - Asset storage (stub)
+
+## Search Modes
+
+The API supports two search modes controlled by `SEARCH_DEFAULT_MODE`:
+
+| Mode | Value | `POST /api/search` | `POST /api/search/scenes` |
+|------|-------|---------------------|---------------------------|
+| Segments | `segments` (default) | Segment results | Scene results |
+| Scenes | `scenes` | Scene results | Scene results |
+
+Rollback: set `SEARCH_DEFAULT_MODE=segments` and restart.

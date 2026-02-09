@@ -24,3 +24,14 @@ def mock_opensearch_client():
     client.get_facets = AsyncMock(return_value={"libraries": [], "source_types": [], "people": []})
     client.close = AsyncMock()
     return client
+
+
+@pytest.fixture
+def mock_scene_opensearch_client():
+    """Mock SceneSearchClient for unit tests."""
+    client = MagicMock()
+    client.search_lexical = AsyncMock(return_value=[])
+    client.search_vector = AsyncMock(return_value=[])
+    client.get_facets = AsyncMock(return_value={"libraries": [], "source_types": [], "people": []})
+    client.close = AsyncMock()
+    return client

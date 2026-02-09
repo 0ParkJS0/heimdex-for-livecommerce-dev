@@ -42,6 +42,22 @@ class Settings(BaseSettings):
     search_rrf_k: int = 60
     search_max_scenes_per_video: int = 4
     search_page_size: int = 20
+    
+    # Search mode: "segments" (default, backward-compatible) or "scenes"
+    # Controls which index POST /api/search queries.
+    # Rollback: flip back to "segments" — no code revert needed.
+    search_default_mode: Literal["segments", "scenes"] = "segments"
+    
+    # Agent ingestion settings
+    # Controls whether the agent scene ingest endpoint is active.
+    agent_ingest_enabled: bool = True
+    # Pre-shared API key for agent → SaaS authentication.
+    # Must match the HEIMDEX_CLOUD_TOKEN configured on the agent.
+    agent_api_key: str = "dev-agent-key-change-in-production"
+    # Maximum number of scenes per ingest request (DoS protection).
+    agent_ingest_max_scenes: int = 500
+    # Maximum characters allowed in transcript_raw per scene (OOM protection).
+    agent_ingest_max_transcript_chars: int = 50_000
 
     class Config:
         env_file = ".env"

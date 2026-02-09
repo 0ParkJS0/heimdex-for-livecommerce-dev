@@ -14,6 +14,7 @@ from app.modules.libraries.models import Library
 from app.modules.profiles.models import LibraryProfile, ProfileStatus
 from app.modules.people.models import DriveNicknameRegistry, PeopleClusterLabel
 from app.modules.search.client import OpenSearchClient
+from app.modules.search.scene_client import SceneSearchClient
 from app.modules.search.embedding import generate_mock_embedding
 
 setup_logging()
@@ -137,6 +138,7 @@ async def seed_database():
         await session.commit()
         
         await seed_opensearch(org, libraries, profiles, people_clusters, drive_entries)
+        await seed_scenes(org, libraries, profiles, people_clusters, drive_entries)
 
 
 async def seed_opensearch(org, libraries, profiles, people_clusters, drive_entries):
@@ -221,6 +223,103 @@ async def seed_opensearch(org, libraries, profiles, people_clusters, drive_entri
         
         logger.info("opensearch_seeding_complete", total_documents=len(documents))
         
+    finally:
+        await client.close()
+
+
+async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
+    """Seed the scenes index with fabricated scene documents.
+
+    Each video gets 3-5 scenes (coarser than the 5-15 segments per video).
+    Scene transcripts are aggregated from random transcript samples,
+    simulating the real pipeline output.
+    """
+    logger.info("seeding_scenes")
+
+    client = SceneSearchClient()
+
+    try:
+        await client.ensure_index_exists()
+
+        documents: list[tuple[str, dict]] = []
+        cluster_ids = [p.person_cluster_id for p in people_clusters]
+        drive_nicknames = {d.source_fingerprint_hash: d.nickname for d in drive_entries}
+
+        for lib_idx, (library, profile) in enumerate(zip(libraries, profiles)):
+            num_videos = random.randint(5, 10)
+            is_korean_lib = lib_idx == 0
+
+            for video_idx in range(num_videos):
+                video_id = str(uuid4())
+
+                source_type = random.choice(["gdrive", "removable_disk"])
+                required_drive = None
+                if source_type == "removable_disk":
+                    fingerprint = random.choice(list(drive_nicknames.keys()))
+                    required_drive = drive_nicknames[fingerprint]
+
+                capture_time = datetime.now(timezone.utc) - timedelta(
+                    days=random.randint(1, 365),
+                    hours=random.randint(0, 23),
+                )
+
+                num_scenes = random.randint(3, 5)
+                current_ms = 0
+
+                for scene_idx in range(num_scenes):
+                    scene_id = f"{video_id}_scene_{scene_idx:03d}"
+
+                    # Scenes are longer than segments (10-90s each)
+                    duration_ms = random.randint(10000, 90000)
+                    start_ms = current_ms
+                    end_ms = current_ms + duration_ms
+                    current_ms = end_ms
+
+                    # Aggregate 2-4 transcript pieces to simulate
+                    # multiple speech segments per scene
+                    num_speech_segments = random.randint(2, 4)
+                    transcript_pool = KOREAN_TRANSCRIPTS if (is_korean_lib or random.random() < 0.3) else ENGLISH_TRANSCRIPTS
+                    transcript_parts = [
+                        random.choice(transcript_pool)
+                        for _ in range(num_speech_segments)
+                    ]
+                    transcript_raw = " ".join(transcript_parts)
+
+                    scene_people = random.sample(
+                        cluster_ids, k=random.randint(0, min(3, len(cluster_ids)))
+                    )
+
+                    embedding = generate_mock_embedding(transcript_raw)
+
+                    doc = {
+                        "org_id": str(org.id),
+                        "library_id": str(library.id),
+                        "video_id": video_id,
+                        "scene_id": scene_id,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "transcript_raw": transcript_raw,
+                        "transcript_norm": transcript_raw.lower(),
+                        "transcript_char_count": len(transcript_raw),
+                        "speech_segment_count": num_speech_segments,
+                        "source_type": source_type,
+                        "required_drive_nickname": required_drive,
+                        "people_cluster_ids": scene_people,
+                        "capture_time": capture_time.isoformat(),
+                        "ingest_time": datetime.now(timezone.utc).isoformat(),
+                        "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
+                        "embedding_vector": embedding,
+                    }
+
+                    documents.append((scene_id, doc))
+
+        batch_size = 100
+        for i in range(0, len(documents), batch_size):
+            batch = documents[i : i + batch_size]
+            await client.bulk_index_scenes(batch)
+
+        logger.info("scene_seeding_complete", total_documents=len(documents))
+
     finally:
         await client.close()
 

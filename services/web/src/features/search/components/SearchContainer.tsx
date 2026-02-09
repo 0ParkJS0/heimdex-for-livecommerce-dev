@@ -1,10 +1,12 @@
 "use client";
 
 import { useSearch } from "../hooks/useSearch";
+import { useAgent } from "../hooks/useAgent";
 import { SearchBar } from "./SearchBar";
 import { AlphaSlider } from "./AlphaSlider";
 import { FilterPanel } from "./FilterPanel";
 import { SearchResults } from "./SearchResults";
+import { cn } from "@/lib/utils";
 
 export function SearchContainer() {
   const {
@@ -26,6 +28,7 @@ export function SearchContainer() {
     login,
     logout,
   } = useSearch();
+  const { isAvailable: agentAvailable } = useAgent();
 
   const renderError = () => {
     if (!error) return null;
@@ -114,6 +117,16 @@ export function SearchContainer() {
                 Org: <span className="font-medium text-gray-700">{orgSlug || "..."}</span>
               </span>
               
+              <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                <span
+                  className={cn(
+                    "w-2 h-2 rounded-full",
+                    agentAvailable ? "bg-green-500" : "bg-gray-300"
+                  )}
+                />
+                {agentAvailable ? "Agent connected" : "Agent offline"}
+              </span>
+
               <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -176,9 +189,9 @@ export function SearchContainer() {
           <div className="flex-1 min-w-0">
             {response ? (
               <SearchResults
-                results={response.results}
-                totalCandidates={response.total_candidates}
+                response={response}
                 showDebug={showDebug}
+                agentAvailable={agentAvailable}
               />
             ) : (
               <div className="text-center py-16 text-gray-500">

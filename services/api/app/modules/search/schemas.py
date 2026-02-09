@@ -66,3 +66,40 @@ class SearchResponse(BaseModel):
     facets: Facets
     query: str
     alpha: float
+    result_type: Literal["segment"] = "segment"
+
+
+# ---------------------------------------------------------------------------
+# Scene search models
+# ---------------------------------------------------------------------------
+
+
+class SceneResult(BaseModel):
+    """A single scene search result.
+
+    Structurally parallel to SegmentResult but uses scene_id instead of
+    segment_id and carries scene-specific metadata (speech_segment_count).
+    """
+    scene_id: str
+    video_id: str
+    library_id: UUID
+    library_name: str
+    start_ms: int
+    end_ms: int
+    snippet: str
+    thumbnail_url: str | None
+    source_type: Literal["gdrive", "removable_disk"]
+    required_drive_nickname: str | None = None
+    capture_time: datetime | None = None
+    people_cluster_ids: list[str] = Field(default_factory=list)
+    speech_segment_count: int = 0
+    debug: DebugInfo
+
+
+class SceneSearchResponse(BaseModel):
+    results: list[SceneResult]
+    total_candidates: int
+    facets: Facets
+    query: str
+    alpha: float
+    result_type: Literal["scene"] = "scene"
