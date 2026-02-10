@@ -76,4 +76,28 @@ describe("agent utilities", () => {
       "http://127.0.0.1:8787/playback/file?file_id=video%20id%2F1%3Fx%3Dy%26z"
     );
   });
+
+  it("getAgentPlaybackUrl appends media fragment for startMs", () => {
+    expect(getAgentPlaybackUrl("video-1", 5000)).toBe(
+      "http://127.0.0.1:8787/playback/file?file_id=video-1#t=5.0"
+    );
+  });
+
+  it("getAgentPlaybackUrl omits fragment for startMs=0", () => {
+    expect(getAgentPlaybackUrl("video-1", 0)).toBe(
+      "http://127.0.0.1:8787/playback/file?file_id=video-1"
+    );
+  });
+
+  it("getAgentPlaybackUrl omits fragment when startMs undefined", () => {
+    expect(getAgentPlaybackUrl("video-1")).toBe(
+      "http://127.0.0.1:8787/playback/file?file_id=video-1"
+    );
+  });
+
+  it("getAgentPlaybackUrl formats fractional seconds correctly", () => {
+    expect(getAgentPlaybackUrl("video-1", 1500)).toBe(
+      "http://127.0.0.1:8787/playback/file?file_id=video-1#t=1.5"
+    );
+  });
 });

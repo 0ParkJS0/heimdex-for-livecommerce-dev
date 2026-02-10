@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { SearchResults } from "@/features/search/components/SearchResults";
 import type {
@@ -118,7 +119,8 @@ describe("SearchResults with scene response", () => {
     );
 
     expect(screen.getByText("Scene transcript text")).toBeInTheDocument();
-    expect(screen.getByText("Scene Library")).toBeInTheDocument();
+    const libraryNames = screen.getAllByText("Scene Library");
+    expect(libraryNames.length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders speech segment count badge", () => {
@@ -142,7 +144,7 @@ describe("SearchResults with scene response", () => {
       <SearchResults response={sceneResponse} showDebug={false} agentAvailable={true} />
     );
 
-    const playButton = screen.getByRole("button", { name: /play/i });
+    const playButton = screen.getByRole("button", { name: /^play$/i });
     expect(playButton).not.toBeDisabled();
   });
 
@@ -151,7 +153,127 @@ describe("SearchResults with scene response", () => {
       <SearchResults response={sceneResponse} showDebug={false} agentAvailable={false} />
     );
 
-    const playButton = screen.getByRole("button", { name: /play \(agent offline\)/i });
-    expect(playButton).toBeDisabled();
+    const playButtons = screen.getAllByRole("button", { name: /play/i });
+    const mainPlayButton = playButtons.find((btn) => btn.textContent?.trim() === "Play");
+    expect(mainPlayButton).toBeDisabled();
+  });
+});
+
+describe("SceneCard match signal indicator", () => {
+  it("renders 'Hybrid match' for equal lexical/vector contributions", () => {
+    render(
+      <SearchResults response={sceneResponse} showDebug={false} agentAvailable={false} />
+    );
+    expect(screen.getByText("Hybrid match")).toBeInTheDocument();
+  });
+
+  it("renders 'Keyword match' when lexical contribution dominates", () => {
+    const keywordScene: SceneResult = {
+      ...sceneResult,
+      debug: { ...baseDebug, lexical_contribution: 0.9, vector_contribution: 0.1 },
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [keywordScene],
+    };
+    render(<SearchResults response={resp} showDebug={false} agentAvailable={false} />);
+    expect(screen.getByText("Keyword match")).toBeInTheDocument();
+  });
+
+  it("renders 'Semantic match' when vector contribution dominates", () => {
+    const vectorScene: SceneResult = {
+      ...sceneResult,
+      debug: { ...baseDebug, lexical_contribution: 0.1, vector_contribution: 0.9 },
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [vectorScene],
+    };
+    render(<SearchResults response={resp} showDebug={false} agentAvailable={false} />);
+    expect(screen.getByText("Semantic match")).toBeInTheDocument();
+  });
+});
+
+describe("SceneCard quality indicator", () => {
+  it("renders quality factor value", () => {
+    render(
+      <SearchResults response={sceneResponse} showDebug={false} agentAvailable={false} />
+    );
+    expect(screen.getByText("1.00")).toBeInTheDocument();
+    expect(screen.getByText("Quality:")).toBeInTheDocument();
+  });
+
+  it("renders quality bar with tooltip containing speech segment count", () => {
+    render(
+      <SearchResults response={sceneResponse} showDebug={false} agentAvailable={false} />
+    );
+    const qualityValue = screen.getByTitle(/Quality factor: 1\.00, 3 speech segments/);
+    expect(qualityValue).toBeInTheDocument();
+  });
+});
+
+describe("SceneCard context play buttons", () => {
+  it("renders -5s context button", () => {
+    render(
+      <SearchResults response={sceneResponse} showDebug={false} agentAvailable={true} />
+    );
+    const contextBtn = screen.getByRole("button", { name: "-5s" });
+    expect(contextBtn).not.toBeDisabled();
+  });
+
+  it("disables context buttons when agent offline", () => {
+    render(
+      <SearchResults response={sceneResponse} showDebug={false} agentAvailable={false} />
+    );
+    const contextBtn = screen.getByRole("button", { name: "-5s" });
+    expect(contextBtn).toBeDisabled();
+  });
+});
+
+describe("Video grouping", () => {
+  const multiVideoResponse: SceneSearchResponse = {
+    results: [
+      { ...sceneResult, scene_id: "s1", video_id: "v1", library_name: "Library A", start_ms: 1000 },
+      { ...sceneResult, scene_id: "s2", video_id: "v1", library_name: "Library A", start_ms: 5000 },
+      { ...sceneResult, scene_id: "s3", video_id: "v2", library_name: "Library B", start_ms: 0 },
+    ],
+    total_candidates: 3,
+    facets: { libraries: [], source_types: [], people_cluster_ids: [] },
+    query: "test",
+    alpha: 0.5,
+    result_type: "scene",
+  };
+
+  it("groups scenes by video and shows group headers", () => {
+    render(
+      <SearchResults response={multiVideoResponse} showDebug={false} agentAvailable={false} />
+    );
+    const libraryAs = screen.getAllByText("Library A");
+    expect(libraryAs.length).toBeGreaterThanOrEqual(1);
+    const libraryBs = screen.getAllByText("Library B");
+    expect(libraryBs.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("2 scenes")).toBeInTheDocument();
+    expect(screen.getByText("1 scene")).toBeInTheDocument();
+  });
+
+  it("expands first group by default and collapses others", () => {
+    render(
+      <SearchResults response={multiVideoResponse} showDebug={false} agentAvailable={false} />
+    );
+    const snippets = screen.getAllByText("Scene transcript text");
+    expect(snippets).toHaveLength(2);
+  });
+
+  it("toggles group expansion on header click", async () => {
+    const user = userEvent.setup();
+    render(
+      <SearchResults response={multiVideoResponse} showDebug={false} agentAvailable={false} />
+    );
+
+    const libraryBHeader = screen.getByText("Library B").closest("button")!;
+    await user.click(libraryBHeader);
+
+    const snippets = screen.getAllByText("Scene transcript text");
+    expect(snippets).toHaveLength(3);
   });
 });

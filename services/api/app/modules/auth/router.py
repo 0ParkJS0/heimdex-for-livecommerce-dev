@@ -37,7 +37,7 @@ async def dev_login(
         user_id=user.id,
         org_id=org_ctx.org_id,
         email=user.email,
-        role=user.role.value,
+        role=str(user.role),
     )
     
     logger.info("dev_login_success", user_id=str(user.id), org_id=str(org_ctx.org_id))

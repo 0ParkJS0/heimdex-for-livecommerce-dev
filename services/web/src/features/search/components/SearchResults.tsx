@@ -11,6 +11,58 @@ import { getAgentPlaybackUrl } from "@/lib/agent";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function getMatchSignal(debug: DebugInfo): { label: string; color: string } {
+  const total = debug.lexical_contribution + debug.vector_contribution;
+  if (total === 0) return { label: "No signal", color: "bg-gray-100 text-gray-600" };
+  const lexicalPct = debug.lexical_contribution / total;
+  if (lexicalPct > 0.7) return { label: "Keyword match", color: "bg-green-100 text-green-700" };
+  if (lexicalPct < 0.3) return { label: "Semantic match", color: "bg-purple-100 text-purple-700" };
+  return { label: "Hybrid match", color: "bg-blue-100 text-blue-700" };
+}
+
+function getQualityColor(qf: number): string {
+  if (qf < 0.8) return "bg-red-400";
+  if (qf < 0.95) return "bg-yellow-400";
+  return "bg-green-400";
+}
+
+interface VideoGroup {
+  videoId: string;
+  libraryName: string;
+  sourceType: "gdrive" | "removable_disk";
+  scenes: SceneResult[];
+}
+
+function groupScenesByVideo(scenes: SceneResult[]): VideoGroup[] {
+  const map = new Map<string, VideoGroup>();
+  for (const scene of scenes) {
+    let group = map.get(scene.video_id);
+    if (!group) {
+      group = {
+        videoId: scene.video_id,
+        libraryName: scene.library_name,
+        sourceType: scene.source_type,
+        scenes: [],
+      };
+      map.set(scene.video_id, group);
+    }
+    group.scenes.push(scene);
+  }
+  const groups = Array.from(map.values());
+  for (const group of groups) {
+    group.scenes.sort((a: SceneResult, b: SceneResult) => a.start_ms - b.start_ms);
+  }
+  return groups;
+}
+
+// ============================================================================
+// SearchResults — main export
+// ============================================================================
+
 interface SearchResultsProps {
   response: AnySearchResponse;
   showDebug: boolean;
@@ -46,31 +98,121 @@ export function SearchResults({
       </div>
 
       <div className="space-y-3">
-        {isScene
-          ? (response.results as SceneResult[]).map((result, index) => (
-              <SceneCard
-                key={result.scene_id}
-                result={result}
-                rank={index + 1}
-                showDebug={showDebug}
-                agentAvailable={agentAvailable}
-              />
-            ))
-          : (response.results as SegmentResult[]).map((result, index) => (
-              <ResultCard
-                key={result.segment_id}
-                result={result}
-                rank={index + 1}
-                showDebug={showDebug}
-              />
-            ))}
+        {isScene ? (
+          <VideoGroupList
+            groups={groupScenesByVideo(response.results as SceneResult[])}
+            showDebug={showDebug}
+            agentAvailable={agentAvailable}
+          />
+        ) : (
+          (response.results as SegmentResult[]).map((result, index) => (
+            <ResultCard
+              key={result.segment_id}
+              result={result}
+              rank={index + 1}
+              showDebug={showDebug}
+            />
+          ))
+        )}
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// SceneCard — scene-first result card
+// VideoGroupList — groups scenes by video with collapse/expand
+// ============================================================================
+
+function VideoGroupList({
+  groups,
+  showDebug,
+  agentAvailable,
+}: {
+  groups: VideoGroup[];
+  showDebug: boolean;
+  agentAvailable: boolean;
+}) {
+  const [expandedVideos, setExpandedVideos] = useState<Set<string>>(
+    () => new Set(groups.length > 0 ? [groups[0].videoId] : [])
+  );
+
+  const toggleVideo = (videoId: string) => {
+    setExpandedVideos((prev) => {
+      const next = new Set(prev);
+      if (next.has(videoId)) {
+        next.delete(videoId);
+      } else {
+        next.add(videoId);
+      }
+      return next;
+    });
+  };
+
+  let globalRank = 0;
+
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => {
+        const isExpanded = expandedVideos.has(group.videoId);
+        return (
+          <div key={group.videoId} className="border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              onClick={() => toggleVideo(group.videoId)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2">
+                <svg
+                  className={cn("w-4 h-4 text-gray-500 transition-transform", isExpanded && "rotate-90")}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <span className="text-sm font-medium text-gray-900">
+                  {group.libraryName}
+                </span>
+                <span
+                  className={cn(
+                    "px-2 py-0.5 rounded-full text-xs font-medium",
+                    group.sourceType === "gdrive"
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-orange-100 text-orange-700"
+                  )}
+                >
+                  {group.sourceType === "gdrive" ? "Drive" : "Local"}
+                </span>
+              </div>
+              <span className="text-xs text-gray-500">
+                {group.scenes.length} scene{group.scenes.length !== 1 ? "s" : ""}
+              </span>
+            </button>
+
+            {isExpanded && (
+              <div className="divide-y divide-gray-100">
+                {group.scenes.map((scene) => {
+                  globalRank++;
+                  return (
+                    <SceneCard
+                      key={scene.scene_id}
+                      result={scene}
+                      rank={globalRank}
+                      showDebug={showDebug}
+                      agentAvailable={agentAvailable}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================================
+// SceneCard — match signal, quality indicator, context play
 // ============================================================================
 
 interface SceneCardProps {
@@ -83,15 +225,10 @@ interface SceneCardProps {
 function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) {
   const [expanded, setExpanded] = useState(false);
   const isRemovable = result.source_type === "removable_disk";
-
-  const handlePlay = () => {
-    if (agentAvailable) {
-      window.open(getAgentPlaybackUrl(result.video_id), "_blank");
-    }
-  };
+  const matchSignal = getMatchSignal(result.debug);
 
   return (
-    <div className="card p-4 hover:shadow-md transition-shadow">
+    <div className="p-4 hover:bg-gray-50 transition-colors">
       <div className="flex gap-4">
         <div className="flex-shrink-0 relative">
           <div className="w-32 h-20 bg-gray-200 rounded-lg overflow-hidden">
@@ -129,7 +266,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
 
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2 mb-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-medium text-gray-900 truncate">
                 {result.library_name}
               </span>
@@ -146,6 +283,9 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
               <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                 {result.speech_segment_count} segment{result.speech_segment_count !== 1 ? "s" : ""}
               </span>
+              <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", matchSignal.color)}>
+                {matchSignal.label}
+              </span>
             </div>
             <span className="text-xs text-gray-500 whitespace-nowrap">
               {formatDuration(result.start_ms, result.end_ms)}
@@ -156,43 +296,76 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
             {result.snippet}
           </p>
 
-          <div className="flex items-center gap-3">
-            <button
-              className={cn(
-                "text-sm flex items-center gap-1",
-                agentAvailable
-                  ? "text-primary-600 hover:text-primary-700 cursor-pointer"
-                  : "text-gray-400 cursor-not-allowed"
-              )}
-              disabled={!agentAvailable}
-              onClick={handlePlay}
-              title={
-                agentAvailable
-                  ? "Play this scene"
-                  : "Playback requires the Heimdex agent running on this machine"
-              }
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs text-gray-500">Quality:</span>
+            <div className="flex-1 max-w-[120px] h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className={cn("h-full rounded-full", getQualityColor(result.debug.quality_factor))}
+                style={{ width: `${Math.round(result.debug.quality_factor * 100)}%` }}
+              />
+            </div>
+            <span
+              className="text-xs text-gray-400"
+              title={`Quality factor: ${result.debug.quality_factor.toFixed(2)}, ${result.speech_segment_count} speech segments`}
             >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
+              {result.debug.quality_factor.toFixed(2)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center">
+              <button
+                className={cn(
+                  "text-sm flex items-center gap-1 px-2 py-1 rounded-l-md border",
+                  agentAvailable
+                    ? "text-primary-600 hover:bg-primary-50 border-primary-200 cursor-pointer"
+                    : "text-gray-400 border-gray-200 cursor-not-allowed"
+                )}
+                disabled={!agentAvailable}
+                onClick={() => {
+                  if (agentAvailable) {
+                    window.open(getAgentPlaybackUrl(result.video_id, result.start_ms), "_blank");
+                  }
+                }}
+                title={agentAvailable ? "Play from scene start" : "Playback requires the Heimdex agent"}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                />
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              {agentAvailable ? "Play" : "Play (Agent offline)"}
-            </button>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                Play
+              </button>
+              <button
+                className={cn(
+                  "text-xs px-2 py-1 rounded-r-md border border-l-0",
+                  agentAvailable
+                    ? "text-primary-600 hover:bg-primary-50 border-primary-200 cursor-pointer"
+                    : "text-gray-400 border-gray-200 cursor-not-allowed"
+                )}
+                disabled={!agentAvailable}
+                onClick={() => {
+                  if (agentAvailable) {
+                    window.open(
+                      getAgentPlaybackUrl(result.video_id, Math.max(0, result.start_ms - 5000)),
+                      "_blank"
+                    );
+                  }
+                }}
+                title={agentAvailable ? "Play with 5s context before scene" : "Playback requires the Heimdex agent"}
+              >
+                -5s
+              </button>
+            </div>
 
             {isRemovable && result.required_drive_nickname && (
               <span className="text-xs text-orange-600 flex items-center gap-1">

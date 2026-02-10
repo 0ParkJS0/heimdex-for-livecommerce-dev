@@ -123,8 +123,18 @@ temp/
 # Migration/setup reports (generated, not source)
 _reports/
 
-# OpenCode (AI assistant state)
+# AI coding assistants
 .opencode/
+.aider*/
+.sisyphus/
+.cursor/
+.copilot/
+.codeium/
+.windsurf/
+.continue/
+.augment/
+.bolt/
+.v0/
 
 # Face worker local artifacts
 artifacts/

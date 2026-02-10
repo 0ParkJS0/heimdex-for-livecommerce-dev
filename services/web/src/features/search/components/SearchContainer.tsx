@@ -6,6 +6,7 @@ import { SearchBar } from "./SearchBar";
 import { AlphaSlider } from "./AlphaSlider";
 import { FilterPanel } from "./FilterPanel";
 import { SearchResults } from "./SearchResults";
+import { AgentTroubleshooting } from "./AgentTroubleshooting";
 import { cn } from "@/lib/utils";
 
 export function SearchContainer() {
@@ -28,7 +29,7 @@ export function SearchContainer() {
     login,
     logout,
   } = useSearch();
-  const { isAvailable: agentAvailable } = useAgent();
+  const { isAvailable: agentAvailable, isChecking: agentChecking, recheck: agentRecheck } = useAgent();
 
   const renderError = () => {
     if (!error) return null;
@@ -174,6 +175,10 @@ export function SearchContainer() {
         </div>
 
         {renderError()}
+
+        {!agentAvailable && !agentChecking && (
+          <AgentTroubleshooting onRetry={agentRecheck} />
+        )}
 
         <div className="flex gap-6">
           <aside className="w-64 flex-shrink-0">

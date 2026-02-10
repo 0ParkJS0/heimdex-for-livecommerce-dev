@@ -80,8 +80,8 @@ async def seed_database():
         await session.flush()
         logger.info("created_org", org_id=str(org.id), slug=org.slug)
         
-        admin = User(org_id=org.id, email="admin@devorg.test", role=UserRole.ADMIN)
-        member = User(org_id=org.id, email="member@devorg.test", role=UserRole.MEMBER)
+        admin = User(org_id=org.id, email="admin@devorg.example.com", role=UserRole.ADMIN)
+        member = User(org_id=org.id, email="member@devorg.example.com", role=UserRole.MEMBER)
         session.add_all([admin, member])
         await session.flush()
         logger.info("created_users", count=2)

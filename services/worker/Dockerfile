@@ -27,15 +27,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy only dependency metadata first for better caching
 COPY pyproject.toml ./
-# If you have one, include it (recommended). If not, remove this line.
-COPY uv.lock ./
-
-# Install deps (prefer locked if uv.lock exists)
-# If you have a non-dev extra for the worker, replace with: -e ".[worker]"
-RUN uv pip install --system -e .
-
-# Copy source last
 COPY src/ ./src/
+
+RUN uv pip install --system -e .
 
 RUN mkdir -p /app/artifacts
 
