@@ -1,6 +1,8 @@
 "use client";
 
 import { Facets, SearchFilters } from "@/lib/api";
+import { hasTagFilters } from "@/lib/types/search";
+import { TagFilters } from "./TagFilters";
 
 interface FilterPanelProps {
   facets: Facets | null;
@@ -53,7 +55,8 @@ export function FilterPanel({
   const hasFilters =
     (filters.source_types?.length ?? 0) > 0 ||
     (filters.library_ids?.length ?? 0) > 0 ||
-    (filters.person_cluster_ids?.length ?? 0) > 0;
+    (filters.person_cluster_ids?.length ?? 0) > 0 ||
+    hasTagFilters(filters);
 
   return (
     <div className="space-y-4">
@@ -141,6 +144,10 @@ export function FilterPanel({
               </label>
             ))}
           </div>
+        </div>
+
+        <div className="pt-2 border-t border-gray-200">
+          <TagFilters filters={filters} onFiltersChange={onFiltersChange} />
         </div>
       </div>
     </div>

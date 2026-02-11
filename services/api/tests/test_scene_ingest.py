@@ -54,6 +54,23 @@ class TestIngestScenesSchemas:
         assert doc.speech_segment_count == 0
         assert doc.people_cluster_ids == []
         assert doc.keyframe_timestamp_ms == 0
+        assert doc.keyword_tags == []
+        assert doc.product_tags == []
+        assert doc.product_entities == []
+
+    def test_ingest_scene_document_with_tags(self):
+        doc = IngestSceneDocument(
+            scene_id="vid_scene_0",
+            index=0,
+            start_ms=0,
+            end_ms=5000,
+            keyword_tags=["cta", "price"],
+            product_tags=["skincare"],
+            product_entities=["세럼", "수분크림"],
+        )
+        assert doc.keyword_tags == ["cta", "price"]
+        assert doc.product_tags == ["skincare"]
+        assert doc.product_entities == ["세럼", "수분크림"]
 
     def test_ingest_scene_document_end_before_start_rejected(self):
         with pytest.raises(Exception):
@@ -556,6 +573,79 @@ class TestSceneIngestService:
         call_args = mock_scene_client.bulk_index_scenes.call_args[0][0]
         _, doc = call_args[0]
         assert doc["people_cluster_ids"] == ["cluster_001", "cluster_002"]
+
+    @pytest.mark.asyncio
+    async def test_ingest_preserves_keyword_and_product_tags(
+        self, service, mock_db_session, mock_scene_client
+    ):
+        """keyword_tags, product_tags, product_entities should be passed through to indexed doc."""
+        org_id = uuid4()
+        lib_id = uuid4()
+
+        scene = IngestSceneDocument(
+            scene_id="vid_scene_0",
+            index=0,
+            start_ms=0,
+            end_ms=5000,
+            transcript_raw="Test",
+            keyword_tags=["cta", "price"],
+            product_tags=["skincare", "makeup"],
+            product_entities=["세럼", "립스틱"],
+        )
+        request = self._make_request(library_id=lib_id, scenes=[scene])
+
+        mock_lib = MagicMock()
+        mock_lib.id = lib_id
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_lib
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.modules.ingest.service.get_passage_embeddings_batch",
+            return_value=[[0.1] * 1024],
+        ):
+            await service.ingest_scenes(request, org_id)
+
+        call_args = mock_scene_client.bulk_index_scenes.call_args[0][0]
+        _, doc = call_args[0]
+        assert doc["keyword_tags"] == ["cta", "price"]
+        assert doc["product_tags"] == ["skincare", "makeup"]
+        assert doc["product_entities"] == ["세럼", "립스틱"]
+
+    @pytest.mark.asyncio
+    async def test_ingest_tags_default_empty_when_omitted(
+        self, service, mock_db_session, mock_scene_client
+    ):
+        """Scenes without tags should have empty lists in the indexed doc."""
+        org_id = uuid4()
+        lib_id = uuid4()
+
+        scene = IngestSceneDocument(
+            scene_id="vid_scene_0",
+            index=0,
+            start_ms=0,
+            end_ms=5000,
+            transcript_raw="No tags here",
+        )
+        request = self._make_request(library_id=lib_id, scenes=[scene])
+
+        mock_lib = MagicMock()
+        mock_lib.id = lib_id
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_lib
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.modules.ingest.service.get_passage_embeddings_batch",
+            return_value=[[0.1] * 1024],
+        ):
+            await service.ingest_scenes(request, org_id)
+
+        call_args = mock_scene_client.bulk_index_scenes.call_args[0][0]
+        _, doc = call_args[0]
+        assert doc["keyword_tags"] == []
+        assert doc["product_tags"] == []
+        assert doc["product_entities"] == []
 
     @pytest.mark.asyncio
     async def test_ingest_source_type_passthrough(

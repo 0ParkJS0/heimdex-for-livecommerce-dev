@@ -305,6 +305,58 @@ class TestSceneSearchService:
         assert filter_dict["person_cluster_ids"] == ["cluster1"]
 
     # ------------------------------------------------------------------
+    # Tag filter passthrough (PR-D)
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_tag_filters_passed_to_client(
+        self, scene_search_service, mock_scene_opensearch_client, _patch_db_session
+    ):
+        """Tag filter fields should be forwarded to SceneSearchClient."""
+        org_id = uuid4()
+
+        filters = SearchFilters(
+            keyword_tags_in=["할인"],
+            keyword_tags_not_in=["광고"],
+            product_tags_in=["cosmetics"],
+            product_tags_not_in=["alcohol"],
+            product_entities_in=["Nike Air Max"],
+            product_entities_not_in=["BadBrand"],
+        )
+
+        await scene_search_service.search(
+            query="test", org_id=org_id, alpha=0.5, filters=filters
+        )
+
+        call_args = mock_scene_opensearch_client.search_lexical.call_args
+        fd = call_args.kwargs["filters"]
+        assert fd["keyword_tags_in"] == ["할인"]
+        assert fd["keyword_tags_not_in"] == ["광고"]
+        assert fd["product_tags_in"] == ["cosmetics"]
+        assert fd["product_tags_not_in"] == ["alcohol"]
+        assert fd["product_entities_in"] == ["Nike Air Max"]
+        assert fd["product_entities_not_in"] == ["BadBrand"]
+
+    @pytest.mark.asyncio
+    async def test_empty_tag_filters_passed_as_empty_lists(
+        self, scene_search_service, mock_scene_opensearch_client, _patch_db_session
+    ):
+        """Default (empty) tag filters should appear as empty lists in filter_dict."""
+        org_id = uuid4()
+
+        await scene_search_service.search(
+            query="test", org_id=org_id, alpha=0.5, filters=SearchFilters()
+        )
+
+        call_args = mock_scene_opensearch_client.search_lexical.call_args
+        fd = call_args.kwargs["filters"]
+        assert fd["keyword_tags_in"] == []
+        assert fd["keyword_tags_not_in"] == []
+        assert fd["product_tags_in"] == []
+        assert fd["product_tags_not_in"] == []
+        assert fd["product_entities_in"] == []
+        assert fd["product_entities_not_in"] == []
+
+    # ------------------------------------------------------------------
     # Library name enrichment
     # ------------------------------------------------------------------
     @pytest.mark.asyncio

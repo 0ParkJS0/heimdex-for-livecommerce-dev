@@ -58,6 +58,18 @@ class IngestSceneDocument(BaseModel):
         default_factory=list,
         description="Face cluster IDs detected in this scene",
     )
+    keyword_tags: list[str] = Field(
+        default_factory=list,
+        description="Keyword category tags (e.g. cta, price, benefit)",
+    )
+    product_tags: list[str] = Field(
+        default_factory=list,
+        description="Product category tags (e.g. skincare, makeup)",
+    )
+    product_entities: list[str] = Field(
+        default_factory=list,
+        description="Specific product entity names found in speech",
+    )
     source_type: Literal["gdrive", "removable_disk"] = Field(
         default="gdrive",
         description="Source type of the original video file",

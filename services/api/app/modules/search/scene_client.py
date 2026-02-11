@@ -208,6 +208,10 @@ class SceneSearchClient:
                 },
                 # People
                 "people_cluster_ids": {"type": "keyword"},
+                # Tags (from pipeline keyword/product tagging)
+                "keyword_tags": {"type": "keyword"},
+                "product_tags": {"type": "keyword"},
+                "product_entities": {"type": "keyword"},
                 # Scene metadata
                 "speech_segment_count": {"type": "integer"},
                 "thumbnail_url": {"type": "keyword", "index": False},
@@ -364,7 +368,7 @@ class SceneSearchClient:
         Short queries (<=3 words) get phrase-boost for precision,
         matching the segment client behaviour.
         """
-        filter_clauses = self._build_filter_clauses(filters)
+        filter_clauses, must_not_clauses = self._build_filter_clauses(filters)
 
         match_query: dict[str, Any] = {
             "match": {
@@ -409,6 +413,9 @@ class SceneSearchClient:
                 }
             }
 
+        if must_not_clauses:
+            search_query["bool"]["must_not"] = must_not_clauses
+
         body: dict[str, Any] = {
             "query": search_query,
             "size": size,
@@ -426,7 +433,12 @@ class SceneSearchClient:
         size: int = 200,
     ) -> list[dict[str, Any]]:
         """kNN vector search on scene embeddings."""
-        filter_clauses = [{"term": {"org_id": org_id}}] + self._build_filter_clauses(filters)
+        pos_clauses, must_not_clauses = self._build_filter_clauses(filters)
+        filter_clauses = [{"term": {"org_id": org_id}}] + pos_clauses
+
+        knn_filter: dict[str, Any] = {"bool": {"must": filter_clauses}}
+        if must_not_clauses:
+            knn_filter["bool"]["must_not"] = must_not_clauses
 
         body: dict[str, Any] = {
             "query": {
@@ -434,7 +446,7 @@ class SceneSearchClient:
                     "embedding_vector": {
                         "vector": embedding,
                         "k": size,
-                        "filter": {"bool": {"must": filter_clauses}},
+                        "filter": knn_filter,
                     }
                 }
             },
@@ -451,10 +463,15 @@ class SceneSearchClient:
         filters: dict[str, Any],
     ) -> dict[str, list[dict[str, Any]]]:
         """Aggregations for libraries, source_types, and people."""
-        filter_clauses = [{"term": {"org_id": org_id}}] + self._build_filter_clauses(filters)
+        pos_clauses, must_not_clauses = self._build_filter_clauses(filters)
+        filter_clauses = [{"term": {"org_id": org_id}}] + pos_clauses
+
+        bool_query: dict[str, Any] = {"filter": filter_clauses}
+        if must_not_clauses:
+            bool_query["must_not"] = must_not_clauses
 
         body: dict[str, Any] = {
-            "query": {"bool": {"filter": filter_clauses}},
+            "query": {"bool": bool_query},
             "size": 0,
             "aggs": {
                 "libraries": {"terms": {"field": "library_id", "size": 100}},
@@ -474,9 +491,18 @@ class SceneSearchClient:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _build_filter_clauses(self, filters: dict[str, Any]) -> list[dict[str, Any]]:
-        """Build OpenSearch filter clauses from a filter dict."""
+    def _build_filter_clauses(
+        self, filters: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Build OpenSearch filter + must_not clauses from a filter dict.
+
+        Returns:
+            A tuple of ``(filter_clauses, must_not_clauses)``.
+            ``filter_clauses`` go into ``bool.filter`` (positive, no scoring).
+            ``must_not_clauses`` go into ``bool.must_not`` (exclusion).
+        """
         clauses: list[dict[str, Any]] = []
+        must_not: list[dict[str, Any]] = []
 
         if filters.get("date_from") or filters.get("date_to"):
             range_clause: dict[str, Any] = {}
@@ -495,4 +521,26 @@ class SceneSearchClient:
         if filters.get("person_cluster_ids"):
             clauses.append({"terms": {"people_cluster_ids": filters["person_cluster_ids"]}})
 
-        return clauses
+        # Tag inclusion filters (OR within field, AND across fields)
+        _TAG_IN_FIELDS = {
+            "keyword_tags_in": "keyword_tags",
+            "product_tags_in": "product_tags",
+            "product_entities_in": "product_entities",
+        }
+        for filter_key, os_field in _TAG_IN_FIELDS.items():
+            vals = filters.get(filter_key)
+            if vals:
+                clauses.append({"terms": {os_field: vals}})
+
+        # Tag exclusion filters
+        _TAG_NOT_IN_FIELDS = {
+            "keyword_tags_not_in": "keyword_tags",
+            "product_tags_not_in": "product_tags",
+            "product_entities_not_in": "product_entities",
+        }
+        for filter_key, os_field in _TAG_NOT_IN_FIELDS.items():
+            vals = filters.get(filter_key)
+            if vals:
+                must_not.append({"terms": {os_field: vals}})
+
+        return clauses, must_not

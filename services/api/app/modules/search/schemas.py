@@ -1,8 +1,27 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# Reusable constraints
+# ---------------------------------------------------------------------------
+_MAX_TAG_LIST_SIZE = 50
+_MAX_TAG_ITEM_LEN = 64
+
+
+def _clean_tag_list(values: list[str] | None) -> list[str]:
+    """Strip whitespace, drop empty strings, and enforce per-item max length."""
+    if values is None:
+        return []
+    cleaned: list[str] = []
+    for v in values:
+        v = v.strip()
+        if v:
+            cleaned.append(v[:_MAX_TAG_ITEM_LEN])
+    return cleaned
 
 
 class SearchFilters(BaseModel):
@@ -11,6 +30,24 @@ class SearchFilters(BaseModel):
     source_types: list[Literal["gdrive", "removable_disk"]] | None = None
     library_ids: list[UUID] | None = None
     person_cluster_ids: list[str] | None = None
+
+    # Tag-based scene filters (additive — empty list = no filter)
+    keyword_tags_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+    keyword_tags_not_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+    product_tags_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+    product_tags_not_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+    product_entities_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+    product_entities_not_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+
+    @field_validator(
+        "keyword_tags_in", "keyword_tags_not_in",
+        "product_tags_in", "product_tags_not_in",
+        "product_entities_in", "product_entities_not_in",
+        mode="before",
+    )
+    @classmethod
+    def _clean_tags(cls, v: list[str] | None) -> list[str]:
+        return _clean_tag_list(v)
 
 
 class SearchRequest(BaseModel):

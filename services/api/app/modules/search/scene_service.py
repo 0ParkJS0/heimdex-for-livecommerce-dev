@@ -64,6 +64,12 @@ class SceneSearchService:
             "source_types": filters.source_types,
             "library_ids": filters.library_ids,
             "person_cluster_ids": filters.person_cluster_ids,
+            "keyword_tags_in": filters.keyword_tags_in,
+            "keyword_tags_not_in": filters.keyword_tags_not_in,
+            "product_tags_in": filters.product_tags_in,
+            "product_tags_not_in": filters.product_tags_not_in,
+            "product_entities_in": filters.product_entities_in,
+            "product_entities_not_in": filters.product_entities_not_in,
         }
 
         query_embedding = await get_query_embedding(query)

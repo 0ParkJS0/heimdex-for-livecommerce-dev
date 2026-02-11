@@ -143,6 +143,10 @@ class TestSceneSearchClient:
 
         # People + metadata
         assert props["people_cluster_ids"]["type"] == "keyword"
+        # Tags
+        assert props["keyword_tags"]["type"] == "keyword"
+        assert props["product_tags"]["type"] == "keyword"
+        assert props["product_entities"]["type"] == "keyword"
         assert props["thumbnail_url"]["type"] == "keyword"
         assert props["thumbnail_url"]["index"] is False
         assert props["source_type"]["type"] == "keyword"
@@ -514,9 +518,11 @@ class TestSceneSearchClient:
     # Filter clauses
     # ------------------------------------------------------------------
     def test_build_filter_clauses_empty(self, mock_scene_client):
-        """Empty filters should return empty clauses."""
+        """Empty filters should return empty clauses tuple."""
         client, _ = mock_scene_client
-        assert client._build_filter_clauses({}) == []
+        clauses, must_not = client._build_filter_clauses({})
+        assert clauses == []
+        assert must_not == []
 
     def test_build_filter_clauses_date_range(self, mock_scene_client):
         """Date filters should produce range clause."""
@@ -527,12 +533,13 @@ class TestSceneSearchClient:
         date_from = datetime(2025, 1, 1, tzinfo=timezone.utc)
         date_to = datetime(2025, 12, 31, tzinfo=timezone.utc)
 
-        clauses = client._build_filter_clauses({
+        clauses, must_not = client._build_filter_clauses({
             "date_from": date_from,
             "date_to": date_to,
         })
 
         assert len(clauses) == 1
+        assert must_not == []
         range_clause = clauses[0]["range"]["capture_time"]
         assert "gte" in range_clause
         assert "lte" in range_clause
@@ -541,11 +548,12 @@ class TestSceneSearchClient:
         """Source type filter should produce terms clause."""
         client, _ = mock_scene_client
 
-        clauses = client._build_filter_clauses({
+        clauses, must_not = client._build_filter_clauses({
             "source_types": ["gdrive", "removable_disk"],
         })
 
         assert len(clauses) == 1
+        assert must_not == []
         assert clauses[0]["terms"]["source_type"] == ["gdrive", "removable_disk"]
 
     def test_build_filter_clauses_library_ids(self, mock_scene_client):
@@ -555,34 +563,259 @@ class TestSceneSearchClient:
         client, _ = mock_scene_client
         lib_id = uuid4()
 
-        clauses = client._build_filter_clauses({
+        clauses, must_not = client._build_filter_clauses({
             "library_ids": [lib_id],
         })
 
         assert len(clauses) == 1
+        assert must_not == []
         assert clauses[0]["terms"]["library_id"] == [str(lib_id)]
 
     def test_build_filter_clauses_person_cluster_ids(self, mock_scene_client):
         """Person cluster filter should produce terms clause."""
         client, _ = mock_scene_client
 
-        clauses = client._build_filter_clauses({
+        clauses, must_not = client._build_filter_clauses({
             "person_cluster_ids": ["cluster_001", "cluster_002"],
         })
 
         assert len(clauses) == 1
+        assert must_not == []
         assert clauses[0]["terms"]["people_cluster_ids"] == ["cluster_001", "cluster_002"]
 
     def test_build_filter_clauses_combined(self, mock_scene_client):
         """Multiple filters should produce multiple clauses."""
         client, _ = mock_scene_client
 
-        clauses = client._build_filter_clauses({
+        clauses, must_not = client._build_filter_clauses({
             "source_types": ["gdrive"],
             "person_cluster_ids": ["cluster_001"],
         })
 
         assert len(clauses) == 2
+        assert must_not == []
+
+    # ------------------------------------------------------------------
+    # Tag filter clauses (PR-D)
+    # ------------------------------------------------------------------
+    def test_build_filter_clauses_keyword_tags_in(self, mock_scene_client):
+        """keyword_tags_in should produce a terms filter clause."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "keyword_tags_in": ["할인", "프로모션"],
+        })
+
+        assert len(clauses) == 1
+        assert must_not == []
+        assert clauses[0]["terms"]["keyword_tags"] == ["할인", "프로모션"]
+
+    def test_build_filter_clauses_keyword_tags_not_in(self, mock_scene_client):
+        """keyword_tags_not_in should produce a must_not terms clause."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "keyword_tags_not_in": ["광고"],
+        })
+
+        assert clauses == []
+        assert len(must_not) == 1
+        assert must_not[0]["terms"]["keyword_tags"] == ["광고"]
+
+    def test_build_filter_clauses_product_tags_in(self, mock_scene_client):
+        """product_tags_in should produce a terms filter clause."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "product_tags_in": ["cosmetics", "skincare"],
+        })
+
+        assert len(clauses) == 1
+        assert clauses[0]["terms"]["product_tags"] == ["cosmetics", "skincare"]
+
+    def test_build_filter_clauses_product_tags_not_in(self, mock_scene_client):
+        """product_tags_not_in should produce a must_not terms clause."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "product_tags_not_in": ["alcohol"],
+        })
+
+        assert clauses == []
+        assert len(must_not) == 1
+        assert must_not[0]["terms"]["product_tags"] == ["alcohol"]
+
+    def test_build_filter_clauses_product_entities_in(self, mock_scene_client):
+        """product_entities_in should produce a terms filter clause."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "product_entities_in": ["Nike Air Max", "Adidas Boost"],
+        })
+
+        assert len(clauses) == 1
+        assert clauses[0]["terms"]["product_entities"] == ["Nike Air Max", "Adidas Boost"]
+
+    def test_build_filter_clauses_product_entities_not_in(self, mock_scene_client):
+        """product_entities_not_in should produce a must_not terms clause."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "product_entities_not_in": ["Counterfeit Brand"],
+        })
+
+        assert clauses == []
+        assert len(must_not) == 1
+        assert must_not[0]["terms"]["product_entities"] == ["Counterfeit Brand"]
+
+    def test_build_filter_clauses_mixed_include_exclude(self, mock_scene_client):
+        """Combining _in and _not_in across multiple tag fields."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "keyword_tags_in": ["할인"],
+            "keyword_tags_not_in": ["광고"],
+            "product_tags_in": ["cosmetics"],
+            "product_entities_not_in": ["BadBrand"],
+        })
+
+        # 2 positive filter clauses: keyword_tags, product_tags
+        assert len(clauses) == 2
+        # 2 must_not clauses: keyword_tags, product_entities
+        assert len(must_not) == 2
+
+    def test_build_filter_clauses_empty_tag_lists_ignored(self, mock_scene_client):
+        """Empty tag lists should NOT produce any clauses."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "keyword_tags_in": [],
+            "keyword_tags_not_in": [],
+            "product_tags_in": [],
+            "product_tags_not_in": [],
+            "product_entities_in": [],
+            "product_entities_not_in": [],
+        })
+
+        assert clauses == []
+        assert must_not == []
+
+    def test_build_filter_clauses_tags_combined_with_existing(self, mock_scene_client):
+        """Tag filters should combine with existing filter types."""
+        client, _ = mock_scene_client
+
+        clauses, must_not = client._build_filter_clauses({
+            "source_types": ["gdrive"],
+            "keyword_tags_in": ["라이브"],
+            "product_tags_not_in": ["alcohol"],
+        })
+
+        # 2 positive: source_type terms + keyword_tags terms
+        assert len(clauses) == 2
+        # 1 must_not: product_tags
+        assert len(must_not) == 1
+
+    # ------------------------------------------------------------------
+    # must_not propagation in search queries (PR-D)
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_search_lexical_includes_must_not(self, mock_scene_client):
+        """search_lexical should inject must_not for _not_in tag filters."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("test query string here", "org1", {
+            "keyword_tags_not_in": ["광고"],
+        })
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        query = call_body["query"]["bool"]
+        assert "must_not" in query
+        assert query["must_not"] == [{"terms": {"keyword_tags": ["광고"]}}]
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_no_must_not_when_empty(self, mock_scene_client):
+        """search_lexical should NOT include must_not when no _not_in filters."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("test query string here", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        query = call_body["query"]["bool"]
+        assert "must_not" not in query
+
+    @pytest.mark.asyncio
+    async def test_search_vector_includes_must_not(self, mock_scene_client):
+        """search_vector should inject must_not for _not_in tag filters."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        embedding = [0.1] * 1024
+        await client.search_vector(embedding, "org1", {
+            "product_tags_not_in": ["alcohol"],
+        })
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        knn_filter = call_body["query"]["knn"]["embedding_vector"]["filter"]["bool"]
+        assert "must_not" in knn_filter
+        assert knn_filter["must_not"] == [{"terms": {"product_tags": ["alcohol"]}}]
+
+    @pytest.mark.asyncio
+    async def test_search_vector_no_must_not_when_empty(self, mock_scene_client):
+        """search_vector should NOT include must_not when no _not_in filters."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        embedding = [0.1] * 1024
+        await client.search_vector(embedding, "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        knn_filter = call_body["query"]["knn"]["embedding_vector"]["filter"]["bool"]
+        assert "must_not" not in knn_filter
+
+    @pytest.mark.asyncio
+    async def test_get_facets_includes_must_not(self, mock_scene_client):
+        """get_facets should inject must_not for _not_in tag filters."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={
+            "aggregations": {
+                "libraries": {"buckets": []},
+                "source_types": {"buckets": []},
+                "people": {"buckets": []},
+            }
+        })
+
+        await client.get_facets("org1", {
+            "product_entities_not_in": ["BadBrand"],
+        })
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        bool_query = call_body["query"]["bool"]
+        assert "must_not" in bool_query
+        assert bool_query["must_not"] == [{"terms": {"product_entities": ["BadBrand"]}}]
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_includes_tag_filter_clauses(self, mock_scene_client):
+        """search_lexical should include tag _in filters in filter clauses."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("test query string here", "org1", {
+            "keyword_tags_in": ["할인", "프로모션"],
+        })
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        filter_clauses = call_body["query"]["bool"]["filter"]
+        tag_terms = [c for c in filter_clauses if "keyword_tags" in c.get("terms", {})]
+        assert len(tag_terms) == 1
+        assert tag_terms[0]["terms"]["keyword_tags"] == ["할인", "프로모션"]
 
     # ------------------------------------------------------------------
     # Facets
@@ -621,3 +854,77 @@ class TestSceneSearchClient:
         # Should NOT contain segment references
         assert "_segments" not in client.alias_name
         assert "_segments" not in client.index_name
+
+
+# ======================================================================
+# SearchFilters schema validation tests (PR-D)
+# ======================================================================
+
+
+class TestSearchFiltersTagValidation:
+    """Tests for tag-related field validation on SearchFilters."""
+
+    def test_defaults_are_empty_lists(self):
+        """All tag fields should default to empty lists."""
+        from app.modules.search.schemas import SearchFilters
+
+        f = SearchFilters()
+        assert f.keyword_tags_in == []
+        assert f.keyword_tags_not_in == []
+        assert f.product_tags_in == []
+        assert f.product_tags_not_in == []
+        assert f.product_entities_in == []
+        assert f.product_entities_not_in == []
+
+    def test_valid_tag_lists_accepted(self):
+        """Normal tag lists should be accepted."""
+        from app.modules.search.schemas import SearchFilters
+
+        f = SearchFilters(
+            keyword_tags_in=["할인", "프로모션"],
+            product_tags_not_in=["alcohol"],
+            product_entities_in=["Nike Air Max"],
+        )
+        assert f.keyword_tags_in == ["할인", "프로모션"]
+        assert f.product_tags_not_in == ["alcohol"]
+        assert f.product_entities_in == ["Nike Air Max"]
+
+    def test_whitespace_stripped(self):
+        """Leading/trailing whitespace should be stripped."""
+        from app.modules.search.schemas import SearchFilters
+
+        f = SearchFilters(keyword_tags_in=["  할인  ", "  프로모션"])
+        assert f.keyword_tags_in == ["할인", "프로모션"]
+
+    def test_empty_strings_dropped(self):
+        """Empty strings (including whitespace-only) should be dropped."""
+        from app.modules.search.schemas import SearchFilters
+
+        f = SearchFilters(keyword_tags_in=["할인", "", "   ", "프로모션"])
+        assert f.keyword_tags_in == ["할인", "프로모션"]
+
+    def test_long_tags_truncated(self):
+        """Tags longer than 64 chars should be truncated."""
+        from app.modules.search.schemas import SearchFilters
+
+        long_tag = "A" * 100
+        f = SearchFilters(keyword_tags_in=[long_tag])
+        assert len(f.keyword_tags_in[0]) == 64
+        assert f.keyword_tags_in[0] == "A" * 64
+
+    def test_oversized_list_rejected(self):
+        """Lists exceeding 50 items should be rejected by pydantic."""
+        from pydantic import ValidationError
+        from app.modules.search.schemas import SearchFilters
+
+        with pytest.raises(ValidationError):
+            SearchFilters(keyword_tags_in=[f"tag_{i}" for i in range(51)])
+
+    def test_backward_compatible_no_tags(self):
+        """SearchFilters without any tag fields should behave as before."""
+        from app.modules.search.schemas import SearchFilters
+
+        f = SearchFilters(source_types=["gdrive"])
+        assert f.source_types == ["gdrive"]
+        assert f.keyword_tags_in == []
+        assert f.product_entities_not_in == []
