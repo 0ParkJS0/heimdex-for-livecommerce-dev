@@ -70,8 +70,18 @@ class IngestSceneDocument(BaseModel):
         default_factory=list,
         description="Specific product entity names found in speech",
     )
+    ocr_text_raw: str = Field(
+        default="",
+        max_length=10_000,
+        description="Raw OCR text extracted from keyframe",
+    )
+    ocr_char_count: int = Field(
+        default=0,
+        ge=0,
+        description="Character count of OCR text",
+    )
     source_type: Literal["gdrive", "removable_disk", "local"] = Field(
-        default="local",
+        default="gdrive",
         description="Source type of the original video file",
     )
     required_drive_nickname: str | None = Field(

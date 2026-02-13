@@ -95,6 +95,8 @@ services:
       - "8000:8000"
     volumes:
       - ./services/api:/app
+      # Mount heimdex-media-contracts for runtime import (shorts scorer, scene schemas)
+      - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
       # Persistent volume for HuggingFace model cache (~2.4GB for multilingual-e5-large)
       - huggingface_cache:/root/.cache/huggingface
     depends_on:
@@ -109,6 +111,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
+    command: >
+      sh -c "pip install --no-deps -e /opt/heimdex-media-contracts 2>/dev/null;
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   web:
     build:

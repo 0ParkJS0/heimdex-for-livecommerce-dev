@@ -14,6 +14,19 @@ import type {
   VideoFacets,
 } from "@/lib/types";
 
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({
+    getAccessToken: vi.fn().mockResolvedValue("test-token"),
+    isAuthenticated: true,
+    isLoading: false,
+    user: { email: "test@test.com", name: "Test" },
+    error: null,
+    login: vi.fn(),
+    logout: vi.fn(),
+    isAuth0Enabled: false,
+  }),
+}));
+
 const sampleVideo: VideoSummary = {
   video_id: "video-abc-123",
   video_title: "Spring Campaign",

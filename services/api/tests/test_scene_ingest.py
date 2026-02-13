@@ -14,6 +14,7 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4, UUID
+from pydantic import ValidationError
 
 from app.modules.ingest.schemas import (
     IngestSceneDocument,
@@ -71,6 +72,36 @@ class TestIngestScenesSchemas:
         assert doc.keyword_tags == ["cta", "price"]
         assert doc.product_tags == ["skincare"]
         assert doc.product_entities == ["세럼", "수분크림"]
+
+    def test_ingest_scene_document_with_ocr(self):
+        """OCR fields accepted and validated."""
+        doc = IngestSceneDocument(
+            scene_id="vid1_scene_0",
+            index=0,
+            start_ms=0,
+            end_ms=5000,
+            ocr_text_raw="SALE 50% OFF",
+            ocr_char_count=12,
+        )
+        assert doc.ocr_text_raw == "SALE 50% OFF"
+        assert doc.ocr_char_count == 12
+
+    def test_ingest_scene_document_ocr_defaults(self):
+        """OCR fields default to empty/zero."""
+        doc = IngestSceneDocument(scene_id="vid1_scene_0", index=0, start_ms=0, end_ms=5000)
+        assert doc.ocr_text_raw == ""
+        assert doc.ocr_char_count == 0
+
+    def test_ingest_scene_document_ocr_max_length(self):
+        """OCR text exceeding max_length is rejected."""
+        with pytest.raises(ValidationError):
+            IngestSceneDocument(
+                scene_id="vid1_scene_0",
+                index=0,
+                start_ms=0,
+                end_ms=5000,
+                ocr_text_raw="x" * 10_001,
+            )
 
     def test_ingest_scene_document_end_before_start_rejected(self):
         with pytest.raises(Exception):
@@ -525,6 +556,43 @@ class TestSceneIngestService:
         datetime.fromisoformat(doc["ingest_time"])
 
     @pytest.mark.asyncio
+    async def test_ingest_scenes_propagates_ocr_fields(
+        self, service, mock_db_session, mock_scene_client
+    ):
+        """OCR text is normalized and included in indexed document."""
+        org_id = uuid4()
+        lib_id = uuid4()
+        scene = IngestSceneDocument(
+            scene_id="vid_abc_scene_0",
+            index=0,
+            start_ms=0,
+            end_ms=5000,
+            transcript_raw="",
+            ocr_text_raw="SALE 50% OFF",
+            ocr_char_count=12,
+        )
+        request = self._make_request(library_id=lib_id, scenes=[scene])
+
+        mock_lib = MagicMock()
+        mock_lib.id = lib_id
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_lib
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.modules.ingest.service.get_passage_embeddings_batch",
+            return_value=[[0.1] * 1024],
+        ):
+            await service.ingest_scenes(request, org_id)
+
+        call_args = mock_scene_client.bulk_index_scenes.call_args[0][0]
+        _, doc = call_args[0]
+        assert doc["ocr_text_raw"] == "SALE 50% OFF"
+        assert doc["ocr_text_norm"] == "sale 50% off"
+        assert doc["ocr_char_count"] > 0
+        assert "embedding_vector" in doc
+
+    @pytest.mark.asyncio
     async def test_ingest_empty_scenes_list(
         self, service, mock_db_session, mock_scene_client
     ):
@@ -866,7 +934,7 @@ class TestCorrelationHeaders:
         )
 
     @staticmethod
-    def _mock_http_request(headers: dict | None = None):
+    def _mock_http_request(headers: dict[str, str] | None = None):
         """Build a mock starlette Request with optional headers."""
         mock_req = MagicMock()
         header_map = headers or {}

@@ -16,6 +16,8 @@ from app.modules.auth import get_current_user
 from app.modules.tenancy import OrgContext, get_current_org
 from app.modules.users.models import User
 from app.modules.videos.schemas import (
+    ShortsPlanRequest,
+    ShortsPlanResponse,
     VideoListResponse,
     VideoScenesResponse,
     VideoStats,
@@ -95,4 +97,30 @@ async def video_scenes(
         video_id,
         page_size=page_size,
         offset=offset,
+    )
+
+
+@router.post("/{video_id}/shorts/plan", response_model=ShortsPlanResponse)
+async def generate_shorts_plan(
+    video_id: str,
+    request: ShortsPlanRequest = ShortsPlanRequest(),
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    video_service: VideoService = Depends(get_video_service),
+):
+    logger.debug(
+        "shorts_plan_request",
+        user_id=str(user.id),
+        org_id=str(org_ctx.org_id),
+        video_id=video_id,
+        target_count=request.target_count,
+    )
+
+    return await video_service.generate_shorts_plan(
+        org_ctx.org_id,
+        video_id,
+        target_count=request.target_count,
+        min_duration_ms=request.min_duration_ms,
+        max_duration_ms=request.max_duration_ms,
+        weights=request.weights,
     )

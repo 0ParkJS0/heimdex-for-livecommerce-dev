@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     search_rrf_k: int = 60
     search_max_scenes_per_video: int = 4
     search_page_size: int = 20
+    ocr_search_enabled: bool = True
+    ocr_bm25_boost: float = 0.6
     
     # Search mode: "segments" (default, backward-compatible) or "scenes"
     # Controls which index POST /api/search queries.

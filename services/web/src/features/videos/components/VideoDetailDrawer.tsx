@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import type { VideoSummary, VideoScene } from "@/lib/types";
 import { formatTimestamp } from "@/lib/api/utils";
 import { getAgentThumbnailUrl } from "@/lib/agent";
+import { ShortsPlanPanel } from "./ShortsPlanPanel";
 
 interface VideoDetailDrawerProps {
   video: VideoSummary | null;
@@ -175,6 +176,12 @@ export function VideoDetailDrawer({
             </div>
           )}
         </div>
+
+        <ShortsPlanPanel
+          videoId={video.video_id}
+          videoTitle={video.video_title}
+          agentAvailable={agentAvailable}
+        />
       </div>
     </div>
   );

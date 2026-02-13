@@ -8,6 +8,7 @@ Scenes are pre-computed atomic search units — this service does NOT
 aggregate segments into scenes. It treats each scene document as an
 independent candidate.
 """
+import html
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,7 @@ class SceneSearchService:
         org_id: UUID,
         alpha: float,
         filters: SearchFilters,
+        include_ocr: bool | None = None,
     ) -> SceneSearchResponse:
         logger.info(
             "scene_search_started",
@@ -79,6 +81,7 @@ class SceneSearchService:
             org_id=str(org_id),
             filters=filter_dict,
             size=self.settings.search_lexical_top_k,
+            include_ocr=include_ocr,
         )
 
         vector_results = await self.scene_opensearch.search_vector(
@@ -108,31 +111,36 @@ class SceneSearchService:
 
         results: list[SceneResult] = []
         for item in diversified:
-             src = item.source
-             results.append(
-                 SceneResult(
-                     scene_id=src.get("scene_id", item.doc_id),
-                     video_id=src.get("video_id", ""),
-                     video_title=src.get("video_title"),
-                     library_id=UUID(src.get("library_id", "00000000-0000-0000-0000-000000000000")),
-                     library_name=library_map.get(src.get("library_id", ""), "Unknown"),
-                     start_ms=src.get("start_ms", 0),
-                     end_ms=src.get("end_ms", 0),
-                     snippet=src.get("transcript_raw", "")[:500],
-                     thumbnail_url=src.get("thumbnail_url"),
-                     source_type=src.get("source_type", "gdrive"),
-                     required_drive_nickname=src.get("required_drive_nickname"),
-                     capture_time=src.get("capture_time"),
-                     people_cluster_ids=src.get("people_cluster_ids", []),
-                     speech_segment_count=src.get("speech_segment_count", 0),
-                     keyframe_timestamp_ms=src.get("keyframe_timestamp_ms", 0),
-                     debug=DebugInfo(
+            src = item.source
+            ocr_raw = src.get("ocr_text_raw", "") or ""
+            ocr_snippet = html.escape(ocr_raw[:200]) if ocr_raw else ""
+            results.append(
+                SceneResult(
+                    scene_id=src.get("scene_id", item.doc_id),
+                    video_id=src.get("video_id", ""),
+                    video_title=src.get("video_title"),
+                    library_id=UUID(src.get("library_id", "00000000-0000-0000-0000-000000000000")),
+                    library_name=library_map.get(src.get("library_id", ""), "Unknown"),
+                    start_ms=src.get("start_ms", 0),
+                    end_ms=src.get("end_ms", 0),
+                    snippet=src.get("transcript_raw", "")[:500],
+                    ocr_snippet=ocr_snippet,
+                    thumbnail_url=src.get("thumbnail_url"),
+                    source_type=src.get("source_type", "gdrive"),
+                    required_drive_nickname=src.get("required_drive_nickname"),
+                    capture_time=src.get("capture_time"),
+                    people_cluster_ids=src.get("people_cluster_ids", []),
+                    speech_segment_count=src.get("speech_segment_count", 0),
+                    ocr_char_count=src.get("ocr_char_count", 0),
+                    keyframe_timestamp_ms=src.get("keyframe_timestamp_ms", 0),
+                    debug=DebugInfo(
                         lexical_rank=item.lexical_rank,
                         lexical_score=item.lexical_score,
                         vector_rank=item.vector_rank,
                         vector_score=item.vector_score,
                         lexical_contribution=item.lexical_contribution,
                         vector_contribution=item.vector_contribution,
+                        ocr_contribution=0.0,
                         fused_score=item.fused_score,
                         quality_factor=item.quality_factor,
                         adjusted_score=item.adjusted_score,

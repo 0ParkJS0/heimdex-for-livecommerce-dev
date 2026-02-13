@@ -15,7 +15,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.modules.search.schemas import SceneSearchResponse, SearchFilters
+from app.modules.search.schemas import SceneSearchResponse, SearchFilters, SearchRequest
 from app.modules.search.scene_service import SceneSearchService
 
 
@@ -25,9 +25,11 @@ def _make_scene_hit(
     score: float = 10.0,
     library_id: str | None = None,
     transcript: str = "Test transcript content for scene",
+    ocr_text_raw: str = "",
+    ocr_char_count: int = 0,
     source_type: str = "gdrive",
     speech_segment_count: int = 3,
-) -> dict:
+) -> dict[str, object]:
     """Helper to construct an OpenSearch scene hit dict."""
     return {
         "_id": scene_id,
@@ -39,6 +41,8 @@ def _make_scene_hit(
             "start_ms": 0,
             "end_ms": 5000,
             "transcript_raw": transcript,
+            "ocr_text_raw": ocr_text_raw,
+            "ocr_char_count": ocr_char_count,
             "source_type": source_type,
             "people_cluster_ids": [],
             "speech_segment_count": speech_segment_count,
@@ -232,6 +236,33 @@ class TestSceneSearchService:
 
         assert len(response.results[0].snippet) == 500
 
+    @pytest.mark.asyncio
+    async def test_result_includes_ocr_snippet_and_ocr_char_count(
+        self, scene_search_service, mock_scene_opensearch_client, _patch_db_session
+    ):
+        org_id = uuid4()
+        raw_ocr = "<b>SALE</b> " + ("X" * 250)
+
+        mock_scene_opensearch_client.search_lexical.return_value = [
+            _make_scene_hit(
+                "scene_ocr",
+                "v1",
+                transcript="short",
+                ocr_text_raw=raw_ocr,
+                ocr_char_count=128,
+            ),
+        ]
+
+        response = await scene_search_service.search(
+            query="sale", org_id=org_id, alpha=0.5, filters=SearchFilters()
+        )
+
+        result = response.results[0]
+        assert result.ocr_char_count == 128
+        assert len(result.ocr_snippet) <= 212
+        assert "&lt;b&gt;SALE&lt;/b&gt;" in result.ocr_snippet
+        assert result.debug.ocr_contribution == 0.0
+
     # ------------------------------------------------------------------
     # Facets
     # ------------------------------------------------------------------
@@ -303,6 +334,23 @@ class TestSceneSearchService:
         assert filter_dict["source_types"] == ["gdrive"]
         assert filter_dict["library_ids"] == [lib_id]
         assert filter_dict["person_cluster_ids"] == ["cluster1"]
+
+    @pytest.mark.asyncio
+    async def test_include_ocr_passed_to_client(
+        self, scene_search_service, mock_scene_opensearch_client, _patch_db_session
+    ):
+        org_id = uuid4()
+
+        await scene_search_service.search(
+            query="test",
+            org_id=org_id,
+            alpha=0.5,
+            filters=SearchFilters(),
+            include_ocr=False,
+        )
+
+        call_args = mock_scene_opensearch_client.search_lexical.call_args
+        assert call_args.kwargs["include_ocr"] is False
 
     # ------------------------------------------------------------------
     # Tag filter passthrough (PR-D)
@@ -409,3 +457,13 @@ class TestSceneSearchService:
         r = response.results[0]
         assert r.debug.quality_factor < 1.0
         assert r.debug.adjusted_score < r.debug.fused_score
+
+
+def test_search_request_include_ocr_default_none():
+    req = SearchRequest(q="test")
+    assert req.include_ocr is None
+
+
+def test_search_request_include_ocr_explicit():
+    req = SearchRequest(q="test", include_ocr=False)
+    assert req.include_ocr is False

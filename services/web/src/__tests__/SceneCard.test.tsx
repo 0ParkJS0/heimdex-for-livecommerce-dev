@@ -18,6 +18,7 @@ const baseDebug: DebugInfo = {
   vector_score: 1,
   lexical_contribution: 0.5,
   vector_contribution: 0.5,
+  ocr_contribution: 0,
   fused_score: 1,
   quality_factor: 1,
   adjusted_score: 1,
@@ -281,5 +282,106 @@ describe("Video grouping", () => {
 
     const snippets = screen.getAllByText("Scene transcript text");
     expect(snippets).toHaveLength(3);
+  });
+});
+
+describe("SceneCard OCR features", () => {
+  it("renders 'On-screen match' when OCR contribution is dominant", () => {
+    const ocrScene: SceneResult = {
+      ...sceneResult,
+      debug: {
+        ...baseDebug,
+        lexical_contribution: 0.2,
+        vector_contribution: 0.1,
+        ocr_contribution: 0.25,
+      },
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [ocrScene],
+    };
+    render(<SearchResults response={resp} showDebug={false} agentAvailable={false} />);
+    expect(screen.getByText("On-screen match")).toBeInTheDocument();
+  });
+
+  it("does not render 'On-screen match' when OCR contribution is low", () => {
+    const lowOcrScene: SceneResult = {
+      ...sceneResult,
+      debug: {
+        ...baseDebug,
+        lexical_contribution: 0.5,
+        vector_contribution: 0.4,
+        ocr_contribution: 0.1,
+      },
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [lowOcrScene],
+    };
+    render(<SearchResults response={resp} showDebug={false} agentAvailable={false} />);
+    expect(screen.queryByText("On-screen match")).not.toBeInTheDocument();
+  });
+
+  it("renders OCR snippet with prefix when ocr_snippet is present", () => {
+    const ocrScene: SceneResult = {
+      ...sceneResult,
+      ocr_snippet: "\u20A939,900 PRODUCT X",
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [ocrScene],
+    };
+    render(<SearchResults response={resp} showDebug={false} agentAvailable={false} />);
+    expect(screen.getByText(/\u20A939,900 PRODUCT X/)).toBeInTheDocument();
+  });
+
+  it("does not render OCR snippet when ocr_snippet is empty", () => {
+    const noOcrScene: SceneResult = {
+      ...sceneResult,
+      ocr_snippet: "",
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [noOcrScene],
+    };
+    render(<SearchResults response={resp} showDebug={false} agentAvailable={false} />);
+    expect(screen.queryByText(/\uD83D\uDCFA/)).not.toBeInTheDocument();
+  });
+
+  it("does not render OCR snippet when ocr_snippet is undefined", () => {
+    render(<SearchResults response={sceneResponse} showDebug={false} agentAvailable={false} />);
+    expect(screen.queryByText(/\uD83D\uDCFA/)).not.toBeInTheDocument();
+  });
+
+  it("renders OCR contribution in debug panel when > 0", async () => {
+    const user = userEvent.setup();
+    const ocrScene: SceneResult = {
+      ...sceneResult,
+      debug: {
+        ...baseDebug,
+        ocr_contribution: 0.27,
+      },
+    };
+    const resp: SceneSearchResponse = {
+      ...sceneResponse,
+      results: [ocrScene],
+    };
+    render(<SearchResults response={resp} showDebug={true} agentAvailable={false} />);
+
+    const debugToggle = screen.getByText("Debug Info");
+    await user.click(debugToggle);
+
+    expect(screen.getByText("OCR Contribution:")).toBeInTheDocument();
+    expect(screen.getByText("0.2700")).toBeInTheDocument();
+  });
+
+  it("does not render OCR contribution in debug panel when 0", async () => {
+    const user = userEvent.setup();
+    render(<SearchResults response={sceneResponse} showDebug={true} agentAvailable={false} />);
+
+    const debugToggle = screen.getByText("Debug Info");
+    await user.click(debugToggle);
+
+    expect(screen.queryByText("OCR Contribution:")).not.toBeInTheDocument();
   });
 });

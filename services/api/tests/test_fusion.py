@@ -203,6 +203,18 @@ class TestQualityFactor:
         source = {"transcript_norm": "a" * GOOD_TRANSCRIPT_CHARS}
         assert compute_quality_factor(source) == 1.0
 
+    def test_quality_factor_with_ocr_only(self):
+        source = {"ocr_char_count": 100}
+        assert compute_quality_factor(source) == 1.0
+
+    def test_quality_factor_with_transcript_and_ocr(self):
+        source = {"transcript_char_count": 50, "ocr_char_count": 60}
+        assert compute_quality_factor(source) == 1.0
+
+    def test_quality_factor_ocr_supplements_low_transcript(self):
+        source = {"transcript_char_count": 15, "ocr_char_count": 10}
+        assert compute_quality_factor(source) > QUALITY_FLOOR
+
 
 class TestRRFContributions:
     def test_contributions_tracked(self):

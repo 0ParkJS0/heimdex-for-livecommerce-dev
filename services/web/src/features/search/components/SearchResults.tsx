@@ -18,6 +18,11 @@ import { useState } from "react";
 function getMatchSignal(debug: DebugInfo): { label: string; color: string } {
   const total = debug.lexical_contribution + debug.vector_contribution;
   if (total === 0) return { label: "No signal", color: "bg-gray-100 text-gray-600" };
+
+  if (debug.ocr_contribution && debug.ocr_contribution / total > 0.7) {
+    return { label: "On-screen match", color: "bg-orange-100 text-orange-700" };
+  }
+
   const lexicalPct = debug.lexical_contribution / total;
   if (lexicalPct > 0.7) return { label: "Keyword match", color: "bg-green-100 text-green-700" };
   if (lexicalPct < 0.3) return { label: "Semantic match", color: "bg-purple-100 text-purple-700" };
@@ -329,6 +334,12 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
           <p className="text-sm text-gray-700 line-clamp-2 mb-2">
             {result.snippet}
           </p>
+
+          {result.ocr_snippet && result.ocr_snippet.trim() && (
+            <p className="text-sm text-gray-500 mt-0.5 mb-2 line-clamp-1">
+              📺 {result.ocr_snippet}
+            </p>
+          )}
 
           <div className="flex items-center gap-2 mb-2">
             <span className="text-xs text-gray-500">Quality:</span>
@@ -686,6 +697,17 @@ function DebugPanel({ debug }: { debug: DebugInfo }) {
             {debug.vector_contribution.toFixed(4)}
           </span>
         </div>
+        {debug.ocr_contribution > 0 && (
+          <>
+            <div>
+              <span className="text-gray-500">OCR Contribution:</span>{" "}
+              <span className="text-orange-600">
+                {debug.ocr_contribution.toFixed(4)}
+              </span>
+            </div>
+            <div />
+          </>
+        )}
         <div>
           <span className="text-gray-500">Fused Score:</span>{" "}
           <span className="text-gray-900">

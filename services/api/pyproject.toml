@@ -23,7 +23,11 @@ dependencies = [
     "tenacity>=8.2.3",
     "sentence-transformers>=2.2.0",
     "torch>=2.0.0",
+    "heimdex-media-contracts",
 ]
+
+[tool.uv.sources]
+heimdex-media-contracts = { path = "../../../heimdex-media-contracts" }
 
 [project.optional-dependencies]
 dev = [

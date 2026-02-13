@@ -1,5 +1,6 @@
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from app.config import get_settings
 from app.logging_config import get_logger
@@ -17,7 +18,7 @@ QUALITY_FLOOR = 0.7         # Minimum quality multiplier (never filter completel
 class RankedItem:
     doc_id: str
     video_id: str
-    source: dict
+    source: dict[str, Any]
     lexical_rank: int | None = None
     lexical_score: float | None = None
     vector_rank: int | None = None
@@ -36,7 +37,7 @@ def rrf_score(rank: int | None, k: int = 60) -> float:
     return 1.0 / (k + rank)
 
 
-def compute_quality_factor(source: dict) -> float:
+def compute_quality_factor(source: dict[str, Any]) -> float:
     """
     Compute quality factor based on transcript character count.
     
@@ -48,15 +49,34 @@ def compute_quality_factor(source: dict) -> float:
     Returns:
         Quality factor between QUALITY_FLOOR (0.7) and 1.0
     """
-    char_count = source.get("transcript_char_count_normalized", 0)
-    
+    raw_char_count = source.get("transcript_char_count_normalized", 0)
+    char_count = raw_char_count if isinstance(raw_char_count, int) else 0
+
     if char_count == 0:
-        char_count = source.get("transcript_char_count", 0)
-    
+        fallback_char_count = source.get("transcript_char_count", 0)
+        char_count = fallback_char_count if isinstance(fallback_char_count, int) else 0
+
     if char_count == 0:
-        transcript = source.get("transcript_raw", "") or source.get("transcript_norm", "")
+        transcript_raw = source.get("transcript_raw", "")
+        transcript_norm = source.get("transcript_norm", "")
+        transcript = transcript_raw if isinstance(transcript_raw, str) else ""
+        if not transcript:
+            transcript = transcript_norm if isinstance(transcript_norm, str) else ""
         if transcript:
             char_count = get_normalized_char_count(transcript)
+
+    raw_ocr_char_count = source.get("ocr_char_count", 0)
+    ocr_char_count = raw_ocr_char_count if isinstance(raw_ocr_char_count, int) else 0
+    if ocr_char_count == 0:
+        ocr_text_raw = source.get("ocr_text_raw", "")
+        ocr_text_norm = source.get("ocr_text_norm", "")
+        ocr_text = ocr_text_raw if isinstance(ocr_text_raw, str) else ""
+        if not ocr_text:
+            ocr_text = ocr_text_norm if isinstance(ocr_text_norm, str) else ""
+        if ocr_text:
+            ocr_char_count = get_normalized_char_count(ocr_text)
+
+    char_count = char_count + ocr_char_count
     
     if char_count >= GOOD_TRANSCRIPT_CHARS:
         return 1.0
@@ -68,8 +88,8 @@ def compute_quality_factor(source: dict) -> float:
 
 
 def compute_weighted_rrf(
-    lexical_results: list[dict],
-    vector_results: list[dict],
+    lexical_results: list[dict[str, Any]],
+    vector_results: list[dict[str, Any]],
     alpha: float,
 ) -> list[RankedItem]:
     settings = get_settings()
@@ -78,32 +98,42 @@ def compute_weighted_rrf(
     items: dict[str, RankedItem] = {}
     
     for rank, hit in enumerate(lexical_results, start=1):
-        doc_id = hit["_id"]
-        video_id = hit["_source"].get("video_id", "")
+        doc_id = str(hit.get("_id", ""))
+        source_raw = hit.get("_source", {})
+        source = source_raw if isinstance(source_raw, dict) else {}
+        video_id = str(source.get("video_id", ""))
         
         if doc_id not in items:
             items[doc_id] = RankedItem(
                 doc_id=doc_id,
                 video_id=video_id,
-                source=hit["_source"],
+                source=source,
             )
         
         items[doc_id].lexical_rank = rank
-        items[doc_id].lexical_score = hit.get("_score", 0.0)
+        lexical_score = hit.get("_score", 0.0)
+        items[doc_id].lexical_score = (
+            float(lexical_score) if isinstance(lexical_score, (int, float)) else 0.0
+        )
     
     for rank, hit in enumerate(vector_results, start=1):
-        doc_id = hit["_id"]
-        video_id = hit["_source"].get("video_id", "")
+        doc_id = str(hit.get("_id", ""))
+        source_raw = hit.get("_source", {})
+        source = source_raw if isinstance(source_raw, dict) else {}
+        video_id = str(source.get("video_id", ""))
         
         if doc_id not in items:
             items[doc_id] = RankedItem(
                 doc_id=doc_id,
                 video_id=video_id,
-                source=hit["_source"],
+                source=source,
             )
         
         items[doc_id].vector_rank = rank
-        items[doc_id].vector_score = hit.get("_score", 0.0)
+        vector_score = hit.get("_score", 0.0)
+        items[doc_id].vector_score = (
+            float(vector_score) if isinstance(vector_score, (int, float)) else 0.0
+        )
     
     for item in items.values():
         lex_contribution = (1 - alpha) * rrf_score(item.lexical_rank, k)

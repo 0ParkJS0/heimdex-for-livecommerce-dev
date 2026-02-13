@@ -87,3 +87,46 @@ class VideoStats(BaseModel):
     latest_ingest_time: str | None = None
     scenes_last_24h: int = 0
     scenes_last_7d: int = 0
+
+
+class ShortsPlanRequest(BaseModel):
+    target_count: int = Field(
+        default=15,
+        ge=1,
+        le=50,
+        description="Number of shorts candidates to generate",
+    )
+    min_duration_ms: int = Field(
+        default=30_000,
+        ge=5_000,
+        description="Minimum scene duration in ms",
+    )
+    max_duration_ms: int = Field(
+        default=60_000,
+        le=120_000,
+        description="Maximum scene duration in ms",
+    )
+    weights: dict[str, float] | None = Field(default=None, description="Override scoring weights")
+
+
+class ShortsCandidateResponse(BaseModel):
+    candidate_id: str
+    video_id: str
+    scene_ids: list[str]
+    start_ms: int
+    end_ms: int
+    title_suggestion: str = ""
+    reason: str = ""
+    score: float = 0.0
+    tags: list[str] = Field(default_factory=list)
+    product_refs: list[str] = Field(default_factory=list)
+    people_refs: list[str] = Field(default_factory=list)
+    transcript_snippet: str = ""
+
+
+class ShortsPlanResponse(BaseModel):
+    video_id: str
+    video_title: str | None = None
+    total_scenes: int
+    eligible_scenes: int
+    candidates: list[ShortsCandidateResponse]

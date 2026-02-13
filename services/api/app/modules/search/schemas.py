@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -32,12 +32,12 @@ class SearchFilters(BaseModel):
     person_cluster_ids: list[str] | None = None
 
     # Tag-based scene filters (additive — empty list = no filter)
-    keyword_tags_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
-    keyword_tags_not_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
-    product_tags_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
-    product_tags_not_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
-    product_entities_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
-    product_entities_not_in: Annotated[list[str], Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)]
+    keyword_tags_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
+    keyword_tags_not_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
+    product_tags_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
+    product_tags_not_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
+    product_entities_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
+    product_entities_not_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
 
     @field_validator(
         "keyword_tags_in", "keyword_tags_not_in",
@@ -53,7 +53,11 @@ class SearchFilters(BaseModel):
 class SearchRequest(BaseModel):
     q: str = Field(..., min_length=1, max_length=1000)
     alpha: float = Field(default=0.5, ge=0.0, le=1.0)
-    filters: SearchFilters = Field(default_factory=SearchFilters)
+    filters: SearchFilters = Field(default_factory=lambda: SearchFilters())
+    include_ocr: bool | None = Field(
+        default=None,
+        description="Per-request OCR toggle. None=server default, True=include, False=exclude",
+    )
 
 
 class DebugInfo(BaseModel):
@@ -63,6 +67,7 @@ class DebugInfo(BaseModel):
     vector_score: float | None = None
     lexical_contribution: float = 0.0
     vector_contribution: float = 0.0
+    ocr_contribution: float = 0.0
     fused_score: float
     quality_factor: float = 1.0
     adjusted_score: float
@@ -127,12 +132,14 @@ class SceneResult(BaseModel):
     start_ms: int
     end_ms: int
     snippet: str
+    ocr_snippet: str = ""
     thumbnail_url: str | None
     source_type: Literal["gdrive", "removable_disk", "local"]
     required_drive_nickname: str | None = None
     capture_time: datetime | None = None
     people_cluster_ids: list[str] = Field(default_factory=list)
     speech_segment_count: int = 0
+    ocr_char_count: int = 0
     keyframe_timestamp_ms: int = 0
     debug: DebugInfo
 

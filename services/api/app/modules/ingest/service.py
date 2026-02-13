@@ -27,7 +27,7 @@ from app.logging_config import get_logger
 from app.modules.ingest.schemas import IngestSceneDocument, IngestScenesRequest
 from app.modules.libraries.repository import LibraryRepository
 from app.modules.search.embedding import get_passage_embedding, get_passage_embeddings_batch
-from app.modules.search.normalize import normalize_transcript, get_normalized_char_count
+from app.modules.search.normalize import normalize_transcript
 from app.modules.search.scene_client import SceneSearchClient
 
 logger = get_logger(__name__)
@@ -86,16 +86,22 @@ class SceneIngestService:
         now = datetime.now(timezone.utc)
         org_id_str = str(org_id)
 
-        normalized: list[str] = [
-            normalize_transcript(scene.transcript_raw)
-            for scene in request.scenes
-        ]
+        normalized: list[tuple[str, str, int]] = []
+        for scene in request.scenes:
+            transcript_norm = normalize_transcript(scene.transcript_raw)
+            ocr_norm = normalize_transcript(scene.ocr_text_raw) if scene.ocr_text_raw else ""
+            ocr_char_count = len(ocr_norm)
+            normalized.append((transcript_norm, ocr_norm, ocr_char_count))
 
-        # Collect non-empty normalized transcripts for batch embedding
         transcripts_to_embed: list[tuple[int, str]] = []
-        for idx, norm in enumerate(normalized):
-            if norm:
-                transcripts_to_embed.append((idx, norm))
+        for idx, (transcript_norm, ocr_norm, _) in enumerate(normalized):
+            embedding_text = transcript_norm
+            if ocr_norm:
+                embedding_text = (
+                    f"{transcript_norm} {ocr_norm}".strip() if transcript_norm else ocr_norm
+                )
+            if embedding_text:
+                transcripts_to_embed.append((idx, embedding_text))
 
         # 3. Batch embed non-empty transcripts
         embeddings: dict[int, list[float]] = {}
@@ -110,7 +116,7 @@ class SceneIngestService:
         # 4. Build bulk index payload (reuse cached normalized transcripts)
         documents: list[tuple[str, dict[str, Any]]] = []
         for idx, scene in enumerate(request.scenes):
-            transcript_norm = normalized[idx]
+            transcript_norm, ocr_norm, ocr_char_count = normalized[idx]
             char_count = len(transcript_norm)
 
             doc: dict[str, Any] = {
@@ -129,6 +135,9 @@ class SceneIngestService:
                 "keyword_tags": scene.keyword_tags,
                 "product_tags": scene.product_tags,
                 "product_entities": scene.product_entities,
+                "ocr_text_raw": scene.ocr_text_raw,
+                "ocr_text_norm": ocr_norm,
+                "ocr_char_count": ocr_char_count,
                 "source_type": scene.source_type,
                 "required_drive_nickname": scene.required_drive_nickname,
                 "capture_time": scene.capture_time.isoformat() if scene.capture_time else None,

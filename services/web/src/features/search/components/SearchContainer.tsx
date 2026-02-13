@@ -16,8 +16,10 @@ export function SearchContainer() {
     isLoading,
     error,
     showDebug,
+    includeOcr,
     setAlpha,
     setShowDebug,
+    setIncludeOcr,
     handleSearch,
     handleFiltersChange,
     login,
@@ -91,15 +93,26 @@ export function SearchContainer() {
             <AlphaSlider value={alpha} onChange={setAlpha} />
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-gray-600">
-            <input
-              type="checkbox"
-              checked={showDebug}
-              onChange={(e) => setShowDebug(e.target.checked)}
-              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-            Debug Mode
-          </label>
+          <div className="flex items-center gap-6">
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={includeOcr}
+                onChange={(e) => setIncludeOcr(e.target.checked)}
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              Include on-screen text
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={showDebug}
+                onChange={(e) => setShowDebug(e.target.checked)}
+                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              Debug Mode
+            </label>
+          </div>
         </div>
 
         {renderError()}

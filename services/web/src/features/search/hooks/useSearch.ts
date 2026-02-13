@@ -25,6 +25,7 @@ export interface UseSearchReturn {
   error: SearchError | null;
   lastQuery: string;
   showDebug: boolean;
+  includeOcr: boolean;
   orgSlug: string;
   searchMode: string;
 
@@ -37,6 +38,7 @@ export interface UseSearchReturn {
   // Actions
   setAlpha: (value: number) => void;
   setShowDebug: (value: boolean) => void;
+  setIncludeOcr: (value: boolean) => void;
   handleSearch: (query: string) => Promise<void>;
   handleFiltersChange: (newFilters: SearchFilters) => void;
   login: () => void;
@@ -50,6 +52,7 @@ export function useSearch(): UseSearchReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<SearchError | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [includeOcr, setIncludeOcr] = useState(true);
   const [lastQuery, setLastQuery] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
 
@@ -72,17 +75,17 @@ export function useSearch(): UseSearchReturn {
         let result: AnySearchResponse;
         if (searchMode === "scenes") {
           try {
-            const sceneResult: SceneSearchResponse = await searchScenes({ q: query, alpha, filters: activeFilters });
+            const sceneResult: SceneSearchResponse = await searchScenes({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr });
             result = sceneResult;
           } catch (err) {
             if (err instanceof ApiError && err.status === 404) {
-              result = await search({ q: query, alpha, filters: activeFilters });
+              result = await search({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr });
             } else {
               throw err;
             }
           }
         } else {
-          result = await search({ q: query, alpha, filters: activeFilters });
+          result = await search({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr });
         }
         setResponse(result);
       } catch (err) {
@@ -96,7 +99,7 @@ export function useSearch(): UseSearchReturn {
         setIsLoading(false);
       }
     },
-    [alpha, filters, search, searchScenes, searchMode]
+    [alpha, filters, search, searchScenes, searchMode, includeOcr]
   );
 
   const handleFiltersChange = useCallback(
@@ -118,6 +121,7 @@ export function useSearch(): UseSearchReturn {
     error,
     lastQuery,
     showDebug,
+    includeOcr,
     orgSlug,
     searchMode,
 
@@ -130,6 +134,7 @@ export function useSearch(): UseSearchReturn {
     // Actions
     setAlpha,
     setShowDebug,
+    setIncludeOcr,
     handleSearch,
     handleFiltersChange,
     login,

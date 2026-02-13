@@ -46,6 +46,9 @@ env.bak/
 venv.bak/
 .python-version
 
+# Lockfiles (uv)
+uv.lock
+
 # Testing
 .tox/
 .nox/

@@ -28,6 +28,8 @@ class TestSceneSearchClient:
             settings = MagicMock()
             settings.opensearch_url = "http://localhost:9200"
             settings.opensearch_index_prefix = "test_scenes"
+            settings.ocr_search_enabled = True
+            settings.ocr_bm25_boost = 0.6
             mock_settings.return_value = settings
 
             async_client = MagicMock()
@@ -130,7 +132,13 @@ class TestSceneSearchClient:
         assert props["transcript_raw"]["type"] == "text"
         assert props["transcript_norm"]["type"] == "text"
         assert props["transcript_char_count"]["type"] == "integer"
+        assert props["ocr_text_raw"]["type"] == "text"
+        assert props["ocr_text_norm"]["type"] == "text"
+        assert props["ocr_char_count"]["type"] == "integer"
         assert props["speech_segment_count"]["type"] == "integer"
+
+        assert props["ocr_text_norm"]["analyzer"] == props["transcript_norm"]["analyzer"]
+        assert props["ocr_text_norm"]["search_analyzer"] == props["transcript_norm"]["search_analyzer"]
 
         # kNN vector
         emb = props["embedding_vector"]
@@ -343,7 +351,7 @@ class TestSceneSearchClient:
             index=client.index_name,
             id="vid1_scene_000",
             body=doc,
-            refresh=True,
+            params={"refresh": "true"},
         )
 
     @pytest.mark.asyncio
@@ -426,8 +434,11 @@ class TestSceneSearchClient:
         # Short query: should have 'should' with match_phrase boost
         assert "should" in query
         phrase_clauses = [c for c in query["should"] if "match_phrase" in c]
-        assert len(phrase_clauses) == 1
-        assert phrase_clauses[0]["match_phrase"]["transcript_norm"]["boost"] == 2.0
+        transcript_phrase = [
+            c for c in phrase_clauses if "transcript_norm" in c["match_phrase"]
+        ]
+        assert len(transcript_phrase) == 1
+        assert transcript_phrase[0]["match_phrase"]["transcript_norm"]["boost"] == 2.0
 
     @pytest.mark.asyncio
     async def test_search_lexical_long_query_no_phrase_boost(self, mock_scene_client):
@@ -442,8 +453,122 @@ class TestSceneSearchClient:
         query = call_body["query"]["bool"]
 
         # Long query: should have 'must' without phrase boost
-        assert "should" not in query
         assert len(query["must"]) == 2  # org_id term + match query
+        phrase_clauses = [c for c in query.get("should", []) if "match_phrase" in c]
+        assert phrase_clauses == []
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_short_query_includes_ocr_clause(self, mock_scene_client):
+        """Short query should include OCR match and phrase clauses."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("sale off", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"]["should"]
+
+        ocr_match = [
+            c
+            for c in should_clauses
+            if "match" in c and "ocr_text_norm" in c["match"]
+        ]
+        ocr_phrase = [
+            c
+            for c in should_clauses
+            if "match_phrase" in c and "ocr_text_norm" in c["match_phrase"]
+        ]
+
+        assert len(ocr_match) == 1
+        assert len(ocr_phrase) == 1
+        assert ocr_match[0]["match"]["ocr_text_norm"]["boost"] == 0.6
+        assert ocr_phrase[0]["match_phrase"]["ocr_text_norm"]["boost"] == 1.2
+        assert ocr_phrase[0]["match_phrase"]["ocr_text_norm"]["slop"] == 1
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_long_query_includes_ocr_clause(self, mock_scene_client):
+        """Long query should include OCR match clause in should."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("this is a longer lexical query", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        query = call_body["query"]["bool"]
+        assert "should" in query
+        assert len(query["should"]) == 1
+        assert query["should"][0]["match"]["ocr_text_norm"]["boost"] == 0.6
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_ocr_disabled(self, mock_scene_client):
+        """OCR clauses should be absent when OCR search is disabled."""
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.ocr_search_enabled = False
+            settings.ocr_bm25_boost = 0.6
+            mock_get_settings.return_value = settings
+            await client.search_lexical("sale off", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        query = call_body["query"]["bool"]
+        for clause in query.get("should", []):
+            if "match" in clause:
+                assert "ocr_text_norm" not in clause["match"]
+            if "match_phrase" in clause:
+                assert "ocr_text_norm" not in clause["match_phrase"]
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_include_ocr_false_excludes_ocr_clauses(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("sale off", "org1", {}, include_ocr=False)
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        query = call_body["query"]["bool"]
+        for clause in query.get("should", []):
+            if "match" in clause:
+                assert "ocr_text_norm" not in clause["match"]
+            if "match_phrase" in clause:
+                assert "ocr_text_norm" not in clause["match_phrase"]
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_include_ocr_true_includes_ocr_clauses(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.ocr_search_enabled = False
+            settings.ocr_bm25_boost = 0.6
+            mock_get_settings.return_value = settings
+            await client.search_lexical("sale off", "org1", {}, include_ocr=True)
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"]["should"]
+        assert any("match" in c and "ocr_text_norm" in c["match"] for c in should_clauses)
+        assert any("match_phrase" in c and "ocr_text_norm" in c["match_phrase"] for c in should_clauses)
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_include_ocr_none_uses_setting(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("sale off", "org1", {}, include_ocr=None)
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"]["should"]
+        assert any("match" in c and "ocr_text_norm" in c["match"] for c in should_clauses)
+        assert any("match_phrase" in c and "ocr_text_norm" in c["match_phrase"] for c in should_clauses)
 
     @pytest.mark.asyncio
     async def test_search_lexical_includes_org_filter(self, mock_scene_client):

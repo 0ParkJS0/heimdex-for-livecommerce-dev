@@ -49,7 +49,7 @@ class SceneSearchClient:
     async def _check_nori_available(self) -> bool:
         """Check if the Nori analyzer plugin is installed."""
         try:
-            response = await self.client.cat.plugins(format="json")
+            response = await self.client.cat.plugins(params={"format": "json"})
             plugins = [p.get("component", "") for p in response]
             nori_installed = any("analysis-nori" in p for p in plugins)
             logger.info("scene_nori_plugin_check", installed=nori_installed)
@@ -196,6 +196,13 @@ class SceneSearchClient:
                     "search_analyzer": transcript_analyzer,
                 },
                 "transcript_char_count": {"type": "integer"},
+                "ocr_text_raw": {"type": "text"},
+                "ocr_text_norm": {
+                    "type": "text",
+                    "analyzer": transcript_analyzer,
+                    "search_analyzer": transcript_analyzer,
+                },
+                "ocr_char_count": {"type": "integer"},
                 # Embedding
                 "embedding_vector": {
                     "type": "knn_vector",
@@ -335,7 +342,7 @@ class SceneSearchClient:
             index=self.index_name,
             id=doc_id,
             body=document,
-            refresh=True,
+            params={"refresh": "true"},
         )
 
     async def bulk_index_scenes(self, documents: list[tuple[str, dict[str, Any]]]) -> None:
@@ -352,7 +359,7 @@ class SceneSearchClient:
             actions.append({"index": {"_index": self.index_name, "_id": doc_id}})
             actions.append(doc)
 
-        await self.client.bulk(body=actions, refresh=True)
+        await self.client.bulk(body=actions, params={"refresh": "true"})
         logger.info("scene_bulk_indexed_documents", count=len(documents))
 
     # ------------------------------------------------------------------
@@ -364,13 +371,17 @@ class SceneSearchClient:
         org_id: str,
         filters: dict[str, Any],
         size: int = 200,
+        include_ocr: bool | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 lexical search on scene transcripts.
 
         Short queries (<=3 words) get phrase-boost for precision,
         matching the segment client behaviour.
         """
+        settings = get_settings()
         filter_clauses, must_not_clauses = self._build_filter_clauses(filters)
+        ocr_bm25_boost = settings.ocr_bm25_boost
+        ocr_enabled = include_ocr if include_ocr is not None else settings.ocr_search_enabled
 
         match_query: dict[str, Any] = {
             "match": {
@@ -385,21 +396,47 @@ class SceneSearchClient:
         query_word_count = len(query.split())
 
         if query_word_count <= 3:
-            search_query: dict[str, Any] = {
-                "bool": {
-                    "must": [{"term": {"org_id": org_id}}],
-                    "should": [
-                        match_query,
+            should_clauses: list[dict[str, Any]] = [
+                match_query,
+                {
+                    "match_phrase": {
+                        "transcript_norm": {
+                            "query": query,
+                            "boost": 2.0,
+                            "slop": 1,
+                        }
+                    }
+                },
+            ]
+            if ocr_enabled:
+                should_clauses.extend(
+                    [
+                        {
+                            "match": {
+                                "ocr_text_norm": {
+                                    "query": query,
+                                    "operator": "or",
+                                    "minimum_should_match": "50%",
+                                    "boost": ocr_bm25_boost,
+                                }
+                            }
+                        },
                         {
                             "match_phrase": {
-                                "transcript_norm": {
+                                "ocr_text_norm": {
                                     "query": query,
-                                    "boost": 2.0,
+                                    "boost": ocr_bm25_boost * 2,
                                     "slop": 1,
                                 }
                             }
                         },
-                    ],
+                    ]
+                )
+
+            search_query: dict[str, Any] = {
+                "bool": {
+                    "must": [{"term": {"org_id": org_id}}],
+                    "should": should_clauses,
                     "minimum_should_match": 1,
                     "filter": filter_clauses,
                 }
@@ -414,6 +451,19 @@ class SceneSearchClient:
                     "filter": filter_clauses,
                 }
             }
+            if ocr_enabled:
+                search_query["bool"]["should"] = [
+                    {
+                        "match": {
+                            "ocr_text_norm": {
+                                "query": query,
+                                "operator": "or",
+                                "minimum_should_match": "50%",
+                                "boost": ocr_bm25_boost,
+                            }
+                        }
+                    }
+                ]
 
         if must_not_clauses:
             search_query["bool"]["must_not"] = must_not_clauses
@@ -571,6 +621,8 @@ class SceneSearchClient:
             drive_buckets = bucket["required_drive_nickname"]["buckets"]
             kw_buckets = bucket["keyword_tags"]["buckets"]
             pt_buckets = bucket["product_tags"]["buckets"]
+            keyframe_agg = bucket.get("min_keyframe_ms", {})
+            keyframe_ms = int(keyframe_agg.get("value") or 0)
 
             videos.append({
                 "video_id": video_id,
@@ -582,7 +634,7 @@ class SceneSearchClient:
                 "last_scene_end_ms": int(bucket["max_end_ms"]["value"] or 0),
                 "earliest_ingest_time": bucket["earliest_ingest"]["value_as_string"] if bucket["earliest_ingest"]["value"] else None,
                 "latest_ingest_time": bucket["latest_ingest"]["value_as_string"] if bucket["latest_ingest"]["value"] else None,
-                "first_scene_keyframe_ms": int(bucket["min_keyframe_ms"]["value"] or 0),
+                "first_scene_keyframe_ms": keyframe_ms,
                 "keyword_tags": [b["key"] for b in kw_buckets],
                 "product_tags": [b["key"] for b in pt_buckets],
                 "people_count": int(bucket["people_count"]["value"]),

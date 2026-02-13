@@ -46,6 +46,7 @@ async def search(
             org_id=org_ctx.org_id,
             alpha=request.alpha,
             filters=request.filters,
+            include_ocr=request.include_ocr,
         )
 
     return await search_service.search(
@@ -77,4 +78,5 @@ async def search_scenes(
         org_id=org_ctx.org_id,
         alpha=request.alpha,
         filters=request.filters,
+        include_ocr=request.include_ocr,
     )
