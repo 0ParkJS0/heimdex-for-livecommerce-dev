@@ -14,9 +14,13 @@ import hmac
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.db.base import get_db_session
 from app.logging_config import get_logger
+from app.modules.orgs.models import Org
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
 
@@ -28,6 +32,7 @@ _bearer_scheme = HTTPBearer()
 async def verify_agent_token(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     org_ctx: OrgContext = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db_session),
 ) -> OrgContext:
     """
     Validate agent Bearer token and return resolved org context.
@@ -53,14 +58,53 @@ async def verify_agent_token(
             detail="Agent ingestion is disabled",
         )
 
-    if not hmac.compare_digest(credentials.credentials, settings.agent_api_key):
+    org_api_key: str | None = None
+    if hasattr(db, "execute"):
+        result = await db.execute(select(Org).where(Org.id == org_ctx.org_id))
+        org = result.scalar_one_or_none()
+        if org is not None:
+            org_api_key = org.agent_api_key
+
+    token = credentials.credentials
+    mode = settings.agent_api_key_mode
+
+    if mode == "per-org":
+        if not org_api_key or not hmac.compare_digest(token, org_api_key):
+            logger.warning(
+                "agent_ingest_invalid_token",
+                org_slug=org_ctx.org_slug,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid agent API key",
+            )
+    elif org_api_key:
+        if not hmac.compare_digest(token, org_api_key):
+            logger.warning(
+                "agent_ingest_invalid_token",
+                org_slug=org_ctx.org_slug,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid agent API key",
+            )
+    else:
+        logger.warning("agent_ingest_global_fallback", org_slug=org_ctx.org_slug)
+        if not hmac.compare_digest(token, settings.agent_api_key):
+            logger.warning(
+                "agent_ingest_invalid_token",
+                org_slug=org_ctx.org_slug,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid agent API key",
+            )
+
+    if mode not in {"global", "per-org"}:
         logger.warning(
-            "agent_ingest_invalid_token",
+            "agent_ingest_invalid_mode",
+            mode=mode,
             org_slug=org_ctx.org_slug,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid agent API key",
         )
 
     logger.debug(

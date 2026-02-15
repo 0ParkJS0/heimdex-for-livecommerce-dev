@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     # Pre-shared API key for agent → SaaS authentication.
     # Must match the HEIMDEX_CLOUD_TOKEN configured on the agent.
     agent_api_key: str = "dev-agent-key-change-in-production"
+    agent_api_key_mode: str = "global"  # "global" or "per-org"
     # Maximum number of scenes per ingest request (DoS protection).
     agent_ingest_max_scenes: int = 500
     # Maximum characters allowed in transcript_raw per scene (OOM protection).

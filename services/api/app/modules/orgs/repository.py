@@ -27,3 +27,12 @@ class OrgRepository:
     async def list_all(self) -> list[Org]:
         result = await self.session.execute(select(Org))
         return list(result.scalars().all())
+
+    async def rotate_agent_api_key(self, org_id: UUID, new_key: str) -> Org:
+        result = await self.session.execute(select(Org).where(Org.id == org_id))
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise ValueError(f"Org {org_id} not found")
+        org.agent_api_key = new_key
+        await self.session.flush()
+        return org
