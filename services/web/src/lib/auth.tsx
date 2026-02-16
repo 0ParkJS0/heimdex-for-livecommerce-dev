@@ -145,12 +145,22 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
   } = useAuth0();
 
   const login = useCallback(() => {
-    loginWithRedirect();
+    loginWithRedirect({
+      authorizationParams: {
+        audience: AUTH0_AUDIENCE,
+        ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+      },
+    });
   }, [loginWithRedirect]);
 
   const loginWithCredentials = useCallback(
     async (_email: string, _password: string) => {
-      await loginWithRedirect();
+      await loginWithRedirect({
+        authorizationParams: {
+          audience: AUTH0_AUDIENCE,
+          ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+        },
+      });
     },
     [loginWithRedirect]
   );
