@@ -313,11 +313,15 @@ class TestSceneSearchService:
     # ------------------------------------------------------------------
     @pytest.mark.asyncio
     async def test_filters_passed_to_client(
-        self, scene_search_service, mock_scene_opensearch_client, _patch_db_session
+        self, scene_search_service, mock_scene_opensearch_client
     ):
         """Filters should be forwarded to SceneSearchClient methods."""
         org_id = uuid4()
         lib_id = uuid4()
+
+        mock_lib = MagicMock()
+        mock_lib.id = str(lib_id)
+        mock_lib.name = "Test Library"
 
         filters = SearchFilters(
             source_types=["gdrive"],
@@ -325,9 +329,14 @@ class TestSceneSearchService:
             person_cluster_ids=["cluster1"],
         )
 
-        await scene_search_service.search(
-            query="test", org_id=org_id, alpha=0.5, filters=filters
-        )
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.return_value = mock_result
+
+            await scene_search_service.search(
+                query="test", org_id=org_id, alpha=0.5, filters=filters
+            )
 
         call_args = mock_scene_opensearch_client.search_lexical.call_args
         filter_dict = call_args.kwargs["filters"]
@@ -457,6 +466,109 @@ class TestSceneSearchService:
         r = response.results[0]
         assert r.debug.quality_factor < 1.0
         assert r.debug.adjusted_score < r.debug.fused_score
+
+
+class TestLibraryIdValidation:
+    """Validate that library_ids in search filters belong to the requesting org."""
+
+    @pytest.fixture
+    def scene_search_service(self, mock_db_session, mock_scene_opensearch_client):
+        return SceneSearchService(mock_db_session, mock_scene_opensearch_client)
+
+    @pytest.mark.asyncio
+    async def test_unknown_library_id_returns_400(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        """library_ids not belonging to the org should be rejected with 400."""
+        from fastapi import HTTPException
+
+        org_id = uuid4()
+        known_lib_id = uuid4()
+        unknown_lib_id = uuid4()
+
+        mock_lib = MagicMock()
+        mock_lib.id = str(known_lib_id)
+        mock_lib.name = "Known Library"
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.return_value = mock_result
+
+            filters = SearchFilters(library_ids=[unknown_lib_id])
+            with pytest.raises(HTTPException) as exc_info:
+                await scene_search_service.search(
+                    query="test", org_id=org_id, alpha=0.5, filters=filters
+                )
+            assert exc_info.value.status_code == 400
+            assert "Unknown library_ids" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_known_library_id_passes(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        """library_ids belonging to the org should pass validation."""
+        org_id = uuid4()
+        lib_id = uuid4()
+
+        mock_lib = MagicMock()
+        mock_lib.id = str(lib_id)
+        mock_lib.name = "My Library"
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.return_value = mock_result
+
+            filters = SearchFilters(library_ids=[lib_id])
+            response = await scene_search_service.search(
+                query="test", org_id=org_id, alpha=0.5, filters=filters
+            )
+            assert response is not None
+
+    @pytest.mark.asyncio
+    async def test_no_library_ids_skips_validation(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        """When no library_ids are specified, validation is skipped."""
+        org_id = uuid4()
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = []
+            mock_execute.return_value = mock_result
+
+            response = await scene_search_service.search(
+                query="test", org_id=org_id, alpha=0.5, filters=SearchFilters()
+            )
+            assert response is not None
+
+    @pytest.mark.asyncio
+    async def test_mixed_known_unknown_returns_400(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        """Mix of known and unknown library_ids should be rejected."""
+        from fastapi import HTTPException
+
+        org_id = uuid4()
+        known_id = uuid4()
+        unknown_id = uuid4()
+
+        mock_lib = MagicMock()
+        mock_lib.id = str(known_id)
+        mock_lib.name = "Known"
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.return_value = mock_result
+
+            filters = SearchFilters(library_ids=[known_id, unknown_id])
+            with pytest.raises(HTTPException) as exc_info:
+                await scene_search_service.search(
+                    query="test", org_id=org_id, alpha=0.5, filters=filters
+                )
+            assert exc_info.value.status_code == 400
 
 
 def test_search_request_include_ocr_default_none():

@@ -11,6 +11,7 @@ independent candidate.
 import html
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -105,6 +106,15 @@ class SceneSearchService:
         library_repo = LibraryRepository(self.session)
         libraries = await library_repo.list_by_org(org_id)
         library_map = {str(lib.id): lib.name for lib in libraries}
+
+        if filters.library_ids:
+            requested = {str(lid) for lid in filters.library_ids}
+            unknown = requested - set(library_map.keys())
+            if unknown:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unknown library_ids: {sorted(unknown)}",
+                )
 
         people_repo = PeopleClusterLabelRepository(self.session)
         people_labels = await people_repo.list_by_org(org_id)
