@@ -157,6 +157,36 @@ class SceneIngestService:
         # 5. Bulk index
         await self.scene_opensearch.bulk_index_scenes(documents)
 
+        all_cluster_ids: set[str] = set()
+        for scene in request.scenes:
+            for cluster_id in scene.people_cluster_ids:
+                if cluster_id:
+                    all_cluster_ids.add(cluster_id)
+
+        if all_cluster_ids:
+            try:
+                from app.modules.people.repository import PeopleClusterLabelRepository
+
+                people_repo = PeopleClusterLabelRepository(self.session)
+                for cluster_id in all_cluster_ids:
+                    existing = await people_repo.get_by_cluster_id(org_id, cluster_id)
+                    if existing is None:
+                        await people_repo.set_label(org_id, cluster_id, None)
+                await self.session.flush()
+                logger.info(
+                    "people_cluster_labels_upserted",
+                    org_id=org_id_str,
+                    video_id=request.video_id,
+                    cluster_count=len(all_cluster_ids),
+                )
+            except Exception as e:
+                logger.warning(
+                    "people_cluster_labels_upsert_failed",
+                    org_id=org_id_str,
+                    video_id=request.video_id,
+                    error=str(e),
+                )
+
         t_after_index = _time.monotonic()
 
         logger.info(

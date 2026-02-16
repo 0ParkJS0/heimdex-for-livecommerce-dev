@@ -380,9 +380,12 @@ class SceneSearchClient:
         matching the segment client behaviour.
         """
         settings = get_settings()
+        raw_ocr_enabled = getattr(settings, "ocr_search_enabled", True)
+        default_ocr_enabled = raw_ocr_enabled if isinstance(raw_ocr_enabled, bool) else False
+        raw_ocr_bm25_boost = getattr(settings, "ocr_bm25_boost", 0.6)
+        ocr_bm25_boost = float(raw_ocr_bm25_boost) if isinstance(raw_ocr_bm25_boost, int | float) else 0.6
         filter_clauses, must_not_clauses = self._build_filter_clauses(filters)
-        ocr_bm25_boost = settings.ocr_bm25_boost
-        ocr_enabled = include_ocr if include_ocr is not None else settings.ocr_search_enabled
+        ocr_enabled = include_ocr if include_ocr is not None else default_ocr_enabled
 
         match_query: dict[str, Any] = {
             "match": {
@@ -621,7 +624,7 @@ class SceneSearchClient:
             title_buckets = bucket["video_title"]["buckets"]
             src_buckets = bucket["source_type"]["buckets"]
             drive_buckets = bucket["required_drive_nickname"]["buckets"]
-            sp_buckets = bucket["source_path"]["buckets"]
+            sp_buckets = bucket.get("source_path", {}).get("buckets", [])
             kw_buckets = bucket["keyword_tags"]["buckets"]
             pt_buckets = bucket["product_tags"]["buckets"]
             keyframe_agg = bucket.get("min_keyframe_ms", {})
@@ -809,6 +812,9 @@ class SceneSearchClient:
 
         if filters.get("person_cluster_ids"):
             clauses.append({"terms": {"people_cluster_ids": filters["person_cluster_ids"]}})
+
+        if filters.get("person_cluster_ids_not_in"):
+            must_not.append({"terms": {"people_cluster_ids": filters["person_cluster_ids_not_in"]}})
 
         # Tag inclusion filters (OR within field, AND across fields)
         _TAG_IN_FIELDS = {

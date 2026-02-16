@@ -30,6 +30,7 @@ class SearchFilters(BaseModel):
     source_types: list[Literal["gdrive", "removable_disk", "local"]] | None = None
     library_ids: list[UUID] | None = None
     person_cluster_ids: list[str] | None = None
+    person_cluster_ids_not_in: list[str] | None = None
 
     # Tag-based scene filters (additive — empty list = no filter)
     keyword_tags_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)

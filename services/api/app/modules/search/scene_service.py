@@ -66,6 +66,7 @@ class SceneSearchService:
             "source_types": filters.source_types,
             "library_ids": filters.library_ids,
             "person_cluster_ids": filters.person_cluster_ids,
+            "person_cluster_ids_not_in": filters.person_cluster_ids_not_in,
             "keyword_tags_in": filters.keyword_tags_in,
             "keyword_tags_not_in": filters.keyword_tags_not_in,
             "product_tags_in": filters.product_tags_in,

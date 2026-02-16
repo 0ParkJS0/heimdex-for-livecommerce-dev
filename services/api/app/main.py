@@ -16,6 +16,7 @@ from app.modules.agent_intents.schema_check import startup_check_agent_intents_s
 from app.modules.devices.router import router as devices_router
 from app.modules.ingest.router import router as ingest_router
 from app.modules.libraries.router import router as libraries_router
+from app.modules.people.router import router as people_router
 from app.modules.search.router import router as search_router
 from app.modules.videos.router import router as videos_router
 
@@ -187,13 +188,19 @@ async def add_request_context(request: Request, call_next):
 @app.get("/health")
 async def health(request: Request):
     from app.modules.tenancy.middleware import extract_org_slug
-    
+
+    settings = get_settings()
+    embedding_mode = "mock" if settings.embedding_use_mock else "real"
+    if embedding_mode == "mock":
+        logger.warning("embedding_mock_mode_active")
+
     host = request.headers.get("host", "")
     org_slug, tenancy_error = extract_org_slug(host)
-    
+
     return {
         "status": "ok",
-        "environment": get_settings().environment,
+        "environment": settings.environment,
+        "embedding_mode": embedding_mode,
         "tenancy": {
             "host": host,
             "org_slug": org_slug,
@@ -217,6 +224,7 @@ app.include_router(devices_router, prefix="/api")
 app.include_router(agent_intents_router, prefix="/api")
 app.include_router(ingest_router, prefix="/api")
 app.include_router(libraries_router, prefix="/api")
+app.include_router(people_router, prefix="/api")
 app.include_router(search_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")
 

@@ -20,7 +20,8 @@ export function Navigation() {
   const tabs = [
     { label: "Search", href: "/" },
     { label: "Videos", href: "/videos" },
-    { label: "Settings", href: "/settings/devices" },
+    { label: "Devices", href: "/settings/devices" },
+    { label: "People", href: "/settings/people" },
   ];
 
   return (

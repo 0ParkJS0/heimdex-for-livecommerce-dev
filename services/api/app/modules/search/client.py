@@ -40,7 +40,7 @@ class OpenSearchClient:
     async def _check_nori_available(self) -> bool:
         """Check if Nori analyzer plugin is installed in OpenSearch."""
         try:
-            response = await self.client.cat.plugins(format="json")
+            response = await self.client.cat.plugins(params={"format": "json"})
             plugins = [p.get("component", "") for p in response]
             nori_installed = any("analysis-nori" in p for p in plugins)
             logger.info("nori_plugin_check", installed=nori_installed, plugins=plugins)
@@ -417,7 +417,7 @@ class OpenSearchClient:
             index=self.index_name,
             id=doc_id,
             body=document,
-            refresh=True,
+            params={"refresh": "true"},
         )
 
     async def bulk_index(self, documents: list[tuple[str, dict[str, Any]]]) -> None:
@@ -429,7 +429,7 @@ class OpenSearchClient:
             actions.append({"index": {"_index": self.index_name, "_id": doc_id}})
             actions.append(doc)
         
-        await self.client.bulk(body=actions, refresh=True)
+        await self.client.bulk(body=actions, params={"refresh": "true"})
         logger.info("bulk_indexed_documents", count=len(documents))
 
     async def search_lexical(
@@ -445,7 +445,7 @@ class OpenSearchClient:
         Short queries (<=3 words) get additional phrase matching boost
         to improve precision for Korean queries like "할인 행사".
         """
-        filter_clauses = self._build_filter_clauses(filters)
+        filter_clauses, must_not_clauses = self._build_filter_clauses(filters)
         
         # Base match query
         match_query = {
@@ -497,6 +497,9 @@ class OpenSearchClient:
                 }
             }
         
+        if must_not_clauses:
+            search_query["bool"]["must_not"] = must_not_clauses
+
         body = {
             "query": search_query,
             "size": size,
@@ -513,7 +516,12 @@ class OpenSearchClient:
         filters: dict[str, Any],
         size: int = 200,
     ) -> list[dict[str, Any]]:
-        filter_clauses = [{"term": {"org_id": org_id}}] + self._build_filter_clauses(filters)
+        pos_clauses, must_not_clauses = self._build_filter_clauses(filters)
+        filter_clauses = [{"term": {"org_id": org_id}}] + pos_clauses
+
+        bool_filter: dict[str, Any] = {"must": filter_clauses}
+        if must_not_clauses:
+            bool_filter["must_not"] = must_not_clauses
         
         body = {
             "query": {
@@ -521,7 +529,7 @@ class OpenSearchClient:
                     "embedding_vector": {
                         "vector": embedding,
                         "k": size,
-                        "filter": {"bool": {"must": filter_clauses}},
+                        "filter": {"bool": bool_filter},
                     }
                 }
             },
@@ -537,10 +545,15 @@ class OpenSearchClient:
         org_id: str,
         filters: dict[str, Any],
     ) -> dict[str, list[dict[str, Any]]]:
-        filter_clauses = [{"term": {"org_id": org_id}}] + self._build_filter_clauses(filters)
+        pos_clauses, must_not_clauses = self._build_filter_clauses(filters)
+        filter_clauses = [{"term": {"org_id": org_id}}] + pos_clauses
+
+        bool_query: dict[str, Any] = {"filter": filter_clauses}
+        if must_not_clauses:
+            bool_query["must_not"] = must_not_clauses
         
         body = {
-            "query": {"bool": {"filter": filter_clauses}},
+            "query": {"bool": bool_query},
             "size": 0,
             "aggs": {
                 "libraries": {"terms": {"field": "library_id", "size": 100}},
@@ -557,8 +570,11 @@ class OpenSearchClient:
             "people": response["aggregations"]["people"]["buckets"],
         }
 
-    def _build_filter_clauses(self, filters: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_filter_clauses(
+        self, filters: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         clauses: list[dict[str, Any]] = []
+        must_not: list[dict[str, Any]] = []
         
         if filters.get("date_from") or filters.get("date_to"):
             range_clause: dict[str, Any] = {}
@@ -576,5 +592,8 @@ class OpenSearchClient:
         
         if filters.get("person_cluster_ids"):
             clauses.append({"terms": {"people_cluster_ids": filters["person_cluster_ids"]}})
-        
-        return clauses
+
+        if filters.get("person_cluster_ids_not_in"):
+            must_not.append({"terms": {"people_cluster_ids": filters["person_cluster_ids_not_in"]}})
+
+        return clauses, must_not

@@ -4,4 +4,5 @@ export * from "./auth";
 export * from "./videos";
 export * from "./shorts";
 export * from "./devices";
+export * from "./people";
 export * from "./agent-intents";

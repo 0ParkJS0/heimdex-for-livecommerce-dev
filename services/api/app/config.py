@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     agent_intent_max_per_org: int = 10
     agent_intent_exchange_max_attempts: int = 5
 
+    people_enabled: bool = True
+
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"

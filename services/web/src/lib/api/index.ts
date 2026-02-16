@@ -13,6 +13,8 @@ export { generateShortsPlan } from "./shorts";
 
 export { getDevices, createPairingCode } from "./devices";
 
+export { getPeople, renamePerson } from "./people";
+
 // Utilities
 export { formatTimestamp, formatDuration, isAuthRequired } from "./utils";
 
@@ -37,5 +39,8 @@ export type {
   VideoScenesResponse,
   VideoStats,
   VideoFilters,
+  PersonSummary,
+  PeopleListResponse,
+  RenamePersonResponse,
 } from "@/lib/types";
 export { ApiError } from "@/lib/types";

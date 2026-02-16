@@ -47,6 +47,7 @@ class SearchService:
             "source_types": filters.source_types,
             "library_ids": filters.library_ids,
             "person_cluster_ids": filters.person_cluster_ids,
+            "person_cluster_ids_not_in": filters.person_cluster_ids_not_in,
         }
         
         query_embedding = await get_query_embedding(query)
