@@ -14,6 +14,7 @@ class Org(Base, UUIDMixin, TimestampMixin):
 
     slug: Mapped[str] = mapped_column(String(63), unique=True, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth0_org_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
     agent_api_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     users: Mapped[list[User]] = relationship("User", back_populates="org", lazy="selectin")

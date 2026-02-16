@@ -117,7 +117,9 @@ def validate_auth0_token(token: str) -> Auth0TokenPayload:
         logger.warning("auth0_token_validation_failed", error=str(e))
         raise ValueError(f"Token validation failed: {e}") from e
     
-    org_id = payload.get(settings.auth0_org_claim)
+    # Auth0 Organizations puts org_id at the top level of the JWT.
+    # Fall back to custom claim for backward compatibility.
+    org_id = payload.get("org_id") or payload.get(settings.auth0_org_claim)
     email = payload.get("email") or payload.get(f"{settings.auth0_domain}/email")
     permissions = payload.get("permissions", [])
     

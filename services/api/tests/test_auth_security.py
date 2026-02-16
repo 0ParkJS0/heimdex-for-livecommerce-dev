@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from app.modules.auth.service import _validate_auth0_user, _validate_dev_user, AuthService
+from app.modules.auth.service import _validate_auth0_user, _validate_dev_user, _enforce_org_binding, AuthService
 from app.modules.auth.oidc import Auth0TokenPayload
 from app.modules.auth.schemas import TokenPayload
 from app.modules.tenancy.context import OrgContext
@@ -82,28 +82,24 @@ class TestOrgMismatchDenial:
             assert "organization does not match" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
-    async def test_auth0_token_without_org_claim_is_allowed(self):
-        """Auth0 token without org_id claim should be allowed (no mismatch possible)."""
-        # Setup: Host-derived org context
+    async def test_auth0_token_without_org_claim_allowed_for_legacy_org(self):
+        """Token without org_id is allowed when org has no auth0_org_id (legacy)."""
         host_org_id = uuid4()
-        org_ctx = OrgContext(org_id=host_org_id, org_slug="host-org")
+        org_ctx = OrgContext(org_id=host_org_id, org_slug="host-org", auth0_org_id=None)
         
-        # Token has no org claim
         auth0_payload = Auth0TokenPayload(
             sub="auth0|123",
-            org_id=None,  # No org claim
+            org_id=None,
             email="user@example.com",
             permissions=[],
             raw_claims={"email_verified": True},
         )
         
-        # Mock user lookup
         mock_user = MagicMock()
         user_repo = MagicMock()
         user_repo.get_by_auth0_sub = AsyncMock(return_value=mock_user)
         
         with patch("app.modules.auth.service.validate_auth0_token", return_value=auth0_payload):
-            # Should not raise - user found by sub
             result = await _validate_auth0_user("fake_token", org_ctx, user_repo)
             assert result == mock_user
 
@@ -240,6 +236,186 @@ class TestTenancyInvariant:
             
             # Mismatch detected - proves org_ctx is authoritative
             assert exc_info.value.status_code == 403
+
+
+class TestAuth0OrgBinding:
+    """Test _enforce_org_binding for Auth0 Organizations support.
+
+    Covers:
+    - Matching auth0_org_id passes
+    - Mismatched auth0_org_id returns 403
+    - Missing org claim when required returns 403
+    - Missing org claim allowed for legacy orgs (no auth0_org_id)
+    - Legacy fallback UUID mismatch returns 403
+    - Legacy fallback UUID match passes
+    - Full flow integration (matching org)
+    - Full flow integration (missing org claim rejected)
+    - Error messages don't leak auth0_org_id values
+    """
+
+    def test_matching_auth0_org_id_passes(self):
+        """Token org_id matches org.auth0_org_id → no exception."""
+        org_ctx = OrgContext(
+            org_id=uuid4(), org_slug="acme", auth0_org_id="org_abc123"
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id="org_abc123",
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        _enforce_org_binding(payload, org_ctx)
+
+    def test_mismatched_auth0_org_id_returns_403(self):
+        """Token org_id differs from org.auth0_org_id → 403."""
+        org_ctx = OrgContext(
+            org_id=uuid4(), org_slug="acme", auth0_org_id="org_abc123"
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id="org_DIFFERENT",
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_org_binding(payload, org_ctx)
+        assert exc_info.value.status_code == 403
+        assert "organization does not match" in exc_info.value.detail.lower()
+
+    def test_missing_org_claim_when_required_returns_403(self):
+        """Org has auth0_org_id but token lacks org_id → 403."""
+        org_ctx = OrgContext(
+            org_id=uuid4(), org_slug="acme", auth0_org_id="org_abc123"
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id=None,
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_org_binding(payload, org_ctx)
+        assert exc_info.value.status_code == 403
+        assert "organization context required" in exc_info.value.detail.lower()
+
+    def test_missing_org_claim_allowed_when_org_has_no_auth0_id(self):
+        """Legacy org (no auth0_org_id) + token with no org_id → passes."""
+        org_ctx = OrgContext(
+            org_id=uuid4(), org_slug="legacy-co", auth0_org_id=None
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id=None,
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        _enforce_org_binding(payload, org_ctx)
+
+    def test_legacy_fallback_mismatch_returns_403(self):
+        """Legacy org + token UUID that doesn't match org_id → 403."""
+        host_org_id = uuid4()
+        org_ctx = OrgContext(
+            org_id=host_org_id, org_slug="legacy-co", auth0_org_id=None
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id=str(uuid4()),
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_org_binding(payload, org_ctx)
+        assert exc_info.value.status_code == 403
+        assert "organization does not match" in exc_info.value.detail.lower()
+
+    def test_legacy_fallback_match_passes(self):
+        """Legacy org + token UUID matching org_id → passes."""
+        host_org_id = uuid4()
+        org_ctx = OrgContext(
+            org_id=host_org_id, org_slug="legacy-co", auth0_org_id=None
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id=str(host_org_id),
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        _enforce_org_binding(payload, org_ctx)
+
+    @pytest.mark.asyncio
+    async def test_full_flow_matching_org_returns_user(self):
+        """End-to-end: matching auth0_org_id → user returned."""
+        host_org_id = uuid4()
+        org_ctx = OrgContext(
+            org_id=host_org_id, org_slug="acme", auth0_org_id="org_abc123"
+        )
+        auth0_payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id="org_abc123",
+            email="user@acme.com",
+            permissions=[],
+            raw_claims={"email_verified": True},
+        )
+
+        mock_user = MagicMock()
+        user_repo = MagicMock()
+        user_repo.get_by_auth0_sub = AsyncMock(return_value=mock_user)
+
+        with patch(
+            "app.modules.auth.service.validate_auth0_token",
+            return_value=auth0_payload,
+        ):
+            result = await _validate_auth0_user("tok", org_ctx, user_repo)
+            assert result == mock_user
+
+    @pytest.mark.asyncio
+    async def test_full_flow_missing_org_claim_rejected(self):
+        """End-to-end: org requires auth0_org_id but token lacks it → 403."""
+        org_ctx = OrgContext(
+            org_id=uuid4(), org_slug="acme", auth0_org_id="org_abc123"
+        )
+        auth0_payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id=None,
+            email="user@acme.com",
+            permissions=[],
+            raw_claims={"email_verified": True},
+        )
+
+        user_repo = MagicMock()
+
+        with patch(
+            "app.modules.auth.service.validate_auth0_token",
+            return_value=auth0_payload,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_auth0_user("tok", org_ctx, user_repo)
+            assert exc_info.value.status_code == 403
+
+    def test_error_message_does_not_leak_auth0_org_id(self):
+        """403 detail must not expose the expected or actual auth0 org IDs."""
+        org_ctx = OrgContext(
+            org_id=uuid4(), org_slug="acme", auth0_org_id="org_SECRET_123"
+        )
+        payload = Auth0TokenPayload(
+            sub="auth0|u1",
+            org_id="org_ATTACKER_456",
+            email="a@b.com",
+            permissions=[],
+            raw_claims={},
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            _enforce_org_binding(payload, org_ctx)
+
+        detail = exc_info.value.detail
+        assert "org_SECRET_123" not in detail
+        assert "org_ATTACKER_456" not in detail
 
 
 class TestErrorMessageSafety:

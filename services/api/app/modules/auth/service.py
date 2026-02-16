@@ -90,6 +90,50 @@ async def get_current_user(
         return await _validate_dev_user(token, org_ctx, user_repo, db)
 
 
+def _enforce_org_binding(auth0_payload: Auth0TokenPayload, org_ctx: OrgContext) -> None:
+    """Enforce: token org_id must match the org resolved from subdomain.
+
+    When the org has an auth0_org_id configured, the token MUST contain
+    a matching org_id claim.  This prevents cross-tenant token reuse.
+    """
+    token_org_id = auth0_payload.org_id
+
+    if org_ctx.auth0_org_id:
+        if not token_org_id:
+            logger.warning(
+                "org_context_required",
+                org_slug=org_ctx.org_slug,
+                path="auth",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization context required in token",
+            )
+        if token_org_id != org_ctx.auth0_org_id:
+            logger.warning(
+                "org_mismatch",
+                org_slug=org_ctx.org_slug,
+                token_org_id=token_org_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token organization does not match request",
+            )
+        return
+
+    if token_org_id and token_org_id != str(org_ctx.org_id):
+        logger.warning(
+            "org_mismatch_legacy",
+            org_slug=org_ctx.org_slug,
+            token_org_id=token_org_id,
+            request_org=str(org_ctx.org_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token organization does not match request",
+        )
+
+
 async def _validate_auth0_user(
     token: str,
     org_ctx: OrgContext,
@@ -104,16 +148,7 @@ async def _validate_auth0_user(
             detail=str(e),
         ) from e
     
-    if auth0_payload.org_id and auth0_payload.org_id != str(org_ctx.org_id):
-        logger.warning(
-            "org_mismatch_in_auth0_token",
-            token_org=auth0_payload.org_id,
-            request_org=str(org_ctx.org_id),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token organization does not match request",
-        )
+    _enforce_org_binding(auth0_payload, org_ctx)
     
     user = await user_repo.get_by_auth0_sub(auth0_payload.sub, org_ctx.org_id)
     

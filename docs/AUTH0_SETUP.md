@@ -29,9 +29,32 @@ For local testing, add `http://localhost:3000/auth/callback` and `http://localho
 | Identifier (audience) | `https://api.heimdex.io` |
 | Signing Algorithm | RS256 |
 
-### (Optional) Organization Claim
+### Auth0 Organizations (Recommended)
 
-To embed org_id in tokens via an Auth0 Action:
+Auth0 Organizations provide built-in multi-tenant isolation. When enabled for an org,
+the access token automatically includes a top-level `org_id` claim — no custom Action needed.
+
+1. Auth0 Dashboard → Organizations → Create Organization
+2. Set the Organization ID (e.g., `org_abc123`)
+3. Enable the SPA application for this Organization
+4. Add members to the Organization
+
+Then store the Auth0 Organization ID on the Heimdex org record:
+
+```sql
+UPDATE orgs SET auth0_org_id = 'org_abc123' WHERE slug = 'acme';
+```
+
+The backend enforces binding: if an org has `auth0_org_id` set, every Auth0 token
+accessing that org's subdomain **must** contain a matching `org_id` claim. Tokens
+without `org_id`, or with a different `org_id`, are rejected with 403.
+
+Orgs without `auth0_org_id` (legacy) continue to work — the backend falls back to
+comparing the token's `org_id` (if present) against the internal UUID.
+
+### (Optional) Custom Organization Claim
+
+If you need a custom claim instead of (or in addition to) Auth0 Organizations:
 
 ```javascript
 // Auth0 Dashboard → Actions → Flows → Post Login → Custom Action
