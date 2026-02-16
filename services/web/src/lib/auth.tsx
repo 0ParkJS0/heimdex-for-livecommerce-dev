@@ -31,7 +31,7 @@ export function useAuth(): AuthContextType {
 export function getOrgSlug(): string {
   if (typeof window === "undefined") return "";
   const hostname = window.location.hostname;
-  const match = hostname.match(/^([^.]+)\.app\.heimdex\./);
+  const match = hostname.match(/^([^.]+)\.app\.heimdex(?:demo)?\./);
   return match ? match[1] : hostname;
 }
 
