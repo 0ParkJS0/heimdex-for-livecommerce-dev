@@ -152,6 +152,7 @@ services:
       - NEXT_PUBLIC_AUTH0_DOMAIN=${NEXT_PUBLIC_AUTH0_DOMAIN:-your-tenant.auth0.com}
       - NEXT_PUBLIC_AUTH0_CLIENT_ID=${NEXT_PUBLIC_AUTH0_CLIENT_ID:-your-client-id}
       - NEXT_PUBLIC_AUTH0_AUDIENCE=${NEXT_PUBLIC_AUTH0_AUDIENCE:-https://api.heimdex.io}
+      - NEXT_PUBLIC_AUTH0_ORGANIZATION=${NEXT_PUBLIC_AUTH0_ORGANIZATION:-}
     ports:
       - "3000:3000"
     volumes:

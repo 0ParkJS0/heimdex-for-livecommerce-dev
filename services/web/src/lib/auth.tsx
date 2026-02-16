@@ -9,6 +9,7 @@ const AUTH0_ENABLED = process.env.NEXT_PUBLIC_AUTH0_ENABLED === "true";
 const AUTH0_DOMAIN = process.env.NEXT_PUBLIC_AUTH0_DOMAIN || "";
 const AUTH0_CLIENT_ID = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID || "";
 const AUTH0_AUDIENCE = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE || "";
+const AUTH0_ORGANIZATION = process.env.NEXT_PUBLIC_AUTH0_ORGANIZATION || "";
 
 // Validate Auth0 configuration
 if (AUTH0_ENABLED && (!AUTH0_DOMAIN || !AUTH0_CLIENT_ID)) {
@@ -167,6 +168,7 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
       const token = await getAccessTokenSilently({
         authorizationParams: {
           audience: AUTH0_AUDIENCE,
+          ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
         },
       });
       return token;
@@ -215,6 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         redirect_uri: redirectUri,
         audience: AUTH0_AUDIENCE,
         scope: "openid profile email",
+        ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
       }}
       cacheLocation="memory" // More secure than localStorage
       useRefreshTokens={true}
