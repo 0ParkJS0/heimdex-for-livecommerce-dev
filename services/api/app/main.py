@@ -39,7 +39,9 @@ async def lifespan(app: FastAPI):
     from app.modules.search.client import OpenSearchClient
     from app.modules.search.scene_client import SceneSearchClient
     
-    logger.info("application_starting", environment=get_settings().environment)
+    settings = get_settings()
+    logger.info("application_starting", environment=settings.environment)
+    settings.validate_production_guards()
     
     opensearch_client = OpenSearchClient()
     app.state.opensearch_client = opensearch_client
@@ -52,11 +54,21 @@ async def lifespan(app: FastAPI):
 
     from app.db.base import get_async_engine
 
-    settings = get_settings()
     agent_intents_engine = get_async_engine()
     await startup_check_agent_intents_schema(agent_intents_engine, settings.agent_intents_enabled)
     await agent_intents_engine.dispose()
 
+    if settings.embedding_use_mock:
+        logger.warning(
+            "embedding_mock_mode_active",
+            message="EMBEDDING_USE_MOCK=true — semantic search is disabled. "
+                    "All embeddings are deterministic hashes. "
+                    "Search accuracy benchmarks will be INVALID.",
+            embedding_model=settings.embedding_model,
+            embedding_dimension=settings.embedding_dimension,
+            impact="search_accuracy_invalid",
+        )
+    
     yield
     
     logger.info("application_shutting_down")
