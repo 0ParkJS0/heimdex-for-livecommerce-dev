@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePeople } from "../hooks/usePeople";
 import { useAuth } from "@/lib/auth";
 import { getPersonVideos } from "@/lib/api/people";
+import { getAgentThumbnailUrl } from "@/lib/agent";
 import type { PersonSummary, PersonVideoItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +76,12 @@ function PersonAvatar({
   isSelected: boolean;
   onToggle: (id: string) => void;
 }) {
+  const [imgError, setImgError] = useState(false);
+  const thumbnailUrl =
+    person.representative_video_id && person.representative_scene_id
+      ? getAgentThumbnailUrl(person.representative_video_id, person.representative_scene_id)
+      : null;
+
   return (
     <button
       type="button"
@@ -83,11 +90,20 @@ function PersonAvatar({
     >
       <div
         className={cn(
-          "flex h-20 w-20 items-center justify-center rounded-lg bg-gray-100 transition-all",
+          "flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg bg-gray-100 transition-all",
           isSelected ? "ring-2 ring-indigo-500 ring-offset-2" : "hover:bg-gray-200",
         )}
       >
-        <PersonIcon className="h-10 w-10 text-gray-400" />
+        {thumbnailUrl && !imgError ? (
+          <img
+            src={thumbnailUrl}
+            alt={person.label ?? "인물"}
+            className="h-full w-full object-cover"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <PersonIcon className="h-10 w-10 text-gray-400" />
+        )}
       </div>
       {person.label && (
         <span className="max-w-[80px] truncate text-xs text-gray-600">
@@ -113,7 +129,12 @@ function SelectedPersonCard({
   const [editValue, setEditValue] = useState(person.label ?? "");
   const [videoFiles, setVideoFiles] = useState<PersonVideoItem[]>([]);
   const [loadingVideos, setLoadingVideos] = useState(true);
+  const [headerImgError, setHeaderImgError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const headerThumbnailUrl =
+    person.representative_video_id && person.representative_scene_id
+      ? getAgentThumbnailUrl(person.representative_video_id, person.representative_scene_id)
+      : null;
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -163,7 +184,16 @@ function SelectedPersonCard({
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="mb-3 flex items-center gap-2">
-        <PersonIcon className="h-5 w-5 text-gray-400" />
+        {headerThumbnailUrl && !headerImgError ? (
+          <img
+            src={headerThumbnailUrl}
+            alt={person.label ?? "인물"}
+            className="h-8 w-8 flex-shrink-0 rounded object-cover"
+            onError={() => setHeaderImgError(true)}
+          />
+        ) : (
+          <PersonIcon className="h-5 w-5 text-gray-400" />
+        )}
         {isEditing ? (
           <input
             ref={inputRef}

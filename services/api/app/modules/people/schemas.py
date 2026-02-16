@@ -8,6 +8,8 @@ class PersonResponse(BaseModel):
     label: str | None = None
     face_count: int = 0
     last_seen_scene_time: str | None = None
+    representative_video_id: str | None = None
+    representative_scene_id: str | None = None
 
 
 class PeopleListResponse(BaseModel):

@@ -3,6 +3,8 @@ export interface PersonSummary {
   label: string | null;
   face_count: number;
   last_seen_scene_time: string | null;
+  representative_video_id: string | null;
+  representative_scene_id: string | null;
 }
 
 export interface PeopleListResponse {

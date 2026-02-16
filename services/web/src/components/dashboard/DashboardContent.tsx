@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { getVideos, getVideoStats } from "@/lib/api/videos";
 import { searchScenes } from "@/lib/api/search";
+import { getAgentThumbnailUrl } from "@/lib/agent";
 import type { VideoSummary, VideoStats, SceneResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -602,7 +603,15 @@ function SceneCard({ scene }: { scene: SceneResult }) {
 
   return (
     <div className="group cursor-pointer">
-      <div className="relative aspect-video w-full rounded-lg bg-gray-200">
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-gray-200">
+        <img
+          src={getAgentThumbnailUrl(scene.video_id, scene.scene_id)}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = "none";
+          }}
+        />
         <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-xs text-white">
           {timestamp}
         </span>

@@ -780,6 +780,55 @@ class SceneSearchClient:
             for bucket in buckets
         ]
 
+    async def get_representative_scenes_for_people(
+        self,
+        org_id: str,
+        person_cluster_ids: list[str],
+    ) -> dict[str, dict[str, str]]:
+        """Find one representative scene per person for thumbnail display.
+
+        For each person_cluster_id, finds the most recent scene containing
+        that person and returns video_id + scene_id so the frontend can
+        construct an agent thumbnail URL.
+
+        Returns:
+            Dict mapping person_cluster_id → {"video_id": ..., "scene_id": ...}.
+            Missing persons (no scenes found) are omitted.
+        """
+        if not person_cluster_ids:
+            return {}
+
+        body_parts: list[dict[str, Any]] = []
+        for cluster_id in person_cluster_ids:
+            body_parts.append({"index": self.alias_name})
+            body_parts.append({
+                "query": {
+                    "bool": {
+                        "filter": [
+                            {"term": {"org_id": org_id}},
+                            {"term": {"people_cluster_ids": cluster_id}},
+                        ],
+                    }
+                },
+                "sort": [{"ingest_time": "desc"}],
+                "size": 1,
+                "_source": ["video_id", "scene_id"],
+            })
+
+        response = await self.client.msearch(body=body_parts)
+
+        result: dict[str, dict[str, str]] = {}
+        for i, resp in enumerate(response["responses"]):
+            hits = resp.get("hits", {}).get("hits", [])
+            if hits:
+                src = hits[0]["_source"]
+                result[person_cluster_ids[i]] = {
+                    "video_id": src["video_id"],
+                    "scene_id": src["scene_id"],
+                }
+
+        return result
+
     async def get_video_stats(
         self,
         org_id: str,

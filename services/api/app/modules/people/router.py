@@ -75,6 +75,16 @@ async def list_people(
             )
         )
 
+    all_cluster_ids = [p.person_cluster_id for p in people]
+    rep_scenes = await scene_opensearch.get_representative_scenes_for_people(
+        str(org_ctx.org_id), all_cluster_ids
+    )
+    for person in people:
+        scene_info = rep_scenes.get(person.person_cluster_id)
+        if scene_info:
+            person.representative_video_id = scene_info["video_id"]
+            person.representative_scene_id = scene_info["scene_id"]
+
     return PeopleListResponse(people=people, total=len(people))
 
 
