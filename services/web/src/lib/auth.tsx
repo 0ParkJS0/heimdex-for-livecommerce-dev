@@ -58,12 +58,7 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loginWithCredentials = useCallback(async (email: string, password: string) => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (!apiUrl) {
-      const err = new Error("NEXT_PUBLIC_API_URL is not configured");
-      setError(err);
-      throw err;
-    }
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
 
     setIsLoading(true);
     setError(null);

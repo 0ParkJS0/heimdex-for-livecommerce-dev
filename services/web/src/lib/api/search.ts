@@ -1,20 +1,6 @@
 import { ApiError, SearchRequest, SearchResponse, SceneSearchResponse } from "@/lib/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
-
-if (!API_BASE_URL) {
-  console.error(
-    "[Heimdex] NEXT_PUBLIC_API_URL is not set. " +
-    "API calls will fail. Set it to http://{org}.app.heimdex.local:8000"
-  );
-}
-
-if (API_BASE_URL?.includes("localhost")) {
-  console.warn(
-    "[Heimdex] WARNING: NEXT_PUBLIC_API_URL points to localhost. " +
-    "This bypasses multi-tenancy! Use http://{org}.app.heimdex.local:8000 instead."
-  );
-}
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 type TokenGetter = () => Promise<string | null>;
 
@@ -26,15 +12,6 @@ async function apiRequest<T>(
   options: RequestInit,
   getToken?: TokenGetter
 ): Promise<T> {
-  if (!API_BASE_URL) {
-    throw new ApiError(
-      "tenancy",
-      0,
-      "NEXT_PUBLIC_API_URL is not configured. " +
-      "Set it to http://{org}.app.heimdex.local:8000"
-    );
-  }
-
   // Build headers
   const headers: HeadersInit = {
     "Content-Type": "application/json",

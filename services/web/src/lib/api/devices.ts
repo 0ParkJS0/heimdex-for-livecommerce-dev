@@ -1,6 +1,6 @@
 import { ApiError, DeviceListResponse, PairingCodeResponse } from "@/lib/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 type TokenGetter = () => Promise<string | null>;
 
@@ -9,15 +9,6 @@ async function apiRequest<T>(
   method: string,
   getToken?: TokenGetter,
 ): Promise<T> {
-  if (!API_BASE_URL) {
-    throw new ApiError(
-      "tenancy",
-      0,
-      "NEXT_PUBLIC_API_URL is not configured. " +
-        "Set it to http://{org}.app.heimdex.local:8000",
-    );
-  }
-
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };

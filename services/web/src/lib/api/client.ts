@@ -26,14 +26,6 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
   const { baseUrl, getAccessToken } = config;
 
   async function request<T>(endpoint: string, options: RequestInit): Promise<T> {
-    if (!baseUrl) {
-      throw new ApiError(
-        "tenancy",
-        0,
-        "NEXT_PUBLIC_API_URL is not configured."
-      );
-    }
-
     const headers: HeadersInit = {
       "Content-Type": "application/json",
       ...options.headers,
