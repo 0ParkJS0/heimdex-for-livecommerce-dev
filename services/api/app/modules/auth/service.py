@@ -93,42 +93,32 @@ async def get_current_user(
 
 
 def _enforce_org_binding(auth0_payload: Auth0TokenPayload, org_ctx: OrgContext) -> None:
-    """Enforce: token org_id must match the org resolved from subdomain.
+    """Enforce org binding via subdomain + optional token org_id.
 
-    When the org has an auth0_org_id configured, the token MUST contain
-    a matching org_id claim.  This prevents cross-tenant token reuse.
+    The subdomain is the source of truth for org identity (server-controlled).
+    User lookup is always scoped to org_ctx.org_id, so cross-tenant access is
+    impossible even without org_id in the token.
+
+    If org_id IS present in the token, it must match — reject mismatches.
+    If org_id is absent, allow it — the org-scoped user lookup is sufficient.
     """
     token_org_id = auth0_payload.org_id
 
-    if org_ctx.auth0_org_id:
-        if not token_org_id:
-            logger.warning(
-                "org_context_required",
-                org_slug=org_ctx.org_slug,
-                path="auth",
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization context required in token",
-            )
-        if token_org_id != org_ctx.auth0_org_id:
-            logger.warning(
-                "org_mismatch",
-                org_slug=org_ctx.org_slug,
-                token_org_id=token_org_id,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Token organization does not match request",
-            )
+    if not token_org_id:
+        logger.info(
+            "org_binding_skip_no_token_org",
+            org_slug=org_ctx.org_slug,
+            sub=auth0_payload.sub,
+        )
         return
 
-    if token_org_id and token_org_id != str(org_ctx.org_id):
+    expected = org_ctx.auth0_org_id or str(org_ctx.org_id)
+    if token_org_id != expected:
         logger.warning(
-            "org_mismatch_legacy",
+            "org_mismatch",
             org_slug=org_ctx.org_slug,
             token_org_id=token_org_id,
-            request_org=str(org_ctx.org_id),
+            expected_org_id=expected,
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

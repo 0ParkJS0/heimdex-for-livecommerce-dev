@@ -244,12 +244,11 @@ class TestAuth0OrgBinding:
     Covers:
     - Matching auth0_org_id passes
     - Mismatched auth0_org_id returns 403
-    - Missing org claim when required returns 403
-    - Missing org claim allowed for legacy orgs (no auth0_org_id)
+    - Missing org claim allowed (subdomain is source of truth)
     - Legacy fallback UUID mismatch returns 403
     - Legacy fallback UUID match passes
     - Full flow integration (matching org)
-    - Full flow integration (missing org claim rejected)
+    - Full flow integration (missing org claim falls through to user lookup)
     - Error messages don't leak auth0_org_id values
     """
 
@@ -284,8 +283,8 @@ class TestAuth0OrgBinding:
         assert exc_info.value.status_code == 403
         assert "organization does not match" in exc_info.value.detail.lower()
 
-    def test_missing_org_claim_when_required_returns_403(self):
-        """Org has auth0_org_id but token lacks org_id → 403."""
+    def test_missing_org_claim_allowed_subdomain_is_source_of_truth(self):
+        """Token without org_id passes — subdomain + org-scoped user lookup is sufficient."""
         org_ctx = OrgContext(
             org_id=uuid4(), org_slug="acme", auth0_org_id="org_abc123"
         )
@@ -296,10 +295,7 @@ class TestAuth0OrgBinding:
             permissions=[],
             raw_claims={},
         )
-        with pytest.raises(HTTPException) as exc_info:
-            _enforce_org_binding(payload, org_ctx)
-        assert exc_info.value.status_code == 403
-        assert "organization context required" in exc_info.value.detail.lower()
+        _enforce_org_binding(payload, org_ctx)
 
     def test_missing_org_claim_allowed_when_org_has_no_auth0_id(self):
         """Legacy org (no auth0_org_id) + token with no org_id → passes."""
@@ -375,28 +371,31 @@ class TestAuth0OrgBinding:
             assert result == mock_user
 
     @pytest.mark.asyncio
-    async def test_full_flow_missing_org_claim_rejected(self):
-        """End-to-end: org requires auth0_org_id but token lacks it → 403."""
+    async def test_full_flow_missing_org_claim_falls_through_to_user_lookup(self):
+        """End-to-end: token lacks org_id → proceeds to user lookup (subdomain is source of truth)."""
+        host_org_id = uuid4()
         org_ctx = OrgContext(
-            org_id=uuid4(), org_slug="acme", auth0_org_id="org_abc123"
+            org_id=host_org_id, org_slug="acme", auth0_org_id="org_abc123"
         )
         auth0_payload = Auth0TokenPayload(
             sub="auth0|u1",
             org_id=None,
-            email="user@acme.com",
+            email=None,
             permissions=[],
-            raw_claims={"email_verified": True},
+            raw_claims={},
         )
 
+        mock_user = MagicMock()
         user_repo = MagicMock()
+        user_repo.get_by_auth0_sub = AsyncMock(return_value=mock_user)
 
         with patch(
             "app.modules.auth.service.validate_auth0_token",
             return_value=auth0_payload,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                await _validate_auth0_user("tok", org_ctx, user_repo)
-            assert exc_info.value.status_code == 403
+            result = await _validate_auth0_user("tok", org_ctx, user_repo)
+            assert result == mock_user
+            user_repo.get_by_auth0_sub.assert_called_once_with("auth0|u1", host_org_id)
 
     def test_error_message_does_not_leak_auth0_org_id(self):
         """403 detail must not expose the expected or actual auth0 org IDs."""
