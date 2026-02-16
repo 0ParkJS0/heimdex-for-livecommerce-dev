@@ -34,6 +34,26 @@ class TestExtractOrgSlug:
         slug, error = extract_org_slug("devorg.app.heimdex.local:8000")
         assert slug == "devorg"
         assert error is None
+    
+    def test_valid_subdomain_staging(self):
+        slug, error = extract_org_slug("devorg.app.heimdexdemo.dev")
+        assert slug == "devorg"
+        assert error is None
+    
+    def test_staging_with_hyphens(self):
+        slug, error = extract_org_slug("my-company.app.heimdexdemo.dev")
+        assert slug == "my-company"
+        assert error is None
+    
+    def test_staging_with_port(self):
+        slug, error = extract_org_slug("devorg.app.heimdexdemo.dev:443")
+        assert slug == "devorg"
+        assert error is None
+    
+    def test_staging_case_insensitive(self):
+        slug, error = extract_org_slug("DevOrg.APP.HEIMDEXDEMO.DEV")
+        assert slug == "devorg"
+        assert error is None
 
 
 class TestExtractOrgSlugRejections:
@@ -93,6 +113,33 @@ class TestExtractOrgSlugRejections:
         slug, error = extract_org_slug("some.random.domain.com")
         assert slug is None
         assert error == TenancyError.INVALID_FORMAT
+    
+    def test_staging_missing_subdomain_rejected(self):
+        slug, error = extract_org_slug("app.heimdexdemo.dev")
+        assert slug is None
+        assert error == TenancyError.MISSING_SUBDOMAIN
+    
+    def test_staging_bare_domain_rejected(self):
+        slug, error = extract_org_slug("heimdexdemo.dev")
+        assert slug is None
+        assert error == TenancyError.MISSING_SUBDOMAIN
+    
+    def test_heimdex_dev_not_accepted(self):
+        """heimdex.dev is NOT a valid domain — only heimdexdemo.dev is."""
+        slug, error = extract_org_slug("devorg.app.heimdex.dev")
+        assert slug is None
+        assert error == TenancyError.MISSING_SUBDOMAIN
+    
+    def test_heimdexdemo_local_not_accepted(self):
+        """heimdexdemo.local is NOT valid — only heimdex.local is for dev."""
+        slug, error = extract_org_slug("devorg.app.heimdexdemo.local")
+        assert slug is None
+        assert error == TenancyError.MISSING_SUBDOMAIN
+    
+    def test_staging_single_char_slug_rejected(self):
+        slug, error = extract_org_slug("a.app.heimdexdemo.dev")
+        assert slug is None
+        assert error == TenancyError.MISSING_SUBDOMAIN
 
 
 class TestTenancyErrorMessages:

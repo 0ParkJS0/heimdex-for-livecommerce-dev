@@ -23,6 +23,8 @@ class TestCORSOriginRegex:
             "https://myorg.app.heimdex.co:443",
             "http://test-org.app.heimdex.local:8000",
             "https://a1.app.heimdex.co",
+            "https://devorg.app.heimdexdemo.dev",
+            "http://devorg.app.heimdexdemo.dev:3000",
         ],
     )
     def test_allowed_origins(self, pattern, origin):
