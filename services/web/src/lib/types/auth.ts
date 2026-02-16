@@ -14,6 +14,7 @@ export interface AuthContextType {
   user: User | null;
   error: Error | null;
   login: () => void;
+  loginWithCredentials: (email: string, password: string) => Promise<void>;
   logout: () => void;
   getAccessToken: () => Promise<string | null>;
   isAuth0Enabled: boolean;

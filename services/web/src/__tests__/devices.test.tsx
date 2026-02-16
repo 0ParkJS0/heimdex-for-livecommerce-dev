@@ -11,6 +11,7 @@ vi.mock("@/lib/auth", () => ({
     user: { email: "admin@test.com", name: "Admin" },
     error: null,
     login: vi.fn(),
+    loginWithCredentials: vi.fn(),
     logout: vi.fn(),
     isAuth0Enabled: false,
   }),

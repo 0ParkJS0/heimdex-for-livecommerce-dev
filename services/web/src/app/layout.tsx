@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
-import { Navigation } from "@/components/Navigation";
+import { AppLayout } from "@/components/layout/AppLayout";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -19,8 +19,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-gray-50 text-gray-900 antialiased">
         <Providers>
-          <Navigation />
-          {children}
+          <AppLayout>{children}</AppLayout>
         </Providers>
       </body>
     </html>

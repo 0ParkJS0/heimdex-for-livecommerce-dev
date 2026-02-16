@@ -27,11 +27,12 @@ export function useAuth(): AuthContextType {
   return context;
 }
 
-// Get org slug from hostname for display
 export function getOrgSlug(): string {
   if (typeof window === "undefined") return "";
   const hostname = window.location.hostname;
-  const match = hostname.match(/^([^.]+)\.app\.heimdex(?:demo)?\./);
+  const match = hostname.match(
+    /^([^.]+)\.app\.(?:heimdex(?:demo)?\.(?:co|local|dev)|heimdexdemo\.dev)/
+  );
   return match ? match[1] : hostname;
 }
 
@@ -50,19 +51,18 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, []);
 
-  const login = useCallback(async () => {
-    // In dev mode, prompt for email and call dev-login endpoint
-    const email = window.prompt(
-      "Enter your email for dev login:\n(Must exist in the database for this org)",
-      "admin@devorg.test"
-    );
-    
-    if (!email) return;
+  const login = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+  }, []);
 
+  const loginWithCredentials = useCallback(async (email: string, password: string) => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
     if (!apiUrl) {
-      setError(new Error("NEXT_PUBLIC_API_URL is not configured"));
-      return;
+      const err = new Error("NEXT_PUBLIC_API_URL is not configured");
+      setError(err);
+      throw err;
     }
 
     setIsLoading(true);
@@ -72,19 +72,23 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
       const response = await fetch(`${apiUrl}/api/auth/dev-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, password }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Login failed: ${response.status}`);
+        const err = new Error(errorData.detail || `Login failed: ${response.status}`);
+        setError(err);
+        throw err;
       }
 
       const data = await response.json();
       setToken(data.access_token);
       sessionStorage.setItem("heimdex_dev_token", data.access_token);
     } catch (err) {
-      setError(err instanceof Error ? err : new Error("Login failed"));
+      const error = err instanceof Error ? err : new Error("Login failed");
+      setError(error);
+      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -108,6 +112,7 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
     user,
     error,
     login,
+    loginWithCredentials,
     logout,
     getAccessToken,
     isAuth0Enabled: false,
@@ -147,6 +152,13 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
     loginWithRedirect();
   }, [loginWithRedirect]);
 
+  const loginWithCredentials = useCallback(
+    async (_email: string, _password: string) => {
+      await loginWithRedirect();
+    },
+    [loginWithRedirect]
+  );
+
   const logout = useCallback(() => {
     auth0Logout({
       logoutParams: {
@@ -172,13 +184,16 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextType = {
     isAuthenticated,
     isLoading,
-    user: user ? {
-      email: user.email,
-      name: user.name,
-      picture: user.picture,
-    } : null,
+    user: user
+      ? {
+          email: user.email,
+          name: user.name,
+          picture: user.picture,
+        }
+      : null,
     error: error || null,
     login,
+    loginWithCredentials,
     logout,
     getAccessToken,
     isAuth0Enabled: true,
@@ -194,9 +209,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   // Get redirect URI based on current origin
-  const redirectUri = typeof window !== "undefined" 
-    ? `${window.location.origin}/callback`
-    : "";
+  const redirectUri =
+    typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "";
 
   return (
     <Auth0Provider

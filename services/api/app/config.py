@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"
-        r"([a-z0-9][a-z0-9-]{0,}[a-z0-9]\.app\.heimdex\.(co|local)"
+        r"([a-z0-9][a-z0-9-]{0,}[a-z0-9]\.app\.(?:heimdex\.(?:co|local)|heimdexdemo\.dev)"
         r"|localhost"
         r"|127\.0\.0\.1)"
         r"(:\d+)?$"

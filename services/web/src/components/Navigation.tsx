@@ -9,9 +9,19 @@ import { cn } from "@/lib/utils";
 
 export function Navigation() {
   const pathname = usePathname();
-  const { isAuthenticated, isLoading: authLoading, user, login, logout, isAuth0Enabled } = useAuth();
+  const {
+    isAuthenticated,
+    isLoading: authLoading,
+    user,
+    login,
+    logout,
+    isAuth0Enabled,
+  } = useAuth();
   const { isAvailable: agentAvailable } = useAgent();
   const [orgSlug, setOrgSlug] = useState("");
+
+  const hideNav = pathname === "/login" || pathname.startsWith("/auth/");
+  if (hideNav) return null;
 
   useEffect(() => {
     setOrgSlug(getOrgSlug());
@@ -54,9 +64,7 @@ export function Navigation() {
             <nav className="flex items-center gap-1">
               {tabs.map((tab) => {
                 const isActive =
-                  tab.href === "/"
-                    ? pathname === "/"
-                    : pathname.startsWith(tab.href);
+                  tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
                 return (
                   <Link
                     key={tab.href}
@@ -65,7 +73,7 @@ export function Navigation() {
                       "px-4 py-2 text-sm font-medium rounded-lg transition-colors",
                       isActive
                         ? "bg-primary-600 text-white"
-                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-100",
+                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                     )}
                   >
                     {tab.label}
@@ -84,7 +92,7 @@ export function Navigation() {
               <span
                 className={cn(
                   "w-2 h-2 rounded-full",
-                  agentAvailable ? "bg-green-500" : "bg-gray-300",
+                  agentAvailable ? "bg-green-500" : "bg-gray-300"
                 )}
               />
               {agentAvailable ? "Agent connected" : "Agent offline"}
@@ -94,9 +102,7 @@ export function Navigation() {
               <span className="text-sm text-gray-400">Loading...</span>
             ) : isAuthenticated ? (
               <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-600">
-                  {user?.email || "User"}
-                </span>
+                <span className="text-sm text-gray-600">{user?.email || "User"}</span>
                 <button
                   onClick={logout}
                   className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
