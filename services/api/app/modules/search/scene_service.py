@@ -81,24 +81,12 @@ class SceneSearchService:
         # Must complete before vector search can start.
         query_embedding = await get_query_embedding(query)
 
-        # Step 2: Run all I/O-bound queries in parallel.
-        # - Lexical search (OpenSearch BM25)
-        # - Vector search (OpenSearch kNN, needs embedding from step 1)
-        # - Facets aggregation (OpenSearch)
-        # - Library names (Postgres)
-        # - People labels (Postgres)
+        # Step 2: Run OpenSearch queries in parallel (each uses its own HTTP
+        # connection). Postgres queries stay sequential because AsyncSession
+        # does not support concurrent operations on the same connection.
         org_id_str = str(org_id)
 
-        library_repo = LibraryRepository(self.session)
-        people_repo = PeopleClusterLabelRepository(self.session)
-
-        (
-            lexical_results,
-            vector_results,
-            facet_data,
-            libraries,
-            people_labels,
-        ) = await asyncio.gather(
+        lexical_results, vector_results, facet_data = await asyncio.gather(
             self.scene_opensearch.search_lexical(
                 query=query,
                 org_id=org_id_str,
@@ -113,11 +101,14 @@ class SceneSearchService:
                 size=self.settings.search_vector_top_k,
             ),
             self.scene_opensearch.get_facets(org_id_str, filter_dict),
-            library_repo.list_by_org(org_id),
-            people_repo.list_by_org(org_id),
         )
 
+        library_repo = LibraryRepository(self.session)
+        libraries = await library_repo.list_by_org(org_id)
         library_map = {str(lib.id): lib.name for lib in libraries}
+
+        people_repo = PeopleClusterLabelRepository(self.session)
+        people_labels = await people_repo.list_by_org(org_id)
         people_label_map = {p.person_cluster_id: p.label for p in people_labels}
 
         if filters.library_ids:
