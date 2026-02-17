@@ -115,7 +115,7 @@ services:
       # Dev features
       - ENABLE_DEV_REFRESH=${ENABLE_DEV_REFRESH:-true}
       # HuggingFace model cache directory (persists downloaded models)
-      - HF_HOME=/root/.cache/huggingface
+      - HF_HOME=/data/huggingface
     ports:
       - "8000:8000"
     volumes:
@@ -123,7 +123,7 @@ services:
       # Mount heimdex-media-contracts for runtime import (shorts scorer, scene schemas)
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
       # Persistent volume for HuggingFace model cache (~2.4GB for multilingual-e5-large)
-      - huggingface_cache:/root/.cache/huggingface
+      - huggingface_cache:/data/huggingface
       # Persistent storage for uploaded scene/face thumbnails
       - ./thumbnails:/data/thumbnails
     depends_on:
