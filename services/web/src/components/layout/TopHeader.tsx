@@ -1,8 +1,91 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { getDevices } from "@/lib/api/devices";
+import { ApiError } from "@/lib/types";
+import type { DeviceListItem } from "@/lib/types";
+
+const AGENT_STALE_MINUTES = 5;
+const POLL_INTERVAL_MS = 30_000;
+
+type AgentStatus = "connected" | "offline" | "unknown";
+
+function deriveAgentStatus(devices: DeviceListItem[]): AgentStatus {
+  const now = Date.now();
+  const thresholdMs = AGENT_STALE_MINUTES * 60 * 1000;
+
+  const hasConnected = devices.some(
+    (d) =>
+      !d.is_revoked &&
+      d.last_seen_at !== null &&
+      now - new Date(d.last_seen_at).getTime() < thresholdMs,
+  );
+
+  return hasConnected ? "connected" : "offline";
+}
+
+function AgentStatusBadge() {
+  const { getAccessToken } = useAuth();
+  const [status, setStatus] = useState<AgentStatus>("unknown");
+  const [visible, setVisible] = useState(true);
+
+  const poll = useCallback(async () => {
+    try {
+      const res = await getDevices(getAccessToken);
+      setStatus(deriveAgentStatus(res.devices));
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 403) {
+        setVisible(false);
+        return;
+      }
+      setStatus("unknown");
+    }
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    poll();
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [poll]);
+
+  if (!visible) return null;
+
+  const config = {
+    connected: {
+      dot: "bg-emerald-500",
+      text: "text-emerald-700",
+      bg: "bg-emerald-50 border-emerald-200",
+      label: "Agent 연결됨",
+    },
+    offline: {
+      dot: "bg-gray-400",
+      text: "text-gray-500",
+      bg: "bg-gray-50 border-gray-200",
+      label: "Agent 오프라인",
+    },
+    unknown: {
+      dot: "bg-gray-300",
+      text: "text-gray-400",
+      bg: "bg-gray-50 border-gray-200",
+      label: "Agent 확인 중",
+    },
+  }[status];
+
+  return (
+    <div
+      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${config.bg}`}
+    >
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${config.dot} ${status === "connected" ? "animate-pulse" : ""}`}
+      />
+      <span className={`text-xs font-medium ${config.text}`}>
+        {config.label}
+      </span>
+    </div>
+  );
+}
 
 export function TopHeader() {
   const { user, logout } = useAuth();
@@ -28,6 +111,8 @@ export function TopHeader() {
   return (
     <header className="flex h-[60px] items-center justify-end px-6">
       <div className="flex items-center gap-4">
+        <AgentStatusBadge />
+
         <button
           type="button"
           className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
