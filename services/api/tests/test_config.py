@@ -6,6 +6,8 @@ _SAFE_JWT = "a-real-production-secret-abc123"
 _SAFE_AGENT = "a-real-production-agent-key-xyz"
 _DEV_JWT = "dev-secret-key-change-in-production"
 _DEV_AGENT = "dev-agent-key-change-in-production"
+_DEV_PEPPER = "dev-device-pepper-change-in-production"
+_SAFE_PEPPER = "a-real-production-pepper-abc123"
 
 
 def test_ocr_search_defaults() -> None:
@@ -26,6 +28,9 @@ class TestProductionGuards:
             jwt_secret_key=_SAFE_JWT,
             agent_api_key=_SAFE_AGENT,
             auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
+            embedding_use_mock=False,
         )
         settings.validate_production_guards()
 
@@ -35,6 +40,8 @@ class TestProductionGuards:
             jwt_secret_key=_DEV_JWT,
             agent_api_key=_SAFE_AGENT,
             auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
         )
         with pytest.raises(ProductionGuardError, match="JWT_SECRET_KEY"):
             settings.validate_production_guards()
@@ -45,6 +52,8 @@ class TestProductionGuards:
             jwt_secret_key=_SAFE_JWT,
             agent_api_key=_DEV_AGENT,
             auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
         )
         with pytest.raises(ProductionGuardError, match="AGENT_API_KEY"):
             settings.validate_production_guards()
@@ -55,6 +64,7 @@ class TestProductionGuards:
             jwt_secret_key=_SAFE_JWT,
             agent_api_key=_SAFE_AGENT,
             auth0_enabled=False,
+            device_secret_pepper=_SAFE_PEPPER,
         )
         with pytest.raises(ProductionGuardError, match="AUTH0_ENABLED"):
             settings.validate_production_guards()
@@ -65,8 +75,59 @@ class TestProductionGuards:
             jwt_secret_key=_DEV_JWT,
             agent_api_key=_SAFE_AGENT,
             auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
         )
         with pytest.raises(ProductionGuardError, match="JWT_SECRET_KEY"):
+            settings.validate_production_guards()
+
+    def test_production_rejects_dev_device_pepper(self) -> None:
+        settings = Settings(
+            environment="production",
+            jwt_secret_key=_SAFE_JWT,
+            agent_api_key=_SAFE_AGENT,
+            auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_DEV_PEPPER,
+        )
+        with pytest.raises(ProductionGuardError, match="DEVICE_SECRET_PEPPER"):
+            settings.validate_production_guards()
+
+    def test_production_rejects_mock_embeddings(self) -> None:
+        settings = Settings(
+            environment="production",
+            jwt_secret_key=_SAFE_JWT,
+            agent_api_key=_SAFE_AGENT,
+            auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
+            embedding_use_mock=True,
+        )
+        with pytest.raises(ProductionGuardError, match="EMBEDDING_USE_MOCK"):
+            settings.validate_production_guards()
+
+    def test_production_rejects_empty_auth0_domain(self) -> None:
+        settings = Settings(
+            environment="production",
+            jwt_secret_key=_SAFE_JWT,
+            agent_api_key=_SAFE_AGENT,
+            auth0_enabled=True,
+            auth0_domain="",
+            device_secret_pepper=_SAFE_PEPPER,
+        )
+        with pytest.raises(ProductionGuardError, match="AUTH0_DOMAIN"):
+            settings.validate_production_guards()
+
+    def test_production_rejects_placeholder_auth0_domain(self) -> None:
+        settings = Settings(
+            environment="production",
+            jwt_secret_key=_SAFE_JWT,
+            agent_api_key=_SAFE_AGENT,
+            auth0_enabled=True,
+            auth0_domain="your-tenant.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
+        )
+        with pytest.raises(ProductionGuardError, match="AUTH0_DOMAIN"):
             settings.validate_production_guards()
 
     def test_error_lists_all_failures_not_just_first(self) -> None:
@@ -75,6 +136,7 @@ class TestProductionGuards:
             jwt_secret_key=_DEV_JWT,
             agent_api_key=_DEV_AGENT,
             auth0_enabled=False,
+            embedding_use_mock=True,
         )
         with pytest.raises(ProductionGuardError) as exc_info:
             settings.validate_production_guards()
@@ -83,7 +145,8 @@ class TestProductionGuards:
         assert "JWT_SECRET_KEY" in error_msg
         assert "AGENT_API_KEY" in error_msg
         assert "AUTH0_ENABLED" in error_msg
-        assert "3 issue(s)" in error_msg
+        assert "EMBEDDING_USE_MOCK" in error_msg
+        assert "5 issue(s)" in error_msg
 
     def test_error_includes_remediation_hints(self) -> None:
         settings = Settings(
@@ -91,6 +154,8 @@ class TestProductionGuards:
             jwt_secret_key=_DEV_JWT,
             agent_api_key=_SAFE_AGENT,
             auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
         )
         with pytest.raises(ProductionGuardError, match="openssl rand"):
             settings.validate_production_guards()
@@ -101,6 +166,9 @@ class TestProductionGuards:
             jwt_secret_key=_DEV_JWT,
             agent_api_key=_SAFE_AGENT,
             auth0_enabled=True,
+            auth0_domain="real.auth0.com",
+            device_secret_pepper=_SAFE_PEPPER,
+            embedding_use_mock=False,
         )
         with pytest.raises(ProductionGuardError) as exc_info:
             settings.validate_production_guards()
@@ -109,4 +177,5 @@ class TestProductionGuards:
         assert "JWT_SECRET_KEY" in error_msg
         assert "AGENT_API_KEY" not in error_msg
         assert "AUTH0_ENABLED" not in error_msg
+        assert "EMBEDDING_USE_MOCK" not in error_msg
         assert "1 issue(s)" in error_msg

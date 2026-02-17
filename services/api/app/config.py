@@ -9,6 +9,7 @@ _INSECURE_DEFAULTS = frozenset(
     {
         "dev-secret-key-change-in-production",
         "dev-agent-key-change-in-production",
+        "dev-device-pepper-change-in-production",
     }
 )
 
@@ -121,8 +122,8 @@ class Settings(BaseSettings):
     enable_dev_refresh: bool = True
 
     class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+        env_file: str = ".env"
+        env_file_encoding: str = "utf-8"
 
     def validate_production_guards(self) -> None:
         if self.environment == "development":
@@ -133,28 +134,50 @@ class Settings(BaseSettings):
         if self.jwt_secret_key in _INSECURE_DEFAULTS:
             errors.append(
                 "JWT_SECRET_KEY is using the insecure dev default. "
-                "Set a strong random value: JWT_SECRET_KEY=$(openssl rand -hex 32)"
+                + "Set a strong random value: JWT_SECRET_KEY=$(openssl rand -hex 32)"
             )
 
         if self.agent_api_key in _INSECURE_DEFAULTS:
             errors.append(
                 "AGENT_API_KEY is using the insecure dev default. "
-                "Set a strong random value: AGENT_API_KEY=$(openssl rand -hex 32)"
+                + "Set a strong random value: AGENT_API_KEY=$(openssl rand -hex 32)"
             )
 
         if not self.auth0_enabled:
             errors.append(
                 "AUTH0_ENABLED is false. "
-                "Production requires Auth0 (or equivalent OIDC provider): AUTH0_ENABLED=true"
+                + "Production requires Auth0 (or equivalent OIDC provider): AUTH0_ENABLED=true"
             )
+
+        if self.device_secret_pepper in _INSECURE_DEFAULTS:
+            errors.append(
+                "DEVICE_SECRET_PEPPER is using the insecure dev default. "
+                + "Set a strong random value: DEVICE_SECRET_PEPPER=$(openssl rand -hex 16)"
+            )
+
+        if self.embedding_use_mock:
+            errors.append(
+                "EMBEDDING_USE_MOCK is true. "
+                + "Production/staging requires real embeddings for accurate search. "
+                + "Set EMBEDDING_USE_MOCK=false and ensure the embedding model is "
+                + "downloaded (HF_HOME must contain the model cache)."
+            )
+
+        if self.auth0_enabled:
+            if not self.auth0_domain or "your-tenant" in self.auth0_domain:
+                errors.append(
+                    "AUTH0_DOMAIN is missing or contains the placeholder 'your-tenant'. "
+                    + "Set AUTH0_DOMAIN to your real Auth0 tenant domain "
+                    + "(e.g. AUTH0_DOMAIN=mycompany.auth0.com)."
+                )
 
         if errors:
             msg = (
                 f"\n{'='*60}\n"
-                f"FATAL: Refusing to start in '{self.environment}' mode.\n\n"
+                + f"FATAL: Refusing to start in '{self.environment}' mode.\n\n"
                 + "\n".join(f"  [{i+1}] {e}" for i, e in enumerate(errors))
                 + f"\n\nFix all {len(errors)} issue(s) above before starting.\n"
-                f"{'='*60}"
+                + f"{'='*60}"
             )
             logging.critical(msg)
             raise ProductionGuardError(msg)
