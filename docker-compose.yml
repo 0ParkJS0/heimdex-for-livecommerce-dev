@@ -124,6 +124,8 @@ services:
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
       # Persistent volume for HuggingFace model cache (~2.4GB for multilingual-e5-large)
       - huggingface_cache:/root/.cache/huggingface
+      # Persistent storage for uploaded scene/face thumbnails
+      - ./thumbnails:/data/thumbnails
     depends_on:
       postgres:
         condition: service_healthy
