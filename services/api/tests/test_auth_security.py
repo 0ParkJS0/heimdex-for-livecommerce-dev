@@ -440,6 +440,7 @@ class TestAutoProvisioning:
 
         mock_session = MagicMock()
         mock_session.begin_nested = MagicMock(return_value=_noop_savepoint())
+        mock_session.commit = AsyncMock()
 
         user_repo = MagicMock()
         user_repo.session = mock_session
@@ -456,6 +457,7 @@ class TestAutoProvisioning:
             user_repo.link_auth0_sub.assert_called_once_with(
                 created_user.id, "auth0|brand_new"
             )
+            mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_auto_provision_skipped_for_unverified_email(self):
@@ -528,6 +530,7 @@ class TestAutoProvisioning:
 
         mock_session = MagicMock()
         mock_session.begin_nested = MagicMock(return_value=_failing_savepoint())
+        mock_session.commit = AsyncMock()
 
         user_repo = MagicMock()
         user_repo.session = mock_session
@@ -544,6 +547,7 @@ class TestAutoProvisioning:
             user_repo.link_auth0_sub.assert_called_once_with(
                 existing_user.id, "auth0|racer"
             )
+            mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_email_at_all_still_returns_401(self):

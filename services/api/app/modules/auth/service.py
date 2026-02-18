@@ -196,6 +196,10 @@ async def _validate_auth0_user(
                             sub=auth0_payload.sub,
                             email=email,
                         )
+                # Commit immediately so the user persists even if the
+                # downstream endpoint returns 403/404/etc.
+                if user:
+                    await user_repo.session.commit()
     
     if not user:
         raise HTTPException(
