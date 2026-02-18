@@ -169,6 +169,19 @@ async def _validate_auth0_user(
                     sub=auth0_payload.sub,
                     email=email,
                 )
+            else:
+                # Auto-provision: Auth0 org membership + verified email = trusted user.
+                # Admin adds users to the Auth0 organization; on first login we
+                # create their DB row automatically so no manual SQL is needed.
+                user = await user_repo.create(org_ctx.org_id, email)
+                await user_repo.link_auth0_sub(user.id, auth0_payload.sub)
+                logger.info(
+                    "auto_provisioned_user",
+                    user_id=str(user.id),
+                    sub=auth0_payload.sub,
+                    email=email,
+                    org_id=str(org_ctx.org_id),
+                )
     
     if not user:
         raise HTTPException(

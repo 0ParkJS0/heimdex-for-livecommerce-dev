@@ -417,8 +417,118 @@ class TestAuth0OrgBinding:
         assert "org_ATTACKER_456" not in detail
 
 
+class TestAutoProvisioning:
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_new_user_with_verified_email(self):
+        org_id = uuid4()
+        org_ctx = OrgContext(org_id=org_id, org_slug="test-org")
+
+        auth0_payload = Auth0TokenPayload(
+            sub="auth0|brand_new",
+            org_id=None,
+            email="newuser@company.com",
+            permissions=[],
+            raw_claims={"email_verified": True},
+        )
+
+        created_user = MagicMock()
+        created_user.id = uuid4()
+
+        user_repo = MagicMock()
+        user_repo.get_by_auth0_sub = AsyncMock(return_value=None)
+        user_repo.get_by_email = AsyncMock(return_value=None)
+        user_repo.create = AsyncMock(return_value=created_user)
+        user_repo.link_auth0_sub = AsyncMock()
+
+        with patch("app.modules.auth.service.validate_auth0_token", return_value=auth0_payload):
+            result = await _validate_auth0_user("fake_token", org_ctx, user_repo)
+
+            assert result == created_user
+            user_repo.create.assert_called_once_with(org_id, "newuser@company.com")
+            user_repo.link_auth0_sub.assert_called_once_with(
+                created_user.id, "auth0|brand_new"
+            )
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_skipped_for_unverified_email(self):
+        org_id = uuid4()
+        org_ctx = OrgContext(org_id=org_id, org_slug="test-org")
+
+        auth0_payload = Auth0TokenPayload(
+            sub="auth0|unverified_new",
+            org_id=None,
+            email="unverified@company.com",
+            permissions=[],
+            raw_claims={"email_verified": False},
+        )
+
+        user_repo = MagicMock()
+        user_repo.get_by_auth0_sub = AsyncMock(return_value=None)
+
+        with patch("app.modules.auth.service.validate_auth0_token", return_value=auth0_payload):
+            with pytest.raises(HTTPException) as exc_info:
+                await _validate_auth0_user("fake_token", org_ctx, user_repo)
+
+            assert exc_info.value.status_code == 403
+            user_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_not_triggered_when_existing_user_found_by_email(self):
+        org_id = uuid4()
+        org_ctx = OrgContext(org_id=org_id, org_slug="test-org")
+
+        auth0_payload = Auth0TokenPayload(
+            sub="auth0|returning",
+            org_id=None,
+            email="existing@company.com",
+            permissions=[],
+            raw_claims={"email_verified": True},
+        )
+
+        existing_user = MagicMock()
+        existing_user.id = uuid4()
+
+        user_repo = MagicMock()
+        user_repo.get_by_auth0_sub = AsyncMock(return_value=None)
+        user_repo.get_by_email = AsyncMock(return_value=existing_user)
+        user_repo.link_auth0_sub = AsyncMock()
+
+        with patch("app.modules.auth.service.validate_auth0_token", return_value=auth0_payload):
+            result = await _validate_auth0_user("fake_token", org_ctx, user_repo)
+
+            assert result == existing_user
+            user_repo.create.assert_not_called()
+            user_repo.link_auth0_sub.assert_called_once_with(
+                existing_user.id, "auth0|returning"
+            )
+
+    @pytest.mark.asyncio
+    async def test_no_email_at_all_still_returns_401(self):
+        org_id = uuid4()
+        org_ctx = OrgContext(org_id=org_id, org_slug="test-org")
+
+        auth0_payload = Auth0TokenPayload(
+            sub="auth0|no_email",
+            org_id=None,
+            email=None,
+            permissions=[],
+            raw_claims={},
+        )
+
+        user_repo = MagicMock()
+        user_repo.get_by_auth0_sub = AsyncMock(return_value=None)
+
+        with patch("app.modules.auth.service.validate_auth0_token", return_value=auth0_payload):
+            with patch("app.modules.auth.service.fetch_userinfo", return_value={}):
+                with pytest.raises(HTTPException) as exc_info:
+                    await _validate_auth0_user("fake_token", org_ctx, user_repo)
+
+                assert exc_info.value.status_code == 401
+                user_repo.create.assert_not_called()
+
+
 class TestErrorMessageSafety:
-    """Test that error messages don't leak sensitive information."""
 
     @pytest.mark.asyncio
     async def test_org_mismatch_error_doesnt_leak_ids(self):
