@@ -62,12 +62,32 @@ class SceneSearchService:
             alpha=alpha,
         )
 
+        # AsyncSession: must complete DB queries before the OpenSearch gather.
+        people_repo = PeopleClusterLabelRepository(self.session)
+        people_labels = await people_repo.list_by_org(org_id)
+        people_label_map = {p.person_cluster_id: p.label for p in people_labels}
+
+        matched_person_cluster_ids: list[str] = []
+        for p in people_labels:
+            if p.label and p.label.strip() and p.label.strip() in query:
+                matched_person_cluster_ids.append(p.person_cluster_id)
+
+        effective_person_ids = list(filters.person_cluster_ids or [])
+        if matched_person_cluster_ids:
+            effective_person_ids = list(set(effective_person_ids + matched_person_cluster_ids))
+            logger.info(
+                "person_name_detected_in_query",
+                query=query[:50],
+                matched_labels=[people_label_map.get(pid) for pid in matched_person_cluster_ids],
+                matched_cluster_ids=matched_person_cluster_ids,
+            )
+
         filter_dict = {
             "date_from": filters.date_from,
             "date_to": filters.date_to,
             "source_types": filters.source_types,
             "library_ids": filters.library_ids,
-            "person_cluster_ids": filters.person_cluster_ids,
+            "person_cluster_ids": effective_person_ids or None,
             "person_cluster_ids_not_in": filters.person_cluster_ids_not_in,
             "keyword_tags_in": filters.keyword_tags_in,
             "keyword_tags_not_in": filters.keyword_tags_not_in,
@@ -93,6 +113,7 @@ class SceneSearchService:
                 filters=filter_dict,
                 size=self.settings.search_lexical_top_k,
                 include_ocr=include_ocr,
+                matched_person_cluster_ids=matched_person_cluster_ids or None,
             ),
             self.scene_opensearch.search_vector(
                 embedding=query_embedding,
@@ -106,10 +127,6 @@ class SceneSearchService:
         library_repo = LibraryRepository(self.session)
         libraries = await library_repo.list_by_org(org_id)
         library_map = {str(lib.id): lib.name for lib in libraries}
-
-        people_repo = PeopleClusterLabelRepository(self.session)
-        people_labels = await people_repo.list_by_org(org_id)
-        people_label_map = {p.person_cluster_id: p.label for p in people_labels}
 
         if filters.library_ids:
             requested = {str(lid) for lid in filters.library_ids}

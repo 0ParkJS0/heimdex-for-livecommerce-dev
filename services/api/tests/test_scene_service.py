@@ -330,9 +330,11 @@ class TestSceneSearchService:
         )
 
         with patch.object(scene_search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
 
             await scene_search_service.search(
                 query="test", org_id=org_id, alpha=0.5, filters=filters
@@ -434,15 +436,89 @@ class TestSceneSearchService:
         mock_lib.name = "My Library"
 
         with patch.object(scene_search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
 
             response = await scene_search_service.search(
                 query="test", org_id=org_id, alpha=0.5, filters=SearchFilters()
             )
 
         assert response.results[0].library_name == "My Library"
+
+    # ------------------------------------------------------------------
+    # Person name detection in query
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_person_name_in_query_adds_cluster_filter(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        org_id = uuid4()
+
+        mock_person = MagicMock()
+        mock_person.person_cluster_id = "cluster_abc"
+        mock_person.label = "장원영"
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = [mock_person]
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = []
+            mock_execute.side_effect = [people_result, lib_result]
+
+            await scene_search_service.search(
+                query="장원영", org_id=org_id, alpha=0.5, filters=SearchFilters()
+            )
+
+        filter_dict = mock_scene_opensearch_client.search_lexical.call_args.kwargs["filters"]
+        assert filter_dict["person_cluster_ids"] == ["cluster_abc"]
+
+        matched = mock_scene_opensearch_client.search_lexical.call_args.kwargs["matched_person_cluster_ids"]
+        assert matched == ["cluster_abc"]
+
+    @pytest.mark.asyncio
+    async def test_person_name_merged_with_explicit_filter(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        org_id = uuid4()
+
+        mock_person = MagicMock()
+        mock_person.person_cluster_id = "cluster_abc"
+        mock_person.label = "장원영"
+
+        filters = SearchFilters(person_cluster_ids=["cluster_xyz"])
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = [mock_person]
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = []
+            mock_execute.side_effect = [people_result, lib_result]
+
+            await scene_search_service.search(
+                query="장원영", org_id=org_id, alpha=0.5, filters=filters
+            )
+
+        filter_dict = mock_scene_opensearch_client.search_lexical.call_args.kwargs["filters"]
+        assert set(filter_dict["person_cluster_ids"]) == {"cluster_abc", "cluster_xyz"}
+
+    @pytest.mark.asyncio
+    async def test_no_person_match_leaves_filter_unchanged(
+        self, scene_search_service, mock_scene_opensearch_client, _patch_db_session
+    ):
+        org_id = uuid4()
+
+        await scene_search_service.search(
+            query="화장품 추천", org_id=org_id, alpha=0.5, filters=SearchFilters()
+        )
+
+        filter_dict = mock_scene_opensearch_client.search_lexical.call_args.kwargs["filters"]
+        assert filter_dict["person_cluster_ids"] is None
+
+        matched = mock_scene_opensearch_client.search_lexical.call_args.kwargs["matched_person_cluster_ids"]
+        assert matched is None
 
     # ------------------------------------------------------------------
     # Quality factor applied (via shared fusion logic)
@@ -491,9 +567,11 @@ class TestLibraryIdValidation:
         mock_lib.name = "Known Library"
 
         with patch.object(scene_search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
 
             filters = SearchFilters(library_ids=[unknown_lib_id])
             with pytest.raises(HTTPException) as exc_info:
@@ -516,9 +594,11 @@ class TestLibraryIdValidation:
         mock_lib.name = "My Library"
 
         with patch.object(scene_search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
 
             filters = SearchFilters(library_ids=[lib_id])
             response = await scene_search_service.search(
@@ -559,9 +639,11 @@ class TestLibraryIdValidation:
         mock_lib.name = "Known"
 
         with patch.object(scene_search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
 
             filters = SearchFilters(library_ids=[known_id, unknown_id])
             with pytest.raises(HTTPException) as exc_info:

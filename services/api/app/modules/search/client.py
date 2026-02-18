@@ -438,64 +438,76 @@ class OpenSearchClient:
         org_id: str,
         filters: dict[str, Any],
         size: int = 200,
+        matched_person_cluster_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        BM25 lexical search with phrase boost for short queries.
-        
-        Short queries (<=3 words) get additional phrase matching boost
-        to improve precision for Korean queries like "할인 행사".
-        """
+        """BM25 lexical search with phrase boost for short queries."""
         filter_clauses, must_not_clauses = self._build_filter_clauses(filters)
-        
-        # Base match query
+
         match_query = {
             "match": {
                 "transcript_norm": {
                     "query": query,
                     "operator": "or",
-                    "minimum_should_match": "50%",  # At least half the terms must match
+                    "minimum_should_match": "50%",
                 }
             }
         }
-        
-        # For short queries, add phrase boost to prioritize exact phrase matches
-        # This helps Korean queries like "세일 기간" match "세일 기간입니다" over "세일... 기간"
+
         query_word_count = len(query.split())
-        
+
+        person_should: dict[str, Any] | None = None
+        if matched_person_cluster_ids:
+            person_should = {
+                "constant_score": {
+                    "filter": {"terms": {"people_cluster_ids": matched_person_cluster_ids}},
+                    "boost": 10.0,
+                }
+            }
+
         if query_word_count <= 3:
-            # Use bool query with phrase boost
+            should_clauses: list[dict[str, Any]] = [
+                match_query,
+                {
+                    "match_phrase": {
+                        "transcript_norm": {
+                            "query": query,
+                            "boost": 2.0,
+                            "slop": 1,
+                        }
+                    }
+                },
+            ]
+            if person_should:
+                should_clauses.append(person_should)
+
             search_query: dict[str, Any] = {
                 "bool": {
-                    "must": [
-                        {"term": {"org_id": org_id}},
-                    ],
-                    "should": [
-                        match_query,
-                        {
-                            "match_phrase": {
-                                "transcript_norm": {
-                                    "query": query,
-                                    "boost": 2.0,  # Boost exact phrase matches
-                                    "slop": 1,    # Allow 1 word between terms
-                                }
-                            }
-                        },
-                    ],
+                    "must": [{"term": {"org_id": org_id}}],
+                    "should": should_clauses,
                     "minimum_should_match": 1,
                     "filter": filter_clauses,
                 }
             }
         else:
-            # Longer queries use standard match
-            search_query = {
-                "bool": {
-                    "must": [
-                        {"term": {"org_id": org_id}},
-                        match_query,
-                    ],
-                    "filter": filter_clauses,
+            if person_should:
+                search_query = {
+                    "bool": {
+                        "must": [{"term": {"org_id": org_id}}],
+                        "should": [match_query, person_should],
+                        "minimum_should_match": 1,
+                        "filter": filter_clauses,
+                    }
                 }
-            }
+            else:
+                search_query = {
+                    "bool": {
+                        "must": [
+                            {"term": {"org_id": org_id}},
+                            match_query,
+                        ],
+                        "filter": filter_clauses,
+                    }
+                }
         
         if must_not_clauses:
             search_query["bool"]["must_not"] = must_not_clauses

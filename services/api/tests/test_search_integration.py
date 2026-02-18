@@ -92,15 +92,17 @@ class TestSearchService:
         )
         
         with patch.object(search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
-            
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
+
             await search_service.search("test", org_id, alpha=0.5, filters=filters)
-        
+
         call_args = mock_opensearch_client.search_lexical.call_args
         filter_dict = call_args.kwargs["filters"]
-        
+
         assert filter_dict["source_types"] == ["gdrive"]
         assert filter_dict["library_ids"] == [lib_id]
         assert filter_dict["person_cluster_ids"] == ["cluster1"]
@@ -139,9 +141,11 @@ class TestSegmentLibraryIdValidation:
         mock_lib.name = "Known"
 
         with patch.object(search_service.session, "execute") as mock_execute:
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_lib]
-            mock_execute.return_value = mock_result
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = []
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = [mock_lib]
+            mock_execute.side_effect = [people_result, lib_result]
 
             filters = SearchFilters(library_ids=[lib_id])
             response = await search_service.search("test", org_id, alpha=0.5, filters=filters)

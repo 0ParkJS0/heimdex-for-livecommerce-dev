@@ -382,6 +382,7 @@ class SceneSearchClient:
         filters: dict[str, Any],
         size: int = 200,
         include_ocr: bool | None = None,
+        matched_person_cluster_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 lexical search on scene transcripts.
 
@@ -410,6 +411,15 @@ class SceneSearchClient:
 
         # Video title boost (lower than transcript, higher than OCR)
         title_bm25_boost = 1.5
+
+        person_should: dict[str, Any] | None = None
+        if matched_person_cluster_ids:
+            person_should = {
+                "constant_score": {
+                    "filter": {"terms": {"people_cluster_ids": matched_person_cluster_ids}},
+                    "boost": 10.0,
+                }
+            }
 
         if query_word_count <= 3:
             should_clauses: list[dict[str, Any]] = [
@@ -468,6 +478,9 @@ class SceneSearchClient:
                     ]
                 )
 
+            if person_should:
+                should_clauses.append(person_should)
+
             search_query: dict[str, Any] = {
                 "bool": {
                     "must": [{"term": {"org_id": org_id}}],
@@ -477,16 +490,6 @@ class SceneSearchClient:
                 }
             }
         else:
-            search_query = {
-                "bool": {
-                    "must": [
-                        {"term": {"org_id": org_id}},
-                        match_query,
-                    ],
-                    "filter": filter_clauses,
-                }
-            }
-            # Video title and OCR as optional boosters for long queries
             optional_should: list[dict[str, Any]] = [
                 {
                     "match": {
@@ -512,7 +515,28 @@ class SceneSearchClient:
                         }
                     }
                 )
-            search_query["bool"]["should"] = optional_should
+
+            if person_should:
+                all_should = [match_query, person_should] + optional_should
+                search_query = {
+                    "bool": {
+                        "must": [{"term": {"org_id": org_id}}],
+                        "should": all_should,
+                        "minimum_should_match": 1,
+                        "filter": filter_clauses,
+                    }
+                }
+            else:
+                search_query = {
+                    "bool": {
+                        "must": [
+                            {"term": {"org_id": org_id}},
+                            match_query,
+                        ],
+                        "should": optional_should,
+                        "filter": filter_clauses,
+                    }
+                }
 
         if must_not_clauses:
             search_query["bool"]["must_not"] = must_not_clauses
