@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { exportToPremiere } from "@/lib/agent-export";
+import { getAgentClipUrl } from "@/lib/agent";
+import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ExportDialog } from "@/features/videos/components/ExportDialog";
 import type { ExportClipInput } from "@/lib/types";
 
@@ -150,10 +152,15 @@ export function SavedShortsPage() {
   const handleClipDownload = useCallback(() => {
     setShowExportMenu(false);
     for (const short of selectedShorts) {
-      const url = `http://127.0.0.1:8787/playback/file?file_id=${short.video_id}`;
+      const startMs = short.start_ms ?? 0;
+      const endMs = short.end_ms ?? 0;
+      const name = short.title ?? `shorts_${short.video_id}`;
+      const url = startMs < endMs
+        ? getAgentClipUrl(short.video_id, startMs, endMs, name)
+        : `http://127.0.0.1:8787/playback/file?file_id=${encodeURIComponent(short.video_id)}`;
       const a = document.createElement("a");
       a.href = url;
-      a.download = short.title ?? `shorts_${short.video_id}`;
+      a.download = name;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -325,7 +332,12 @@ export function SavedShortsPage() {
                   href={`/shorts/create?videoId=${short.video_id}&sceneIds=${short.scene_ids.join(",")}`}
                   className="relative block aspect-[4/3] w-full overflow-hidden rounded-lg bg-gray-200"
                 >
-                  <div className="flex h-full w-full items-center justify-center text-gray-400"><VideoFileIcon /></div>
+                  <SceneThumbnail
+                    videoId={short.video_id}
+                    sceneId={short.scene_ids[0]}
+                    agentAvailable={true}
+                    className="h-full w-full"
+                  />
                   <button
                     type="button"
                     onClick={(e) => { e.preventDefault(); toggleSelect(short.id); }}

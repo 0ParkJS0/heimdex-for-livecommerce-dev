@@ -82,6 +82,14 @@ export function getAgentThumbnailUrl(videoId: string, sceneId?: string): string 
   return base;
 }
 
+export function getAgentClipUrl(videoId: string, startMs: number, endMs: number, name?: string): string {
+  const base = `${AGENT_BASE}/export/clip?file_id=${encodeURIComponent(videoId)}&start_ms=${startMs}&end_ms=${endMs}`;
+  if (name) {
+    return `${base}&name=${encodeURIComponent(name)}`;
+  }
+  return base;
+}
+
 export function getCloudThumbnailUrl(videoId: string, sceneId: string): string {
   return `/api/thumbnails/${encodeURIComponent(videoId)}/${encodeURIComponent(sceneId)}`;
 }
