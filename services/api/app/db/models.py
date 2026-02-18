@@ -7,7 +7,7 @@ from app.modules.devices.models import Device  # noqa: F401
 from app.modules.devices.pairing import PairingCode  # noqa: F401
 from app.modules.libraries.models import Library  # noqa: F401
 from app.modules.orgs.models import Org  # noqa: F401
-from app.modules.people.models import DriveNicknameRegistry, PeopleClusterLabel  # noqa: F401
+from app.modules.people.models import DriveNicknameRegistry, PeopleClusterLabel, PeopleExcludePreference  # noqa: F401
 from app.modules.profiles.models import LibraryProfile  # noqa: F401
 from app.modules.shorts.models import SavedShort  # noqa: F401
 from app.modules.users.models import User  # noqa: F401
