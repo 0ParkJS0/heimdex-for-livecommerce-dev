@@ -8,6 +8,7 @@ import { getAgentStatus } from "@/lib/agent";
 import type { AgentState } from "@/lib/agent";
 import { AuthGuard } from "@/components/AuthGuard";
 import { SyncSourceCard } from "@/components/sync/SyncSourceCard";
+import type { ConnectionStatus, ProcessingStatus } from "@/components/sync/SyncSourceCard";
 import { UploadProgress } from "@/components/sync/UploadProgress";
 import { StopConfirmDialog } from "@/components/sync/StopConfirmDialog";
 import type { DeviceListItem } from "@/lib/types";
@@ -15,7 +16,9 @@ import type { DeviceListItem } from "@/lib/types";
 type UploadState = "hidden" | "uploading" | "paused" | "complete" | "error";
 
 const POLL_INTERVAL_MS = 2000;
+const DEVICE_POLL_INTERVAL_MS = 30_000;
 const MAX_UNREACHABLE_COUNT = 5;
+const AGENT_STALE_MINUTES = 5;
 
 const SYNC_SOURCES = [
   { title: "클라우드", disabled: true },
@@ -23,6 +26,42 @@ const SYNC_SOURCES = [
   { title: "로컬 파일", disabled: false },
   { title: "수동 파일", disabled: true },
 ] as const;
+
+function deriveConnectionStatus(devices: DeviceListItem[]): ConnectionStatus {
+  const now = Date.now();
+  const thresholdMs = AGENT_STALE_MINUTES * 60 * 1000;
+  const hasConnected = devices.some(
+    (d) =>
+      !d.is_revoked &&
+      d.last_seen_at !== null &&
+      now - new Date(d.last_seen_at).getTime() < thresholdMs,
+  );
+  return hasConnected ? "connected" : "offline";
+}
+
+function deriveLastSeenAt(devices: DeviceListItem[]): string | null {
+  const active = devices.filter((d) => !d.is_revoked && d.last_seen_at);
+  if (active.length === 0) return null;
+  return active.reduce((latest, d) =>
+    new Date(d.last_seen_at!).getTime() > new Date(latest.last_seen_at!).getTime() ? d : latest,
+  ).last_seen_at;
+}
+
+function deriveProcessingStatus(agentState: AgentState | null): ProcessingStatus {
+  if (agentState === null) return "unknown";
+  switch (agentState) {
+    case "idle":
+      return "complete";
+    case "indexing":
+      return "processing";
+    case "error":
+      return "error";
+    case "paused":
+      return "processing";
+    default:
+      return "unknown";
+  }
+}
 
 function mapAgentState(agentState: AgentState): UploadState {
   switch (agentState) {
@@ -47,21 +86,48 @@ function SyncContent() {
   const [showStopDialog, setShowStopDialog] = useState(false);
   const [devices, setDevices] = useState<DeviceListItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("unknown");
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>("unknown");
+  const [lastSeenAt, setLastSeenAt] = useState<string | null>(null);
   const pollingRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unreachableCountRef = useRef(0);
 
-  useEffect(() => {
-    async function loadDevices() {
-      try {
-        const res = await getDevices(getAccessToken);
-        setDevices(res.devices.filter((d) => !d.is_revoked));
-      } catch {
-        setDevices([]);
-      }
+  // Poll devices for connection status (same pattern as TopHeader)
+  const loadDevices = useCallback(async () => {
+    try {
+      const res = await getDevices(getAccessToken);
+      const active = res.devices.filter((d) => !d.is_revoked);
+      setDevices(active);
+      setConnectionStatus(deriveConnectionStatus(active));
+      setLastSeenAt(deriveLastSeenAt(active));
+    } catch {
+      setDevices([]);
+      setConnectionStatus("unknown");
     }
-    loadDevices();
   }, [getAccessToken]);
+
+  useEffect(() => {
+    loadDevices();
+    const id = setInterval(loadDevices, DEVICE_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [loadDevices]);
+
+  // Poll agent local status for processing state
+  useEffect(() => {
+    let mounted = true;
+    async function pollProcessing() {
+      const status = await getAgentStatus();
+      if (!mounted) return;
+      setProcessingStatus(deriveProcessingStatus(status?.state ?? null));
+    }
+    pollProcessing();
+    const id = setInterval(pollProcessing, DEVICE_POLL_INTERVAL_MS);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
 
   const stopPolling = useCallback(() => {
     pollingRef.current = false;
@@ -193,6 +259,11 @@ function SyncContent() {
             onUpdate={handleStartUpload}
             isUploading={isUploading}
             disabled={source.disabled}
+            {...(!source.disabled && {
+              connectionStatus,
+              processingStatus,
+              lastAnalyzedAt: lastSeenAt,
+            })}
           />
         ))}
       </div>
