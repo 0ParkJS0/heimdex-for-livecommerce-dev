@@ -157,6 +157,14 @@ async def verify_agent_token(
                 detail="Invalid agent API key",
             )
 
+    if isinstance(x_heimdex_device_id, str) and x_heimdex_device_id:
+        device_repo = DeviceRepository(db)
+        device = await device_repo.get_by_org_and_public_id(
+            org_ctx.org_id, x_heimdex_device_id
+        )
+        if device and not device.is_revoked:
+            await device_repo.update_last_seen(device)
+
     logger.debug(
         "agent_token_verified",
         org_id=str(org_ctx.org_id),

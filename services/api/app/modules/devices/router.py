@@ -27,6 +27,7 @@ from app.modules.devices.schemas import (
     DeviceRevokeResponse,
     DeviceRotateRequest,
     DeviceRotateResponse,
+    HeartbeatResponse,
     PairingCodeCreateResponse,
     PairingCodeExchangeRequest,
 )
@@ -190,6 +191,30 @@ async def rotate_device_secret(
         device_secret=raw_secret,
         rotated_at=datetime.now(UTC),
     )
+
+
+@router.post("/heartbeat", response_model=HeartbeatResponse)
+async def heartbeat_device(
+    org_ctx: OrgContext = Depends(_verify_org_api_key),
+    db: AsyncSession = Depends(get_db_session),
+    x_heimdex_device_id: str = Header(..., alias="X-Heimdex-Device-Id"),
+):
+    repo = DeviceRepository(db)
+
+    device = await repo.get_by_org_and_public_id(org_ctx.org_id, x_heimdex_device_id)
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found",
+        )
+    if device.is_revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Device is revoked",
+        )
+
+    await repo.update_last_seen(device)
+    return HeartbeatResponse(status="ok")
 
 
 @router.post("/revoke", response_model=DeviceRevokeResponse)

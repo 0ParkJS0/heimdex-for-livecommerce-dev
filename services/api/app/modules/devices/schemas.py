@@ -60,6 +60,10 @@ class DeviceListResponse(BaseModel):
     devices: list[DeviceListItem]
 
 
+class HeartbeatResponse(BaseModel):
+    status: str
+
+
 # --- Pairing code schemas ---
 
 

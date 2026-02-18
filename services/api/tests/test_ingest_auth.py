@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
+from app.modules.devices.repository import DeviceRepository
 from app.modules.ingest.auth import verify_agent_token
 from app.modules.tenancy.context import OrgContext
 
@@ -109,3 +110,93 @@ class TestPerOrgAgentToken:
         with pytest.raises(HTTPException) as exc_info:
             await self._run_verify(token="", mode="per-org", org_key="org-key")
         assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_single_mode_updates_last_seen_when_device_header_present(self):
+        org_ctx = OrgContext(org_id=uuid4(), org_slug="org-slug")
+        credentials = HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials="global-key",
+        )
+
+        db = AsyncMock()
+        db_result = MagicMock()
+        db_result.scalar_one_or_none.return_value = _make_org(agent_api_key=None)
+        db.execute.return_value = db_result
+
+        settings = MagicMock()
+        settings.agent_ingest_enabled = True
+        settings.agent_api_key = "global-key"
+        settings.agent_api_key_mode = "single"
+
+        device = MagicMock()
+        device.is_revoked = False
+
+        with (
+            patch("app.modules.ingest.auth.get_settings", return_value=settings),
+            patch.object(
+                DeviceRepository,
+                "get_by_org_and_public_id",
+                AsyncMock(return_value=device),
+            ) as mock_get_device,
+            patch.object(
+                DeviceRepository,
+                "update_last_seen",
+                AsyncMock(return_value=None),
+            ) as mock_update_last_seen,
+        ):
+            result = await verify_agent_token(
+                credentials=credentials,
+                org_ctx=org_ctx,
+                db=db,
+                x_heimdex_device_id="device-abc123",
+            )
+
+        assert isinstance(result, OrgContext)
+        mock_get_device.assert_awaited_once_with(org_ctx.org_id, "device-abc123")
+        mock_update_last_seen.assert_awaited_once_with(device)
+
+    @pytest.mark.asyncio
+    async def test_per_org_mode_updates_last_seen_when_device_header_present(self):
+        org_ctx = OrgContext(org_id=uuid4(), org_slug="org-slug")
+        credentials = HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials="org-key",
+        )
+
+        db = AsyncMock()
+        db_result = MagicMock()
+        db_result.scalar_one_or_none.return_value = _make_org(agent_api_key="org-key")
+        db.execute.return_value = db_result
+
+        settings = MagicMock()
+        settings.agent_ingest_enabled = True
+        settings.agent_api_key = "global-key"
+        settings.agent_api_key_mode = "per-org"
+
+        device = MagicMock()
+        device.is_revoked = False
+
+        with (
+            patch("app.modules.ingest.auth.get_settings", return_value=settings),
+            patch.object(
+                DeviceRepository,
+                "get_by_org_and_public_id",
+                AsyncMock(return_value=device),
+            ) as mock_get_device,
+            patch.object(
+                DeviceRepository,
+                "update_last_seen",
+                AsyncMock(return_value=None),
+            ) as mock_update_last_seen,
+        ):
+            result = await verify_agent_token(
+                credentials=credentials,
+                org_ctx=org_ctx,
+                db=db,
+                x_heimdex_device_id="device-abc123",
+            )
+
+        assert isinstance(result, OrgContext)
+        mock_get_device.assert_awaited_once_with(org_ctx.org_id, "device-abc123")
+        mock_update_last_seen.assert_awaited_once_with(device)
