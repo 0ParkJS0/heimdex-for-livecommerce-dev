@@ -1,0 +1,249 @@
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+import { getVideoScenes } from "@/lib/api/videos";
+import { getAgentPlaybackUrl } from "@/lib/agent";
+import { SceneThumbnail } from "@/components/SceneThumbnail";
+import { formatTimestamp } from "@/lib/api/utils";
+import { cn } from "@/lib/utils";
+import type { VideoScene, VideoScenesResponse } from "@/lib/types";
+
+function BackArrowIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+    </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+    </svg>
+  );
+}
+
+function SelectedSceneCard({
+  scene,
+  index,
+  videoId,
+}: {
+  scene: VideoScene;
+  index: number;
+  videoId: string;
+}) {
+  const durationSec = Math.round((scene.end_ms - scene.start_ms) / 1000);
+  const timeRange = `${formatTimestamp(scene.start_ms)} - ${formatTimestamp(scene.end_ms)}`;
+  const tags = [...scene.keyword_tags, ...scene.product_tags].slice(0, 2);
+
+  return (
+    <div className="flex gap-0 rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <div className="w-[140px] flex-shrink-0">
+        <SceneThumbnail
+          videoId={videoId}
+          sceneId={scene.scene_id}
+          agentAvailable={true}
+          className="aspect-video w-full"
+        />
+      </div>
+      <div className="flex-1 min-w-0 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold text-gray-900">장면{index + 1}</span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{timeRange}</span>
+            <span className="text-xs text-gray-500">{durationSec}초</span>
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+          {tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700"
+            >
+              {tag}
+            </span>
+          ))}
+          {tags.length === 0 && (
+            <>
+              <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700">해시태그 test</span>
+              <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700">해시태그</span>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ShortsCreatePage() {
+  const searchParams = useSearchParams();
+  const { getAccessToken } = useAuth();
+
+  const videoId = searchParams.get("videoId") ?? "";
+  const sceneIdsParam = searchParams.get("sceneIds") ?? "";
+  const requestedSceneIds = useMemo(
+    () => new Set(sceneIdsParam.split(",").filter(Boolean)),
+    [sceneIdsParam],
+  );
+
+  const [meta, setMeta] = useState<VideoScenesResponse | null>(null);
+  const [allScenes, setAllScenes] = useState<VideoScene[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [subtitlePrompt, setSubtitlePrompt] = useState("");
+
+  useEffect(() => {
+    if (!videoId) {
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+
+    getVideoScenes(videoId, 200, 0, getAccessToken)
+      .then((res) => {
+        if (cancelled) return;
+        setMeta(res);
+        setAllScenes(res.scenes);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMeta(null);
+        setAllScenes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [videoId, getAccessToken]);
+
+  const selectedScenes = useMemo(() => {
+    if (requestedSceneIds.size === 0) return allScenes;
+    return allScenes.filter((s) => requestedSceneIds.has(s.scene_id));
+  }, [allScenes, requestedSceneIds]);
+
+  const videoTitle = meta?.video_title || videoId;
+
+  if (!videoId) {
+    return (
+      <div className="mx-auto max-w-6xl pt-4">
+        <p className="text-gray-500">영상을 선택해 주세요.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-indigo-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-7xl pt-4">
+      <div className="mb-6 flex items-center gap-3 text-sm text-gray-500">
+        <Link href="/" className="rounded-full p-1 hover:bg-gray-200">
+          <BackArrowIcon />
+        </Link>
+        <Link href="/" className="hover:text-gray-700">전체 아카이브 검색</Link>
+        <span>&gt;</span>
+        <Link href={`/videos/${videoId}`} className="hover:text-gray-700">{videoTitle}</Link>
+        <span>&gt;</span>
+        <span className="text-gray-700 font-medium">숏츠 제작</span>
+      </div>
+
+      <div className="flex gap-8">
+        <div className="w-[45%] flex-shrink-0 space-y-6">
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900">미리보기</h2>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-600"
+              >
+                <DownloadIcon />
+                저장하기
+              </button>
+            </div>
+            <div className="aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
+              <video
+                src={getAgentPlaybackUrl(videoId)}
+                controls
+                className="h-full w-full object-contain"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-3">자막 생성 프롬프트</h2>
+            <div className="relative">
+              <textarea
+                value={subtitlePrompt}
+                onChange={(e) => setSubtitlePrompt(e.target.value)}
+                placeholder="프롬프트를 작성해주세요."
+                className="w-full min-h-[120px] resize-none rounded-xl border border-gray-200 p-4 text-sm placeholder:text-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              <button
+                type="button"
+                className="absolute bottom-3 right-3 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+              >
+                <SparkleIcon />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="rounded-xl border border-gray-200 bg-white p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900">선택된 장면</h2>
+              <Link
+                href={`/videos/${videoId}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-600"
+              >
+                원본 영상으로 이동
+                <ChevronRightIcon />
+              </Link>
+            </div>
+
+            <div className="space-y-3 max-h-[calc(100vh-220px)] overflow-y-auto">
+              {selectedScenes.map((scene, i) => (
+                <SelectedSceneCard
+                  key={scene.scene_id}
+                  scene={scene}
+                  index={i}
+                  videoId={videoId}
+                />
+              ))}
+              {selectedScenes.length === 0 && (
+                <p className="py-8 text-center text-sm text-gray-400">선택된 장면이 없습니다.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

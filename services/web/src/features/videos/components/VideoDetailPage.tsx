@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getVideoScenes } from "@/lib/api/videos";
 import { getAgentPlaybackUrl, getAgentThumbnailUrl } from "@/lib/agent";
@@ -438,6 +439,7 @@ function ScenesPanel({
   totalScenes: number;
   videoId: string;
 }) {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -520,7 +522,18 @@ function ScenesPanel({
         </div>
         <button
           type="button"
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-600"
+          disabled={selectedIds.size === 0}
+          onClick={() => {
+            if (selectedIds.size > 0) {
+              router.push(`/shorts/create?videoId=${videoId}&sceneIds=${Array.from(selectedIds).join(",")}`);
+            }
+          }}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+            selectedIds.size > 0
+              ? "bg-indigo-500 text-white hover:bg-indigo-600"
+              : "bg-gray-300 text-gray-500 cursor-not-allowed",
+          )}
         >
           <ScissorsIcon />
           쇼츠 제작
