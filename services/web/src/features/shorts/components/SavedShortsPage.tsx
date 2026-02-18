@@ -76,7 +76,6 @@ function CheckIcon({ checked }: { checked: boolean }) {
   );
 }
 
-const PLACEHOLDER_SHORTS: SavedShort[] = [];
 const ITEMS_PER_PAGE = 12;
 
 export function SavedShortsPage() {
@@ -85,7 +84,8 @@ export function SavedShortsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showSort, setShowSort] = useState(false);
 
-  const items = PLACEHOLDER_SHORTS;
+  // TODO: Replace with API call when backend supports saved shorts
+  const items: SavedShort[] = [];
 
   const sorted = useMemo(() => {
     const copy = [...items];

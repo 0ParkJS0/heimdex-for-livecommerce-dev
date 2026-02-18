@@ -210,12 +210,15 @@ function VideoInfoPanel({
 function OverviewPanel({
   scenes,
   allTags,
+  videoId,
   onSwitchToScenes,
 }: {
   scenes: VideoScene[];
   allTags: string[];
+  videoId: string;
   onSwitchToScenes: () => void;
 }) {
+  const router = useRouter();
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
 
   const fullTranscript = useMemo(
@@ -255,6 +258,7 @@ function OverviewPanel({
         </Link>
         <button
           type="button"
+          onClick={() => router.push(`/shorts/create?videoId=${videoId}`)}
           className="ml-auto inline-flex items-center gap-2 rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-600"
         >
           <DownloadIcon />
@@ -717,6 +721,7 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
             <OverviewPanel
               scenes={scenes}
               allTags={allTags}
+              videoId={videoId}
               onSwitchToScenes={() => setView("scenes")}
             />
           ) : (

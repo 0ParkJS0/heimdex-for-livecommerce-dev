@@ -74,22 +74,18 @@ function SelectedSceneCard({
             <span className="text-xs text-gray-500">{durationSec}초</span>
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-          {tags.map((tag) => (
-            <span
-              key={tag}
-              className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700"
-            >
-              {tag}
-            </span>
-          ))}
-          {tags.length === 0 && (
-            <>
-              <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700">해시태그 test</span>
-              <span className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700">해시태그</span>
-            </>
-          )}
-        </div>
+        {tags.length > 0 && (
+          <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+            {tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs text-indigo-700"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
