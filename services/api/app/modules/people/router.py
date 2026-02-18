@@ -1,3 +1,6 @@
+from typing import cast
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5,18 +8,24 @@ from app.config import get_settings
 from app.dependencies import (
     get_db_session,
     get_people_cluster_label_repository,
+    get_people_exclude_preference_repository,
     get_scene_opensearch_client,
 )
 from app.logging_config import get_logger
 from app.modules.auth import get_current_user
-from app.modules.people.repository import PeopleClusterLabelRepository
+from app.modules.people.repository import (
+    PeopleClusterLabelRepository,
+    PeopleExcludePreferenceRepository,
+)
 from app.modules.people.schemas import (
+    ExcludePreferencesResponse,
     PeopleListResponse,
     PersonResponse,
     PersonVideoItem,
     PersonVideosResponse,
     RenamePersonRequest,
     RenamePersonResponse,
+    SetExcludePreferencesRequest,
 )
 from app.modules.search.scene_client import SceneSearchClient
 from app.modules.tenancy import OrgContext, get_current_org
@@ -31,6 +40,7 @@ async def list_people(
     org_ctx: OrgContext = Depends(get_current_org),
     user: User = Depends(get_current_user),
     people_repo: PeopleClusterLabelRepository = Depends(get_people_cluster_label_repository),
+    exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
     scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
 ):
     settings = get_settings()
@@ -40,10 +50,13 @@ async def list_people(
             detail="People feature is not enabled",
         )
 
-    logger.debug("list_people_request", user_id=str(user.id), org_id=str(org_ctx.org_id))
+    user_id = cast(UUID, user.id)
+    logger.debug("list_people_request", user_id=str(user_id), org_id=str(org_ctx.org_id))
 
     labels = await people_repo.list_by_org(org_ctx.org_id)
     label_map = {entry.person_cluster_id: entry.label for entry in labels}
+
+    excluded_ids = set(await exclude_repo.list_by_user(org_ctx.org_id, user_id))
 
     facets = await scene_opensearch.get_facets(str(org_ctx.org_id), {})
     people_buckets = facets.get("people", [])
@@ -61,6 +74,7 @@ async def list_people(
                 person_cluster_id=cluster_id,
                 label=label_map.get(cluster_id),
                 face_count=int(bucket.get("doc_count", 0)),
+                is_excluded=cluster_id in excluded_ids,
             )
         )
 
@@ -72,6 +86,7 @@ async def list_people(
                 person_cluster_id=cluster_id,
                 label=label,
                 face_count=0,
+                is_excluded=cluster_id in excluded_ids,
             )
         )
 
@@ -167,3 +182,51 @@ async def person_videos(
         videos=videos,
         total=len(videos),
     )
+
+
+@router.get("/exclude-preferences", response_model=ExcludePreferencesResponse)
+async def get_exclude_preferences(
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
+):
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    user_id = cast(UUID, user.id)
+    excluded = await exclude_repo.list_by_user(org_ctx.org_id, user_id)
+    return ExcludePreferencesResponse(excluded_person_cluster_ids=excluded)
+
+
+@router.put("/exclude-preferences", response_model=ExcludePreferencesResponse)
+async def set_exclude_preferences(
+    request: SetExcludePreferencesRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
+    db: AsyncSession = Depends(get_db_session),
+):
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    user_id = cast(UUID, user.id)
+    logger.debug(
+        "set_exclude_preferences",
+        user_id=str(user_id),
+        org_id=str(org_ctx.org_id),
+        count=len(request.person_cluster_ids),
+    )
+
+    excluded = await exclude_repo.replace_all(
+        org_ctx.org_id, user_id, request.person_cluster_ids
+    )
+    await db.commit()
+    return ExcludePreferencesResponse(excluded_person_cluster_ids=excluded)
