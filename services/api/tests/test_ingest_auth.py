@@ -128,12 +128,14 @@ class TestPerOrgAgentToken:
         settings.agent_ingest_enabled = True
         settings.agent_api_key = "global-key"
         settings.agent_api_key_mode = "single"
+        settings.device_secret_pepper = "test-pepper"
 
         device = MagicMock()
         device.is_revoked = False
 
         with (
             patch("app.modules.ingest.auth.get_settings", return_value=settings),
+            patch("app.modules.ingest.auth.verify_device_secret", return_value=False),
             patch.object(
                 DeviceRepository,
                 "get_by_org_and_public_id",
@@ -173,12 +175,14 @@ class TestPerOrgAgentToken:
         settings.agent_ingest_enabled = True
         settings.agent_api_key = "global-key"
         settings.agent_api_key_mode = "per-org"
+        settings.device_secret_pepper = "test-pepper"
 
         device = MagicMock()
         device.is_revoked = False
 
         with (
             patch("app.modules.ingest.auth.get_settings", return_value=settings),
+            patch("app.modules.ingest.auth.verify_device_secret", return_value=False),
             patch.object(
                 DeviceRepository,
                 "get_by_org_and_public_id",

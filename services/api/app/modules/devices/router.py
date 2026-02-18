@@ -195,12 +195,15 @@ async def rotate_device_secret(
 
 @router.post("/heartbeat", response_model=HeartbeatResponse)
 async def heartbeat_device(
-    org_ctx: OrgContext = Depends(_verify_org_api_key),
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    org_ctx: OrgContext = Depends(get_current_org),
     db: AsyncSession = Depends(get_db_session),
     x_heimdex_device_id: str = Header(..., alias="X-Heimdex-Device-Id"),
 ):
-    repo = DeviceRepository(db)
+    settings = get_settings()
+    token = credentials.credentials
 
+    repo = DeviceRepository(db)
     device = await repo.get_by_org_and_public_id(org_ctx.org_id, x_heimdex_device_id)
     if device is None:
         raise HTTPException(
@@ -211,6 +214,24 @@ async def heartbeat_device(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Device is revoked",
+        )
+
+    result = await db.execute(select(Org).where(Org.id == org_ctx.org_id))
+    org = result.scalar_one_or_none()
+    org_api_key = org.agent_api_key if org else None
+
+    device_secret_ok = verify_device_secret(
+        token, device.device_secret_hash, settings.device_secret_pepper
+    )
+    org_key_ok = (
+        (org_api_key and hmac.compare_digest(token, org_api_key))
+        or hmac.compare_digest(token, settings.agent_api_key)
+    )
+
+    if not device_secret_ok and not org_key_ok:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
         )
 
     await repo.update_last_seen(device)

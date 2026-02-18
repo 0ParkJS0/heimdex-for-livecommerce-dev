@@ -58,11 +58,14 @@ def test_heartbeat_valid_org_key_updates_last_seen(heartbeat_app: FastAPI):
     settings = MagicMock()
     settings.agent_ingest_enabled = True
     settings.agent_api_key = "global-key"
+    settings.device_secret_pepper = "test-pepper"
 
     device = _make_device(is_revoked=False)
+    device.device_secret_hash = "not-matching"
 
     with (
         patch("app.modules.devices.router.get_settings", return_value=settings),
+        patch("app.modules.devices.router.verify_device_secret", return_value=False),
         patch.object(
             DeviceRepository,
             "get_by_org_and_public_id",
@@ -104,8 +107,20 @@ def test_heartbeat_invalid_key_returns_401(heartbeat_app: FastAPI):
     settings = MagicMock()
     settings.agent_ingest_enabled = True
     settings.agent_api_key = "global-key"
+    settings.device_secret_pepper = "test-pepper"
 
-    with patch("app.modules.devices.router.get_settings", return_value=settings):
+    device = _make_device(is_revoked=False)
+    device.device_secret_hash = "not-matching"
+
+    with (
+        patch("app.modules.devices.router.get_settings", return_value=settings),
+        patch("app.modules.devices.router.verify_device_secret", return_value=False),
+        patch.object(
+            DeviceRepository,
+            "get_by_org_and_public_id",
+            AsyncMock(return_value=device),
+        ),
+    ):
         with TestClient(heartbeat_app) as client:
             response = client.post(
                 "/api/devices/heartbeat",

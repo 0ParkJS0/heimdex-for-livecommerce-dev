@@ -117,7 +117,30 @@ async def verify_agent_token(
         )
         return org_ctx
 
-    # --- global / per-org modes (existing behavior) ---
+    # --- global / per-org modes ---
+    # Try device secret first if the agent sent a device header. This allows
+    # registered agents to authenticate with their device secret regardless of
+    # the server's configured key mode.
+    has_device_header = isinstance(x_heimdex_device_id, str) and bool(x_heimdex_device_id)
+    device_repo = DeviceRepository(db) if has_device_header else None
+    device = None
+
+    if has_device_header and device_repo:
+        device = await device_repo.get_by_org_and_public_id(
+            org_ctx.org_id, x_heimdex_device_id
+        )
+        if device and not device.is_revoked and verify_device_secret(
+            token, device.device_secret_hash, settings.device_secret_pepper
+        ):
+            await device_repo.update_last_seen(device)
+            logger.debug(
+                "agent_device_token_verified",
+                org_id=str(org_ctx.org_id),
+                org_slug=org_ctx.org_slug,
+                device_public_id=x_heimdex_device_id,
+            )
+            return org_ctx
+
     org_api_key: str | None = None
     if hasattr(db, "execute"):
         result = await db.execute(select(Org).where(Org.id == org_ctx.org_id))
@@ -157,13 +180,8 @@ async def verify_agent_token(
                 detail="Invalid agent API key",
             )
 
-    if isinstance(x_heimdex_device_id, str) and x_heimdex_device_id:
-        device_repo = DeviceRepository(db)
-        device = await device_repo.get_by_org_and_public_id(
-            org_ctx.org_id, x_heimdex_device_id
-        )
-        if device and not device.is_revoked:
-            await device_repo.update_last_seen(device)
+    if device and not device.is_revoked and device_repo:
+        await device_repo.update_last_seen(device)
 
     logger.debug(
         "agent_token_verified",
