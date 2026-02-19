@@ -272,8 +272,51 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
+  drive-stt-worker:
+    build:
+      context: ./services/drive-stt-worker
+      dockerfile: Dockerfile
+    container_name: heimdex-drive-stt-worker
+    environment:
+      - PYTHONPATH=/app:/opt/heimdex-api
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://heimdex:heimdex_dev_password@postgres:5432/heimdex}
+      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC:-postgresql://heimdex:heimdex_dev_password@postgres:5432/heimdex}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
+      - MINIO_SECURE=${MINIO_SECURE:-false}
+      - DRIVE_STT_ENABLED=${DRIVE_STT_ENABLED:-false}
+      - DRIVE_STT_MODEL=${DRIVE_STT_MODEL:-small}
+      - DRIVE_STT_LANGUAGE=${DRIVE_STT_LANGUAGE:-ko}
+      - DRIVE_STT_BACKEND=${DRIVE_STT_BACKEND:-faster-whisper}
+      - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
+      - DRIVE_API_BASE_URL=http://api:8000
+      - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - DRIVE_STT_POLL_INTERVAL_SECONDS=${DRIVE_STT_POLL_INTERVAL_SECONDS:-30}
+      - DRIVE_STT_CONCURRENCY=${DRIVE_STT_CONCURRENCY:-1}
+      - DRIVE_STT_MAX_AUDIO_SECONDS=${DRIVE_STT_MAX_AUDIO_SECONDS:-3600}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./services/drive-stt-worker:/app
+      - ./services/api:/opt/heimdex-api:ro
+      - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
+      - ../heimdex-media-pipelines:/opt/heimdex-media-pipelines:ro
+      - whisper_model_cache:/data/whisper-models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: >
+      sh -c "pip install --no-deps -e /opt/heimdex-media-contracts 2>/dev/null;
+             pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
+             python -m src.worker"
+
 volumes:
   postgres_data:
   opensearch_data:
   minio_data:
   huggingface_cache:
+  whisper_model_cache:
