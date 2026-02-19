@@ -2,7 +2,6 @@ import asyncio
 import logging
 import shutil
 import signal
-import sys
 from collections import defaultdict
 from pathlib import Path
 from threading import Lock
@@ -11,6 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
+from src.tasks.discover import discover_new_files
 from src.tasks.process import process_pending_files
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,10 @@ async def poll_and_process(session_factory: async_sessionmaker[AsyncSession]) ->
 
     async with session_factory() as session:
         try:
+            discovered_count = await discover_new_files(session=session, settings=settings)
+            if discovered_count:
+                logger.info("drive_discovery_complete", extra={"discovered_count": discovered_count})
+
             await process_pending_files(
                 session=session,
                 settings=settings,
