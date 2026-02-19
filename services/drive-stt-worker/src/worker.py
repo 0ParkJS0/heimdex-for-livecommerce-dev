@@ -81,34 +81,33 @@ def main() -> None:
         id="stt_poll",
     )
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    async def _run() -> None:
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-    def shutdown(*_):
-        logger.info("shutdown_signal_received")
-        scheduler.shutdown(wait=False)
-        loop.stop()
+        def shutdown(*_: object) -> None:
+            logger.info("shutdown_signal_received")
+            scheduler.shutdown(wait=False)
+            stop_event.set()
 
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
+        loop.add_signal_handler(signal.SIGTERM, shutdown)
+        loop.add_signal_handler(signal.SIGINT, shutdown)
 
-    scheduler.start()
-    logger.info(
-        "stt_worker_started",
-        extra={
-            "poll_interval": settings.drive_stt_poll_interval_seconds,
-            "concurrency": settings.drive_stt_concurrency,
-            "model": settings.drive_stt_model,
-            "language": settings.drive_stt_language,
-            "backend": settings.drive_stt_backend,
-            "max_audio_seconds": settings.drive_stt_max_audio_seconds,
-        },
-    )
+        scheduler.start()
+        logger.info(
+            "stt_worker_started",
+            extra={
+                "poll_interval": settings.drive_stt_poll_interval_seconds,
+                "concurrency": settings.drive_stt_concurrency,
+                "model": settings.drive_stt_model,
+                "language": settings.drive_stt_language,
+                "backend": settings.drive_stt_backend,
+                "max_audio_seconds": settings.drive_stt_max_audio_seconds,
+            },
+        )
+        await stop_event.wait()
 
-    try:
-        loop.run_forever()
-    finally:
-        loop.close()
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":

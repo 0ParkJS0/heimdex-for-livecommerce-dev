@@ -81,31 +81,30 @@ def main() -> None:
         id="ocr_poll",
     )
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    async def _run() -> None:
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-    def shutdown(*_):
-        logger.info("shutdown_signal_received")
-        scheduler.shutdown(wait=False)
-        loop.stop()
+        def shutdown(*_: object) -> None:
+            logger.info("shutdown_signal_received")
+            scheduler.shutdown(wait=False)
+            stop_event.set()
 
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
+        loop.add_signal_handler(signal.SIGTERM, shutdown)
+        loop.add_signal_handler(signal.SIGINT, shutdown)
 
-    scheduler.start()
-    logger.info(
-        "ocr_worker_started",
-        extra={
-            "poll_interval": settings.drive_ocr_poll_interval_seconds,
-            "concurrency": settings.drive_ocr_concurrency,
-            "max_frames_per_video": settings.drive_ocr_max_frames_per_video,
-        },
-    )
+        scheduler.start()
+        logger.info(
+            "ocr_worker_started",
+            extra={
+                "poll_interval": settings.drive_ocr_poll_interval_seconds,
+                "concurrency": settings.drive_ocr_concurrency,
+                "max_frames_per_video": settings.drive_ocr_max_frames_per_video,
+            },
+        )
+        await stop_event.wait()
 
-    try:
-        loop.run_forever()
-    finally:
-        loop.close()
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":

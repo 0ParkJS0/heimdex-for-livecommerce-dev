@@ -104,32 +104,31 @@ def main() -> None:
         id="drive_poll",
     )
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    async def _run() -> None:
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-    def shutdown(*_):
-        logger.info("shutdown_signal_received")
-        scheduler.shutdown(wait=False)
-        loop.stop()
+        def shutdown(*_: object) -> None:
+            logger.info("shutdown_signal_received")
+            scheduler.shutdown(wait=False)
+            stop_event.set()
 
-    signal.signal(signal.SIGTERM, shutdown)
-    signal.signal(signal.SIGINT, shutdown)
+        loop.add_signal_handler(signal.SIGTERM, shutdown)
+        loop.add_signal_handler(signal.SIGINT, shutdown)
 
-    scheduler.start()
-    logger.info(
-        "drive_worker_started",
-        extra={
-            "poll_interval": settings.drive_worker_poll_interval_seconds,
-            "global_concurrency": settings.drive_worker_global_concurrency,
-            "per_org_concurrency": settings.drive_worker_per_org_concurrency,
-            "disk_budget_gb": settings.drive_temp_disk_budget_gb,
-        },
-    )
+        scheduler.start()
+        logger.info(
+            "drive_worker_started",
+            extra={
+                "poll_interval": settings.drive_worker_poll_interval_seconds,
+                "global_concurrency": settings.drive_worker_global_concurrency,
+                "per_org_concurrency": settings.drive_worker_per_org_concurrency,
+                "disk_budget_gb": settings.drive_temp_disk_budget_gb,
+            },
+        )
+        await stop_event.wait()
 
-    try:
-        loop.run_forever()
-    finally:
-        loop.close()
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
