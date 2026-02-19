@@ -217,6 +217,9 @@ services:
     volumes:
       - ./services/drive-worker:/app
       - ./services/api:/opt/heimdex-api:ro
+      # Mount pipeline repos for scene detection + keyframe extraction (V3a)
+      - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
+      - ../heimdex-media-pipelines:/opt/heimdex-media-pipelines:ro
       - ./data:/data
     depends_on:
       postgres:
@@ -225,7 +228,10 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    command: ["python", "-m", "src.worker"]
+    command: >
+      sh -c "pip install --no-deps -e /opt/heimdex-media-contracts 2>/dev/null;
+             pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
+             python -m src.worker"
 
 volumes:
   postgres_data:

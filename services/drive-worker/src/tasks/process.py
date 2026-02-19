@@ -4,7 +4,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional
 from uuid import UUID
 
 from sqlalchemy import select
@@ -68,6 +68,9 @@ async def _process_single_file(
     from app.modules.drive.models import DriveSecret
     from app.modules.drive.repository import DriveSecretRepository
     from heimdex_media_pipelines.transcoding import make_transcode_decision, probe_video, transcode_to_proxy
+    from heimdex_media_pipelines.scenes.detector import detect_scenes
+    from heimdex_media_pipelines.scenes.keyframe import extract_all_keyframes
+    from heimdex_media_pipelines.scenes.assembler import assemble_scenes
     from app.storage.s3 import S3Client
 
     org_id_str = str(drive_file.org_id)
@@ -133,6 +136,52 @@ async def _process_single_file(
             thumbnail_s3_prefix=thumbnail_s3_prefix(org_id_str, drive_file.video_id),
         )
 
+        # Scene detection uses original (not proxy) for best-quality boundaries.
+        t0 = time.monotonic()
+        scene_boundaries = detect_scenes(
+            video_path=str(original_path),
+            video_id=drive_file.video_id,
+        )
+        logger.info(
+            "scene_detection_complete",
+            extra={
+                "video_id": drive_file.video_id,
+                "scene_count": len(scene_boundaries),
+                "elapsed_s": round(time.monotonic() - t0, 3),
+            },
+        )
+
+        keyframe_dir = temp_dir / "keyframes"
+        keyframe_paths = extract_all_keyframes(
+            video_path=str(original_path),
+            scenes=scene_boundaries,
+            out_dir=str(keyframe_dir),
+        )
+
+        scene_result = assemble_scenes(
+            video_path=str(original_path),
+            video_id=drive_file.video_id,
+            scene_boundaries=scene_boundaries,
+            total_duration_ms=proxy_probe.duration_ms,
+        )
+
+        for scene_doc in scene_result.scenes:
+            if scene_doc.thumbnail_path and Path(scene_doc.thumbnail_path).is_file():
+                thumb_key = thumbnail_s3_key(
+                    org_id_str, drive_file.video_id, scene_doc.scene_id,
+                )
+                s3.upload_file(
+                    Path(scene_doc.thumbnail_path), thumb_key,
+                    content_type="image/jpeg",
+                )
+
+        capture_iso = drive_file.google_created_time.isoformat() if drive_file.google_created_time else None
+        scene_dicts = _build_ingest_scene_dicts(
+            scene_result.scenes,
+            source_type="gdrive",
+            capture_time=capture_iso,
+        )
+
         ingest_result = _post_scenes_to_api(
             settings=settings,
             org_id=drive_file.org_id,
@@ -140,7 +189,7 @@ async def _process_single_file(
             video_title=drive_file.file_name,
             library_id=connection.library_id,
             duration_ms=proxy_probe.duration_ms,
-            capture_time=drive_file.google_created_time,
+            scenes=scene_dicts,
         )
 
         await file_repo.update_status(
@@ -157,6 +206,7 @@ async def _process_single_file(
                 "proxy_s3_key": s3_key,
                 "proxy_size_bytes": proxy_size,
                 "transcoded": decision.should_transcode,
+                "scene_count": len(scene_result.scenes),
                 "indexed_count": ingest_result["indexed_count"],
             },
         )
@@ -175,6 +225,32 @@ async def _process_single_file(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def _build_ingest_scene_dicts(
+    scene_docs: List[Any],
+    source_type: str = "gdrive",
+    capture_time: Optional[str] = None,
+) -> List[dict[str, Any]]:
+    result: List[dict[str, Any]] = []
+    for doc in scene_docs:
+        result.append({
+            "scene_id": doc.scene_id,
+            "index": doc.index,
+            "start_ms": doc.start_ms,
+            "end_ms": doc.end_ms,
+            "keyframe_timestamp_ms": doc.keyframe_timestamp_ms,
+            "transcript_raw": doc.transcript_raw,
+            "speech_segment_count": doc.speech_segment_count,
+            "keyword_tags": doc.keyword_tags,
+            "product_tags": doc.product_tags,
+            "product_entities": doc.product_entities,
+            "ocr_text_raw": doc.ocr_text_raw,
+            "ocr_char_count": doc.ocr_char_count,
+            "source_type": source_type,
+            "capture_time": capture_time,
+        })
+    return result
+
+
 def _post_scenes_to_api(
     settings: Any,
     org_id: UUID,
@@ -182,29 +258,16 @@ def _post_scenes_to_api(
     video_title: str,
     library_id: UUID,
     duration_ms: int,
-    capture_time: Optional["datetime"] = None,
+    scenes: List[dict[str, Any]],
 ) -> dict[str, Any]:
     import requests
-
-    capture_iso = capture_time.isoformat() if capture_time else None
 
     payload = {
         "video_id": video_id,
         "video_title": video_title,
         "library_id": str(library_id),
         "total_duration_ms": duration_ms,
-        "scenes": [
-            {
-                "scene_id": f"{video_id}_scene_0",
-                "index": 0,
-                "start_ms": 0,
-                "end_ms": duration_ms,
-                "transcript_raw": "",
-                "ocr_text_raw": "",
-                "source_type": "gdrive",
-                "capture_time": capture_iso,
-            }
-        ],
+        "scenes": scenes,
     }
 
     api_base = settings.drive_api_base_url.rstrip("/")
