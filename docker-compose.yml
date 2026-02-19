@@ -117,7 +117,8 @@ services:
       # Drive internal ingest key (shared with drive-worker)
       - DRIVE_CONNECTOR_ENABLED=${DRIVE_CONNECTOR_ENABLED:-false}
       - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
-      # HuggingFace model cache directory (persists downloaded models)
+      - DRIVE_SA_ENCRYPTION_KEY=${DRIVE_SA_ENCRYPTION_KEY:-}
+      - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
       - HF_HOME=/data/huggingface
     ports:
       - "8000:8000"
