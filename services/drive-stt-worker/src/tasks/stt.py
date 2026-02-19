@@ -19,6 +19,7 @@ def _get_audio_duration_seconds(audio_path: Path) -> float:
 
 
 async def process_stt_pending_files(session: Any, settings: Any) -> None:
+    import app.db.models  # noqa: F401 — register all SQLAlchemy models for FK resolution
     drive_repository = importlib.import_module("app.modules.drive.repository")
     file_repo = drive_repository.DriveFileRepository(session)
     files = await file_repo.claim_stt_pending_files(limit=1)

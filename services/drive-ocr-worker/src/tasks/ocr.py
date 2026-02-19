@@ -28,6 +28,7 @@ def select_keyframe_indices(scene_count: int, max_frames: int) -> list[int]:
 
 
 async def process_ocr_pending_files(session: Any, settings: Any) -> None:
+    import app.db.models  # noqa: F401 — register all SQLAlchemy models for FK resolution
     drive_repository = importlib.import_module("app.modules.drive.repository")
     file_repo = drive_repository.DriveFileRepository(session)
     files = await file_repo.claim_ocr_pending_files(limit=1)
