@@ -1,18 +1,22 @@
+import os
 from typing import Annotated
 from uuid import UUID
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.base import get_db_session
-from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository
+from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository, DriveSecretRepository
 from app.modules.drive.schemas import (
     DriveConnectionCreate,
     DriveConnectionResponse,
     DriveConnectionUpdate,
     DriveFileListResponse,
     DriveFileResponse,
+    DriveSecretCreate,
+    DriveSecretResponse,
 )
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
@@ -127,3 +131,31 @@ async def get_file(
     if f is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
     return f
+
+
+@router.put("/secrets", response_model=DriveSecretResponse, status_code=status.HTTP_200_OK)
+async def upsert_secret(
+    body: DriveSecretCreate,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+    _: Annotated[None, Depends(_require_drive_enabled)],
+):
+    settings = get_settings()
+    if not settings.drive_sa_encryption_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="DRIVE_SA_ENCRYPTION_KEY not configured",
+        )
+    key = bytes.fromhex(settings.drive_sa_encryption_key)
+    nonce = os.urandom(12)
+    aesgcm = AESGCM(key)
+    encrypted_value = aesgcm.encrypt(nonce, body.sa_key_json.encode(), None)
+
+    secret_repo = DriveSecretRepository(db)
+    secret = await secret_repo.upsert(
+        org_id=org_ctx.org_id,
+        encrypted_value=encrypted_value,
+        nonce=nonce,
+        impersonate_email=body.impersonate_email,
+    )
+    return secret
