@@ -1,6 +1,6 @@
 import pytest
 
-from app.modules.drive.transcode import ProbeResult, TranscodeDecision, make_transcode_decision
+from heimdex_media_pipelines.transcoding import ProbeResult, TranscodeDecision, make_transcode_decision
 
 
 def _make_probe(

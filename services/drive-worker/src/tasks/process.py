@@ -67,7 +67,7 @@ async def _process_single_file(
     from app.modules.drive.keys import proxy_s3_key, thumbnail_s3_key, thumbnail_s3_prefix
     from app.modules.drive.models import DriveSecret
     from app.modules.drive.repository import DriveSecretRepository
-    from app.modules.drive.transcode import make_transcode_decision, probe_video, transcode_to_proxy
+    from heimdex_media_pipelines.transcoding import make_transcode_decision, probe_video, transcode_to_proxy
     from app.storage.s3 import S3Client
 
     org_id_str = str(drive_file.org_id)
@@ -96,11 +96,21 @@ async def _process_single_file(
 
         await file_repo.update_status(drive_file.id, "transcoding")
         probe = probe_video(original_path)
-        decision = make_transcode_decision(probe)
+        max_height = settings.drive_proxy_max_height
+        max_bitrate_kbps = int(settings.drive_proxy_max_bitrate.rstrip("k"))
+        decision = make_transcode_decision(probe, max_height=max_height, max_bitrate_kbps=max_bitrate_kbps)
 
         if decision.should_transcode:
             proxy_path = temp_dir / "proxy.mp4"
-            transcode_to_proxy(original_path, proxy_path, probe, decision)
+            transcode_to_proxy(
+                original_path, proxy_path, probe, decision,
+                max_height=max_height,
+                preset=settings.drive_proxy_preset,
+                crf=settings.drive_proxy_crf,
+                max_bitrate=settings.drive_proxy_max_bitrate,
+                bufsize=settings.drive_proxy_bufsize,
+                audio_bitrate=settings.drive_proxy_audio_bitrate,
+            )
         else:
             proxy_path = original_path
             logger.info("transcode_skipped", extra={"reason": decision.reason, "file_id": drive_file.google_file_id})
