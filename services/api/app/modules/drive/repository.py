@@ -189,6 +189,27 @@ class DriveFileRepository:
         await self.session.flush()
 
 
+    async def claim_stt_pending_files(self, limit: int = 1) -> list[DriveFile]:
+        """Claim files ready for STT enrichment using SELECT FOR UPDATE SKIP LOCKED."""
+        result = await self.session.execute(
+            select(DriveFile)
+            .where(
+                DriveFile.enrichment_state.in_(["pending", "failed_partial"]),
+                DriveFile.stt_status == "pending",
+                DriveFile.audio_s3_key.isnot(None),
+                DriveFile.is_deleted.is_(False),
+            )
+            .order_by(DriveFile.created_at.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        files = list(result.scalars().all())
+        for f in files:
+            f.stt_status = "running"
+        if files:
+            await self.session.flush()
+        return files
+
     async def claim_ocr_pending_files(self, limit: int = 1) -> list[DriveFile]:
         """Claim files ready for OCR enrichment using SELECT FOR UPDATE SKIP LOCKED."""
         result = await self.session.execute(
@@ -225,6 +246,30 @@ class DriveFileRepository:
 
         values: dict[str, object] = {
             "ocr_status": ocr_status,
+            "enrichment_state": new_state,
+            "enrichment_updated_at": func.now(),
+        }
+        if enrichment_error is not None:
+            values["enrichment_error"] = enrichment_error
+        await self.session.execute(
+            update(DriveFile).where(DriveFile.id == file_id).values(**values)
+        )
+        await self.session.flush()
+
+    async def update_stt_enrichment_status(
+        self,
+        file_id: UUID,
+        stt_status: str,
+        enrichment_error: Optional[str] = None,
+    ) -> None:
+        result = await self.session.execute(
+            select(DriveFile).where(DriveFile.id == file_id)
+        )
+        df = result.scalar_one()
+        new_state = _compute_enrichment_state(stt_status, df.ocr_status)
+
+        values: dict[str, object] = {
+            "stt_status": stt_status,
             "enrichment_state": new_state,
             "enrichment_updated_at": func.now(),
         }

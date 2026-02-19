@@ -126,6 +126,15 @@ class Settings(BaseSettings):
     drive_ocr_max_frames_per_scene: int = 10
     drive_ocr_max_frames_per_video: int = 300
 
+    # --- STT enrichment worker ---
+    drive_stt_enabled: bool = False
+    drive_stt_model: str = "small"
+    drive_stt_language: str = "ko"
+    drive_stt_backend: str = "faster-whisper"
+    drive_stt_poll_interval_seconds: int = 30
+    drive_stt_concurrency: int = 1
+    drive_stt_max_audio_seconds: int = 3600
+
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"
