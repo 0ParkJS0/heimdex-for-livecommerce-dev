@@ -189,6 +189,72 @@ class DriveFileRepository:
         await self.session.flush()
 
 
+    async def claim_ocr_pending_files(self, limit: int = 1) -> list[DriveFile]:
+        """Claim files ready for OCR enrichment using SELECT FOR UPDATE SKIP LOCKED."""
+        result = await self.session.execute(
+            select(DriveFile)
+            .where(
+                DriveFile.enrichment_state.in_(["pending", "failed_partial"]),
+                DriveFile.ocr_status == "pending",
+                DriveFile.keyframe_s3_prefix.isnot(None),
+                DriveFile.is_deleted.is_(False),
+            )
+            .order_by(DriveFile.created_at.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        files = list(result.scalars().all())
+        for f in files:
+            f.ocr_status = "running"
+        if files:
+            await self.session.flush()
+        return files
+
+    async def update_enrichment_status(
+        self,
+        file_id: UUID,
+        ocr_status: str,
+        enrichment_error: Optional[str] = None,
+    ) -> None:
+        """Update OCR status and recompute enrichment_state from stt+ocr."""
+        result = await self.session.execute(
+            select(DriveFile).where(DriveFile.id == file_id)
+        )
+        df = result.scalar_one()
+        new_state = _compute_enrichment_state(df.stt_status, ocr_status)
+
+        values: dict[str, object] = {
+            "ocr_status": ocr_status,
+            "enrichment_state": new_state,
+            "enrichment_updated_at": func.now(),
+        }
+        if enrichment_error is not None:
+            values["enrichment_error"] = enrichment_error
+        await self.session.execute(
+            update(DriveFile).where(DriveFile.id == file_id).values(**values)
+        )
+        await self.session.flush()
+
+
+def _compute_enrichment_state(
+    stt_status: Optional[str], ocr_status: Optional[str],
+) -> str:
+    """Derive enrichment_state from stt_status + ocr_status.
+
+    State priority: done > failed/failed_partial > running > pending.
+    """
+    active = [s for s in (stt_status, ocr_status) if s is not None]
+    if not active:
+        return "pending"
+    if all(s == "done" for s in active):
+        return "done"
+    if all(s in ("done", "failed") for s in active):
+        return "failed" if all(s == "failed" for s in active) else "failed_partial"
+    if any(s == "running" for s in active):
+        return "running"
+    return "pending"
+
+
 class DriveSecretRepository:
     def __init__(self, session: AsyncSession):
         self.session = session

@@ -31,3 +31,7 @@ def enrichment_keyframe_s3_key(
     org_id: str, video_id: str, scene_id: str,
 ) -> str:
     return f"{org_id}/drive/keyframes/{video_id}/{scene_id}.jpg"
+
+
+def scene_manifest_s3_key(org_id: str, video_id: str) -> str:
+    return f"{org_id}/drive/manifests/{video_id}/scenes.json"

@@ -196,6 +196,18 @@ async def _process_single_file(
             capture_time=capture_iso,
         )
 
+        if settings.drive_enrichment_enabled:
+            _upload_scene_manifest(
+                s3=s3,
+                org_id_str=org_id_str,
+                video_id=drive_file.video_id,
+                video_title=drive_file.file_name,
+                library_id=connection.library_id,
+                duration_ms=proxy_probe.duration_ms,
+                scenes=scene_dicts,
+                temp_dir=temp_dir,
+            )
+
         ingest_result = _post_scenes_to_api(
             settings=settings,
             org_id=drive_file.org_id,
@@ -327,6 +339,35 @@ def _upload_enrichment_artifacts(
         fields["ocr_status"] = "pending" if "keyframe_s3_prefix" in fields else None
 
     return fields
+
+
+def _upload_scene_manifest(
+    s3: Any,
+    org_id_str: str,
+    video_id: str,
+    video_title: str,
+    library_id: UUID,
+    duration_ms: int,
+    scenes: List[dict[str, Any]],
+    temp_dir: Path,
+) -> None:
+    from app.modules.drive.keys import scene_manifest_s3_key
+
+    manifest = {
+        "video_id": video_id,
+        "video_title": video_title,
+        "library_id": str(library_id),
+        "total_duration_ms": duration_ms,
+        "scenes": scenes,
+    }
+    manifest_path = temp_dir / "scenes.json"
+    manifest_path.write_text(json.dumps(manifest))
+    key = scene_manifest_s3_key(org_id_str, video_id)
+    s3.upload_file(manifest_path, key, content_type="application/json")
+    logger.info(
+        "scene_manifest_uploaded",
+        extra={"video_id": video_id, "s3_key": key, "scene_count": len(scenes)},
+    )
 
 
 def _build_ingest_scene_dicts(

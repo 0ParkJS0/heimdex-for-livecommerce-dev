@@ -119,6 +119,13 @@ class Settings(BaseSettings):
     drive_api_base_url: str = "http://api:8000"  # API base URL for drive-worker HTTP calls
     drive_enrichment_enabled: bool = False
 
+    # --- OCR enrichment worker ---
+    drive_ocr_enabled: bool = False
+    drive_ocr_poll_interval_seconds: int = 30
+    drive_ocr_concurrency: int = 1
+    drive_ocr_max_frames_per_scene: int = 10
+    drive_ocr_max_frames_per_video: int = 300
+
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"
