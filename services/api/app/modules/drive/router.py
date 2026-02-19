@@ -17,6 +17,7 @@ from app.modules.drive.schemas import (
     DriveFileResponse,
     DriveSecretCreate,
     DriveSecretResponse,
+    DriveStatusResponse,
 )
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
@@ -30,6 +31,49 @@ def _require_drive_enabled() -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Drive connector is not enabled",
         )
+
+
+PROCESSING_STATUSES = frozenset({"downloading", "transcoding", "processing"})
+
+
+@router.get("/status", response_model=DriveStatusResponse)
+async def get_status(
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+):
+    settings = get_settings()
+    if not settings.drive_connector_enabled:
+        return DriveStatusResponse(connected=False)
+
+    conn_repo = DriveConnectionRepository(db)
+    file_repo = DriveFileRepository(db)
+
+    connections = await conn_repo.list_by_org(org_ctx.org_id)
+    active = next((c for c in connections if c.status == "active"), None)
+    if not active:
+        return DriveStatusResponse(connected=False)
+
+    counts = await file_repo.count_by_status(org_ctx.org_id)
+    last_indexed = await file_repo.latest_indexed_at(org_ctx.org_id)
+
+    total = sum(counts.values())
+    indexed = counts.get("indexed", 0)
+    failed = counts.get("failed", 0)
+    processing = sum(v for k, v in counts.items() if k in PROCESSING_STATUSES)
+    pending = counts.get("pending", 0)
+
+    return DriveStatusResponse(
+        connected=True,
+        connection_status=active.status,
+        drive_name=active.drive_name,
+        last_sync_at=active.last_sync_at,
+        total_files=total,
+        indexed=indexed,
+        processing=processing,
+        pending=pending,
+        failed=failed,
+        last_indexed_at=last_indexed,
+    )
 
 
 @router.get("/connections", response_model=list[DriveConnectionResponse])

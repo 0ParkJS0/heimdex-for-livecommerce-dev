@@ -15,6 +15,7 @@ interface SyncSourceCardProps {
   connectionStatus?: ConnectionStatus;
   processingStatus?: ProcessingStatus;
   lastAnalyzedAt?: string | null;
+  fileCount?: number;
 }
 
 function formatRelativeTime(dateStr: string | null | undefined): string {
@@ -80,6 +81,7 @@ export function SyncSourceCard({
   connectionStatus = "unknown",
   processingStatus = "unknown",
   lastAnalyzedAt,
+  fileCount,
 }: SyncSourceCardProps) {
   const isInteractive = !disabled && !isUploading;
 
@@ -142,6 +144,15 @@ export function SyncSourceCard({
               {procCfg.label}
             </span>
           </div>
+
+          {fileCount !== undefined && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-500">파일 수</span>
+              <span className="text-sm font-semibold text-gray-900">
+                {fileCount.toLocaleString()}개
+              </span>
+            </div>
+          )}
         </div>
       </div>
 

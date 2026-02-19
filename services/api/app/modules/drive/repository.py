@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -115,6 +116,28 @@ class DriveFileRepository:
         )
         count_result = await self.session.execute(count_q)
         return list(result.scalars().all()), count_result.scalar_one()
+
+    async def count_by_status(self, org_id: UUID) -> dict[str, int]:
+        """Return {processing_status: count} for non-deleted files in this org."""
+        result = await self.session.execute(
+            select(DriveFile.processing_status, func.count())
+            .where(DriveFile.org_id == org_id, DriveFile.is_deleted.is_(False))
+            .group_by(DriveFile.processing_status)
+        )
+        rows = result.fetchall()
+        return {str(r[0]): int(r[1]) for r in rows}
+
+    async def latest_indexed_at(self, org_id: UUID) -> Optional[datetime]:
+        """Return the most recent updated_at among indexed files for this org."""
+        result = await self.session.execute(
+            select(func.max(DriveFile.updated_at))
+            .where(
+                DriveFile.org_id == org_id,
+                DriveFile.processing_status == "indexed",
+                DriveFile.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def create(self, drive_file: DriveFile) -> DriveFile:
         self.session.add(drive_file)

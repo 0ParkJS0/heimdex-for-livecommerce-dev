@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { getDevices } from "@/lib/api/devices";
+import { getDriveStatus } from "@/lib/api/drive";
 import {
   getAgentStatus,
   getAgentSources,
@@ -17,7 +18,7 @@ import type { ConnectionStatus, ProcessingStatus } from "@/components/sync/SyncS
 import { SyncedFolderList } from "@/components/sync/SyncedFolderList";
 import { UploadProgress } from "@/components/sync/UploadProgress";
 import { StopConfirmDialog } from "@/components/sync/StopConfirmDialog";
-import type { DeviceListItem } from "@/lib/types";
+import type { DeviceListItem, DriveStatusResponse } from "@/lib/types";
 
 type UploadState = "hidden" | "uploading" | "paused" | "complete" | "error";
 
@@ -26,12 +27,23 @@ const DEVICE_POLL_INTERVAL_MS = 30_000;
 const MAX_UNREACHABLE_COUNT = 5;
 const AGENT_STALE_MINUTES = 5;
 
-const SYNC_SOURCES = [
-  { title: "클라우드", disabled: true },
-  { title: "외장하드", disabled: true },
-  { title: "로컬 파일", disabled: false },
-  { title: "수동 파일", disabled: true },
-] as const;
+function deriveDriveConnectionStatus(
+  drive: DriveStatusResponse | null,
+): ConnectionStatus {
+  if (!drive) return "unknown";
+  if (!drive.connected) return "offline";
+  return drive.connection_status === "active" ? "connected" : "offline";
+}
+
+function deriveDriveProcessingStatus(
+  drive: DriveStatusResponse | null,
+): ProcessingStatus {
+  if (!drive || !drive.connected) return "unknown";
+  if (drive.failed > 0 && drive.processing === 0 && drive.pending === 0) return "error";
+  if (drive.processing > 0 || drive.pending > 0) return "processing";
+  if (drive.indexed > 0) return "complete";
+  return "unknown";
+}
 
 function deriveConnectionStatus(devices: DeviceListItem[]): ConnectionStatus {
   const now = Date.now();
@@ -97,6 +109,7 @@ function SyncContent() {
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(null);
   const [sources, setSources] = useState<AgentSource[]>([]);
   const [showFolders, setShowFolders] = useState(false);
+  const [driveStatus, setDriveStatus] = useState<DriveStatusResponse | null>(null);
   const pollingRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unreachableCountRef = useRef(0);
@@ -120,12 +133,22 @@ function SyncContent() {
     setSources(list);
   }, []);
 
+  const loadDriveStatus = useCallback(async () => {
+    try {
+      const status = await getDriveStatus(getAccessToken);
+      setDriveStatus(status);
+    } catch {
+      setDriveStatus(null);
+    }
+  }, [getAccessToken]);
+
   useEffect(() => {
     loadDevices();
     loadSources();
-    const id = setInterval(() => { loadDevices(); loadSources(); }, DEVICE_POLL_INTERVAL_MS);
+    loadDriveStatus();
+    const id = setInterval(() => { loadDevices(); loadSources(); loadDriveStatus(); }, DEVICE_POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [loadDevices, loadSources]);
+  }, [loadDevices, loadSources, loadDriveStatus]);
 
   useEffect(() => {
     let mounted = true;
@@ -284,22 +307,35 @@ function SyncContent() {
       )}
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {SYNC_SOURCES.map((source) => (
-          <SyncSourceCard
-            key={source.title}
-            title={source.title}
-            onUpdate={source.title === "로컬 파일" ? handleStartUpload : () => {}}
-            onCardClick={() => handleCardClick(source.title)}
-            isUploading={isUploading}
-            disabled={source.disabled}
-            selected={source.title === "로컬 파일" && showFolders}
-            {...(!source.disabled && {
-              connectionStatus,
-              processingStatus,
-              lastAnalyzedAt: lastSeenAt,
-            })}
-          />
-        ))}
+        <SyncSourceCard
+          title="클라우드"
+          onUpdate={() => {}}
+          disabled={!driveStatus?.connected}
+          connectionStatus={deriveDriveConnectionStatus(driveStatus)}
+          processingStatus={deriveDriveProcessingStatus(driveStatus)}
+          lastAnalyzedAt={driveStatus?.last_indexed_at ?? null}
+          fileCount={driveStatus?.connected ? driveStatus.total_files : undefined}
+        />
+        <SyncSourceCard
+          title="외장하드"
+          onUpdate={() => {}}
+          disabled
+        />
+        <SyncSourceCard
+          title="로컬 파일"
+          onUpdate={handleStartUpload}
+          onCardClick={() => handleCardClick("로컬 파일")}
+          isUploading={isUploading}
+          selected={showFolders}
+          connectionStatus={connectionStatus}
+          processingStatus={processingStatus}
+          lastAnalyzedAt={lastSeenAt}
+        />
+        <SyncSourceCard
+          title="수동 파일"
+          onUpdate={() => {}}
+          disabled
+        />
       </div>
 
       {showFolders && (

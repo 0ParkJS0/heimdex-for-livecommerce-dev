@@ -60,6 +60,19 @@ class DriveFileListResponse(BaseModel):
     total: int
 
 
+class DriveStatusResponse(BaseModel):
+    connected: bool
+    connection_status: Optional[str] = None
+    drive_name: Optional[str] = None
+    last_sync_at: Optional[datetime] = None
+    total_files: int = 0
+    indexed: int = 0
+    processing: int = 0
+    pending: int = 0
+    failed: int = 0
+    last_indexed_at: Optional[datetime] = None
+
+
 class DriveSecretCreate(BaseModel):
     sa_key_json: str = Field(..., min_length=1, description="Raw SA key JSON (will be encrypted at rest)")
     impersonate_email: str = Field(..., min_length=1, max_length=320)
