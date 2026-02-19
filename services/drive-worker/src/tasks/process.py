@@ -1,6 +1,7 @@
 import json
 import logging
 import shutil
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -64,7 +65,10 @@ async def _process_single_file(
     file_repo: Any,
 ) -> None:
     from app.modules.drive.google_client import DriveClient
-    from app.modules.drive.keys import proxy_s3_key, thumbnail_s3_key, thumbnail_s3_prefix
+    from app.modules.drive.keys import (
+        audio_s3_key, enrichment_keyframe_s3_key, enrichment_keyframe_s3_prefix,
+        proxy_s3_key, thumbnail_s3_key, thumbnail_s3_prefix,
+    )
     from app.modules.drive.models import DriveSecret
     from app.modules.drive.repository import DriveSecretRepository
     from heimdex_media_pipelines.transcoding import make_transcode_decision, probe_video, transcode_to_proxy
@@ -175,6 +179,16 @@ async def _process_single_file(
                     content_type="image/jpeg",
                 )
 
+        enrichment_fields = _upload_enrichment_artifacts(
+            s3=s3,
+            original_path=original_path,
+            scene_result=scene_result,
+            org_id_str=org_id_str,
+            video_id=drive_file.video_id,
+            temp_dir=temp_dir,
+            enabled=settings.drive_enrichment_enabled,
+        )
+
         capture_iso = drive_file.google_created_time.isoformat() if drive_file.google_created_time else None
         scene_dicts = _build_ingest_scene_dicts(
             scene_result.scenes,
@@ -196,6 +210,7 @@ async def _process_single_file(
             drive_file.id,
             "indexed",
             scene_count=ingest_result["indexed_count"],
+            **enrichment_fields,
         )
 
         logger.info(
@@ -208,6 +223,7 @@ async def _process_single_file(
                 "transcoded": decision.should_transcode,
                 "scene_count": len(scene_result.scenes),
                 "indexed_count": ingest_result["indexed_count"],
+                "enrichment_state": enrichment_fields.get("enrichment_state"),
             },
         )
 
@@ -223,6 +239,94 @@ async def _process_single_file(
     finally:
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _upload_enrichment_artifacts(
+    s3: Any,
+    original_path: Path,
+    scene_result: Any,
+    org_id_str: str,
+    video_id: str,
+    temp_dir: Path,
+    enabled: bool = False,
+) -> dict[str, object]:
+    if not enabled:
+        return {}
+
+    from app.modules.drive.keys import (
+        audio_s3_key, enrichment_keyframe_s3_key, enrichment_keyframe_s3_prefix,
+    )
+
+    fields: dict[str, object] = {}
+
+    audio_path = temp_dir / "audio.wav"
+    t0 = time.monotonic()
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-i", str(original_path),
+                "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                "-y", str(audio_path),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=600,
+        )
+        audio_size = audio_path.stat().st_size
+        a_key = audio_s3_key(org_id_str, video_id)
+        s3.upload_file(audio_path, a_key, content_type="audio/wav")
+        fields["audio_s3_key"] = a_key
+        logger.info(
+            "enrichment_audio_uploaded",
+            extra={
+                "video_id": video_id,
+                "audio_s3_key": a_key,
+                "audio_size_bytes": audio_size,
+                "elapsed_s": round(time.monotonic() - t0, 3),
+            },
+        )
+    except Exception:
+        logger.warning(
+            "enrichment_audio_extract_failed",
+            extra={"video_id": video_id},
+            exc_info=True,
+        )
+
+    kf_prefix = enrichment_keyframe_s3_prefix(org_id_str, video_id)
+    kf_count = 0
+    for scene_doc in scene_result.scenes:
+        if scene_doc.thumbnail_path and Path(scene_doc.thumbnail_path).is_file():
+            kf_key = enrichment_keyframe_s3_key(org_id_str, video_id, scene_doc.scene_id)
+            try:
+                s3.upload_file(
+                    Path(scene_doc.thumbnail_path), kf_key,
+                    content_type="image/jpeg",
+                )
+                kf_count += 1
+            except Exception:
+                logger.warning(
+                    "enrichment_keyframe_upload_failed",
+                    extra={"video_id": video_id, "scene_id": scene_doc.scene_id},
+                    exc_info=True,
+                )
+
+    if kf_count > 0:
+        fields["keyframe_s3_prefix"] = kf_prefix
+        logger.info(
+            "enrichment_keyframes_uploaded",
+            extra={
+                "video_id": video_id,
+                "keyframe_s3_prefix": kf_prefix,
+                "keyframe_count": kf_count,
+            },
+        )
+
+    if fields:
+        fields["enrichment_state"] = "pending"
+        fields["stt_status"] = "pending" if "audio_s3_key" in fields else None
+        fields["ocr_status"] = "pending" if "keyframe_s3_prefix" in fields else None
+
+    return fields
 
 
 def _build_ingest_scene_dicts(
