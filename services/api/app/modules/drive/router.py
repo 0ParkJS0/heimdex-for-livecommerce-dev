@@ -2,8 +2,10 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.db.base import get_db_session
 from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository
 from app.modules.drive.schemas import (
     DriveConnectionCreate,
@@ -29,9 +31,10 @@ def _require_drive_enabled() -> None:
 @router.get("/connections", response_model=list[DriveConnectionResponse])
 async def list_connections(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    conn_repo: Annotated[DriveConnectionRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
+    conn_repo = DriveConnectionRepository(db)
     return await conn_repo.list_by_org(org_ctx.org_id)
 
 
@@ -39,9 +42,10 @@ async def list_connections(
 async def create_connection(
     body: DriveConnectionCreate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    conn_repo: Annotated[DriveConnectionRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
+    conn_repo = DriveConnectionRepository(db)
     return await conn_repo.create(org_ctx.org_id, body)
 
 
@@ -49,9 +53,10 @@ async def create_connection(
 async def get_connection(
     connection_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    conn_repo: Annotated[DriveConnectionRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
+    conn_repo = DriveConnectionRepository(db)
     conn = await conn_repo.get_by_id(connection_id, org_ctx.org_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -63,9 +68,10 @@ async def update_connection(
     connection_id: UUID,
     body: DriveConnectionUpdate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    conn_repo: Annotated[DriveConnectionRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
+    conn_repo = DriveConnectionRepository(db)
     conn = await conn_repo.update(connection_id, org_ctx.org_id, body)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -76,9 +82,10 @@ async def update_connection(
 async def delete_connection(
     connection_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    conn_repo: Annotated[DriveConnectionRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
+    conn_repo = DriveConnectionRepository(db)
     deleted = await conn_repo.delete(connection_id, org_ctx.org_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -88,13 +95,14 @@ async def delete_connection(
 async def list_files(
     connection_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    file_repo: Annotated[DriveFileRepository, Depends()],
-    conn_repo: Annotated[DriveConnectionRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
     processing_status: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
+    conn_repo = DriveConnectionRepository(db)
+    file_repo = DriveFileRepository(db)
     conn = await conn_repo.get_by_id(connection_id, org_ctx.org_id)
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
@@ -111,9 +119,10 @@ async def list_files(
 async def get_file(
     file_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    file_repo: Annotated[DriveFileRepository, Depends()],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
+    file_repo = DriveFileRepository(db)
     f = await file_repo.get_by_id(file_id, org_ctx.org_id)
     if f is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
