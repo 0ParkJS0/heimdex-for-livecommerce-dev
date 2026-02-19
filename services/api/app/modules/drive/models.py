@@ -113,6 +113,23 @@ class DriveFile(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # --- Enrichment tracking (V3b) ---
+    enrichment_state: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )  # pending | running | done | failed_partial | failed
+    stt_status: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )  # pending | running | done | failed
+    ocr_status: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )  # pending | running | done | failed
+    audio_s3_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    keyframe_s3_prefix: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enrichment_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enrichment_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     is_deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
@@ -123,6 +140,7 @@ class DriveFile(Base, UUIDMixin, TimestampMixin):
     __table_args__: tuple[object, ...] = (
         UniqueConstraint("org_id", "google_file_id", name="uq_drive_files_org_file"),
         Index("ix_drive_files_processing_status", "processing_status"),
+        Index("ix_drive_files_enrichment_state", "enrichment_state"),
         {"comment": "Video files discovered in connected Google Shared Drives"},
     )
 

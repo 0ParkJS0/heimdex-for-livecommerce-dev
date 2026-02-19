@@ -17,3 +17,17 @@ def thumbnail_s3_key(org_id: str, video_id: str, scene_id: str) -> str:
 
 def thumbnail_s3_prefix(org_id: str, video_id: str) -> str:
     return f"{org_id}/drive/thumbs/{video_id}/"
+
+
+def audio_s3_key(org_id: str, video_id: str) -> str:
+    return f"{org_id}/drive/audio/{video_id}/audio.wav"
+
+
+def enrichment_keyframe_s3_prefix(org_id: str, video_id: str) -> str:
+    return f"{org_id}/drive/keyframes/{video_id}/"
+
+
+def enrichment_keyframe_s3_key(
+    org_id: str, video_id: str, scene_id: str,
+) -> str:
+    return f"{org_id}/drive/keyframes/{video_id}/{scene_id}.jpg"

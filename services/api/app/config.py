@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     drive_s3_bucket: str = "heimdex-drive"
     drive_internal_api_key: str = ""  # Pre-shared key for drive-worker → API internal ingest
     drive_api_base_url: str = "http://api:8000"  # API base URL for drive-worker HTTP calls
+    drive_enrichment_enabled: bool = False
 
     # --- CORS ---
     cors_allow_origin_regex: str = (

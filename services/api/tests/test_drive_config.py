@@ -36,6 +36,10 @@ class TestDriveConfig:
         settings = Settings()
         assert settings.drive_s3_bucket == "heimdex-drive"
 
+    def test_drive_enrichment_disabled_by_default(self):
+        settings = Settings()
+        assert settings.drive_enrichment_enabled is False
+
     def test_drive_settings_from_env(self):
         with patch.dict("os.environ", {
             "DRIVE_CONNECTOR_ENABLED": "true",
