@@ -68,6 +68,7 @@ export function VideoDetailDrawer({
         <div className="px-6 pt-4">
           <SceneThumbnail
             videoId={video.video_id}
+            sceneId={video.source_type === "gdrive" ? `${video.video_id}_scene_000` : undefined}
             agentAvailable={agentAvailable}
             className="w-full h-40 rounded-lg"
           />

@@ -36,6 +36,7 @@ export function VideoCard({ video, onSelect, agentAvailable }: VideoCardProps) {
       <div className="flex gap-3">
         <SceneThumbnail
           videoId={video.video_id}
+          sceneId={video.source_type === "gdrive" ? `${video.video_id}_scene_000` : undefined}
           agentAvailable={agentAvailable}
           className="flex-shrink-0 w-28 h-20 rounded-lg"
         />

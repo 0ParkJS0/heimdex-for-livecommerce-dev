@@ -588,6 +588,7 @@ function VideoCard({ video }: { video: VideoSummary }) {
     <Link href={`/videos/${video.video_id}`} className="group cursor-pointer block">
       <SceneThumbnail
         videoId={video.video_id}
+        sceneId={video.source_type === "gdrive" ? `${video.video_id}_scene_000` : undefined}
         agentAvailable={true}
         className="aspect-video w-full rounded-lg"
       />
