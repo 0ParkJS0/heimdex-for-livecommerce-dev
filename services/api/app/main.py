@@ -50,11 +50,10 @@ async def lifespan(app: FastAPI):
     
     from app.db.base import get_async_engine
 
-    startup_engine = get_async_engine()
+    engine = get_async_engine()
     if settings.auth0_enabled:
-        await _verify_org_auth0_bindings(startup_engine)
-    await startup_check_agent_intents_schema(startup_engine, settings.agent_intents_enabled)
-    await startup_engine.dispose()
+        await _verify_org_auth0_bindings(engine)
+    await startup_check_agent_intents_schema(engine, settings.agent_intents_enabled)
 
     opensearch_client = OpenSearchClient()
     app.state.opensearch_client = opensearch_client
@@ -83,6 +82,8 @@ async def lifespan(app: FastAPI):
     await scene_opensearch_client.close()
     app.state.opensearch_client = None
     app.state.scene_opensearch_client = None
+
+    await engine.dispose()
 
 
 async def _startup_search_checks(client):

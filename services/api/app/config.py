@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     
     database_url: str = "postgresql+asyncpg://heimdex:heimdex_dev_password@localhost:5432/heimdex"
     database_url_sync: str = "postgresql://heimdex:heimdex_dev_password@localhost:5432/heimdex"
+
+    # Database connection pool
+    db_pool_size: int = 10
+    db_max_overflow: int = 10
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 1800  # seconds; recycle connections after 30 minutes
     
     opensearch_url: str = "http://localhost:9200"
     opensearch_index_prefix: str = "heimdex"
