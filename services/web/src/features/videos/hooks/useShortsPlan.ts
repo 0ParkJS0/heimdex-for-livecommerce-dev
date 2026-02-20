@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import { generateShortsPlan } from "@/lib/api/shorts";
 import { exportToPremiere } from "@/lib/agent-export";
+import { exportEdlCloud } from "@/lib/cloud-export";
 import type {
   ExportPremiereResponse,
   ShortsCandidateResponse,
@@ -21,6 +22,7 @@ export interface UseShortsPlanReturn {
   isExporting: boolean;
   exportError: string | null;
   exportResult: ExportPremiereResponse | null;
+  isCloudExport: boolean;
   generatePlan: (videoId: string, request?: ShortsPlanRequest) => Promise<void>;
   toggleCandidate: (candidateId: string) => void;
   selectAll: () => void;
@@ -94,6 +96,11 @@ export function useShortsPlan(): UseShortsPlanReturn {
     setSelectedIds(new Set());
   }, []);
 
+  const isCloudExport = useMemo(
+    () => candidates.length > 0 && candidates.every((c) => c.video_id.startsWith("gd_")),
+    [candidates],
+  );
+
   const exportSelectedToPremiere = useCallback(
     async (config: { projectName: string; outputDir: string; frameRate: number }) => {
       const selectedCandidates = candidates.filter((candidate) =>
@@ -117,15 +124,34 @@ export function useShortsPlan(): UseShortsPlanReturn {
           end_ms: candidate.end_ms,
         }));
 
-        const result = await exportToPremiere({
-          project_name: config.projectName,
-          format: "edl",
-          frame_rate: config.frameRate,
-          output_dir: config.outputDir,
-          clips,
-        });
+        const allCloud = selectedCandidates.every((c) => c.video_id.startsWith("gd_"));
 
-        setExportResult(result);
+        if (allCloud) {
+          const result = await exportEdlCloud(
+            {
+              project_name: config.projectName,
+              frame_rate: config.frameRate,
+              clips,
+            },
+            getAccessToken,
+          );
+          setExportResult({
+            status: "ok",
+            format: "edl",
+            output_path: result.filename,
+            clip_count: result.clip_count,
+            unresolved_clips: result.unresolved_clips,
+          });
+        } else {
+          const result = await exportToPremiere({
+            project_name: config.projectName,
+            format: "edl",
+            frame_rate: config.frameRate,
+            output_dir: config.outputDir,
+            clips,
+          });
+          setExportResult(result);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to export to Premiere";
         setExportError(message);
@@ -133,7 +159,7 @@ export function useShortsPlan(): UseShortsPlanReturn {
         setIsExporting(false);
       }
     },
-    [candidates, selectedIds],
+    [candidates, selectedIds, getAccessToken],
   );
 
   const clearExportResult = useCallback(() => {
@@ -163,6 +189,7 @@ export function useShortsPlan(): UseShortsPlanReturn {
     isExporting,
     exportError,
     exportResult,
+    isCloudExport,
     generatePlan,
     toggleCandidate,
     selectAll,

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { exportToPremiere } from "@/lib/agent-export";
+import { exportEdlCloud } from "@/lib/cloud-export";
 import { checkAgentHealth, getAgentClipUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ExportDialog } from "@/features/videos/components/ExportDialog";
@@ -172,6 +173,11 @@ export function SavedShortsPage() {
     }
   }, [selectedShorts]);
 
+  const isCloudExport = useMemo(
+    () => selectedShorts.length > 0 && selectedShorts.every((s) => s.video_id.startsWith("gd_")),
+    [selectedShorts],
+  );
+
   const handlePremiereExport = useCallback(
     async (config: { projectName: string; outputDir: string; frameRate: number }) => {
       setShowExportDialog(false);
@@ -186,21 +192,36 @@ export function SavedShortsPage() {
           start_ms: s.start_ms ?? 0,
           end_ms: s.end_ms ?? 0,
         }));
-        const result = await exportToPremiere({
-          project_name: config.projectName,
-          format: "edl",
-          frame_rate: config.frameRate,
-          output_dir: config.outputDir,
-          clips,
-        });
-        setExportResult({ output_path: result.output_path, clip_count: result.clip_count });
+
+        const allCloud = selectedShorts.every((s) => s.video_id.startsWith("gd_"));
+
+        if (allCloud) {
+          const result = await exportEdlCloud(
+            {
+              project_name: config.projectName,
+              frame_rate: config.frameRate,
+              clips,
+            },
+            getAccessToken,
+          );
+          setExportResult({ output_path: result.filename, clip_count: result.clip_count });
+        } else {
+          const result = await exportToPremiere({
+            project_name: config.projectName,
+            format: "edl",
+            frame_rate: config.frameRate,
+            output_dir: config.outputDir,
+            clips,
+          });
+          setExportResult({ output_path: result.output_path, clip_count: result.clip_count });
+        }
       } catch (err) {
         setExportError(err instanceof Error ? err.message : "내보내기에 실패했습니다");
       } finally {
         setIsExporting(false);
       }
     },
-    [selectedShorts],
+    [selectedShorts, getAccessToken],
   );
 
   const sorted = useMemo(() => {
@@ -381,6 +402,7 @@ export function SavedShortsPage() {
             isExporting={isExporting}
             defaultProjectName={selectedShorts[0]?.title ?? "Heimdex Export"}
             agentAvailable={agentAvailable}
+            isCloudExport={isCloudExport}
           />
         )}
 

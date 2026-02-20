@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import "@testing-library/jest-dom";
+// jest-dom matchers loaded via vitest.setup.ts
 import { CandidateCard } from "@/features/videos/components/CandidateCard";
 import { ShortsPlanPanel } from "@/features/videos/components/ShortsPlanPanel";
 import { ExportDialog } from "@/features/videos/components/ExportDialog";
@@ -352,11 +352,11 @@ describe("ExportDialog", () => {
       />,
     );
 
-    expect(screen.getByText("Export to Premiere Pro")).toBeInTheDocument();
-    expect(screen.getByLabelText("Project Name")).toBeInTheDocument();
-    expect(screen.getByLabelText("Output Directory")).toBeInTheDocument();
-    expect(screen.getByLabelText("Frame Rate")).toBeInTheDocument();
-    expect(screen.getByText("2 clips selected")).toBeInTheDocument();
+    expect(screen.getByText("Premiere Pro 내보내기")).toBeInTheDocument();
+    expect(screen.getByLabelText("프로젝트 이름")).toBeInTheDocument();
+    expect(screen.getByLabelText("저장 위치")).toBeInTheDocument();
+    expect(screen.getByLabelText("프레임 레이트")).toBeInTheDocument();
+    expect(screen.getByText(/2개 선택됨/)).toBeInTheDocument();
   });
 
   it("export button disabled when project name empty", async () => {
@@ -372,12 +372,12 @@ describe("ExportDialog", () => {
       />,
     );
 
-    await user.clear(screen.getByLabelText("Project Name"));
-    await user.type(screen.getByLabelText("Output Directory"), "/tmp/exports");
-    expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+    await user.clear(screen.getByLabelText("프로젝트 이름"));
+    expect(screen.getByRole("button", { name: "내보내기" })).toBeDisabled();
   });
 
-  it("export button disabled when output dir empty", () => {
+  it("export button disabled when output dir empty", async () => {
+    const user = userEvent.setup();
     render(
       <ExportDialog
         isOpen={true}
@@ -389,7 +389,8 @@ describe("ExportDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+    await user.clear(screen.getByLabelText("저장 위치"));
+    expect(screen.getByRole("button", { name: "내보내기" })).toBeDisabled();
   });
 
   it("calls onExport with form values when export clicked", async () => {
@@ -406,13 +407,12 @@ describe("ExportDialog", () => {
       />,
     );
 
-    await user.type(screen.getByLabelText("Output Directory"), "/tmp/exports");
-    await user.selectOptions(screen.getByLabelText("Frame Rate"), "30");
-    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.selectOptions(screen.getByLabelText("프레임 레이트"), "30");
+    await user.click(screen.getByRole("button", { name: "내보내기" }));
 
     expect(onExport).toHaveBeenCalledWith({
       projectName: "Spring Campaign Shorts",
-      outputDir: "/tmp/exports",
+      outputDir: "~/Desktop/Heimdex Exports",
       frameRate: 30,
     });
   });
@@ -431,7 +431,7 @@ describe("ExportDialog", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "취소" }));
     expect(onClose).toHaveBeenCalled();
   });
 
