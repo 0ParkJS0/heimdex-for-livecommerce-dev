@@ -1,7 +1,7 @@
 "use client";
 
 import { formatTimestamp } from "@/lib/api/utils";
-import { getAgentPlaybackUrl } from "@/lib/agent";
+import { getAgentPlaybackUrl, getCloudPlaybackUrl } from "@/lib/agent";
 import { cn } from "@/lib/utils";
 import type { ShortsCandidateResponse } from "@/lib/types";
 
@@ -73,7 +73,10 @@ export function CandidateCard({
               disabled={!agentAvailable}
               onClick={() => {
                 if (agentAvailable) {
-                  window.open(getAgentPlaybackUrl(videoId, candidate.start_ms), "_blank");
+                  const url = videoId.startsWith("gd_")
+                    ? getCloudPlaybackUrl(videoId, candidate.start_ms)
+                    : getAgentPlaybackUrl(videoId, candidate.start_ms);
+                  window.open(url, "_blank");
                 }
               }}
             >

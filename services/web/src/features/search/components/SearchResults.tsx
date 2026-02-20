@@ -7,10 +7,16 @@ import {
   DebugInfo,
   formatDuration,
 } from "@/lib/api";
-import { getAgentPlaybackUrl } from "@/lib/agent";
+import { getAgentPlaybackUrl, getCloudPlaybackUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+
+function playbackUrl(videoId: string, sourceType: string, startMs?: number): string {
+  return sourceType === "gdrive"
+    ? getCloudPlaybackUrl(videoId, startMs)
+    : getAgentPlaybackUrl(videoId, startMs);
+}
 
 // ============================================================================
 // Helpers
@@ -348,7 +354,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
                 disabled={!agentAvailable}
                 onClick={() => {
                   if (agentAvailable) {
-                    window.open(getAgentPlaybackUrl(result.video_id, result.start_ms), "_blank");
+                    window.open(playbackUrl(result.video_id, result.source_type, result.start_ms), "_blank");
                   }
                 }}
                 title={agentAvailable ? "Play from scene start" : "Playback requires the Heimdex agent"}
@@ -380,7 +386,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
                 onClick={() => {
                   if (agentAvailable) {
                     window.open(
-                      getAgentPlaybackUrl(result.video_id, Math.max(0, result.start_ms - 5000)),
+                      playbackUrl(result.video_id, result.source_type, Math.max(0, result.start_ms - 5000)),
                       "_blank"
                     );
                   }
@@ -400,7 +406,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
                 onClick={() => {
                   if (agentAvailable) {
                     window.open(
-                      getAgentPlaybackUrl(result.video_id, result.start_ms + 5000),
+                      playbackUrl(result.video_id, result.source_type, result.start_ms + 5000),
                       "_blank"
                     );
                   }
@@ -525,7 +531,7 @@ function ResultCard({ result, rank, showDebug, agentAvailable }: ResultCardProps
               disabled={!agentAvailable}
               onClick={() => {
                 if (agentAvailable) {
-                  window.open(getAgentPlaybackUrl(result.video_id, result.start_ms), "_blank");
+                  window.open(playbackUrl(result.video_id, result.source_type, result.start_ms), "_blank");
                 }
               }}
               title={agentAvailable ? "Play from segment start" : "Playback requires the Heimdex agent"}

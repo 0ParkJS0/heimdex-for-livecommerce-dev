@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getVideoScenes } from "@/lib/api/videos";
-import { getAgentPlaybackUrl } from "@/lib/agent";
+import { getAgentPlaybackUrl, getCloudPlaybackUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { formatTimestamp } from "@/lib/api/utils";
 import { cn } from "@/lib/utils";
@@ -282,7 +282,7 @@ export function ShortsCreatePage() {
             )}
             <div className="aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
               <video
-                src={getAgentPlaybackUrl(videoId)}
+                src={meta?.source_type === "gdrive" ? getCloudPlaybackUrl(videoId) : getAgentPlaybackUrl(videoId)}
                 controls
                 className="h-full w-full object-contain"
               />
