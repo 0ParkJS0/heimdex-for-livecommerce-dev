@@ -37,12 +37,15 @@ jobs:
             exec > >(tee -a "$LOG") 2>&1
             echo "=== Deploy started at $(date) ==="
 
-            # Pull latest code
             echo "--- git pull (monorepo) ---"
-            cd "$APP_DIR" && git pull origin main
+            cd "$APP_DIR"
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "--- git pull (contracts) ---"
-            cd "$CONTRACTS_DIR" && git pull origin main
+            cd "$CONTRACTS_DIR"
+            git fetch origin main
+            git reset --hard origin/main
 
             cd "$APP_DIR"
 
