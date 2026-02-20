@@ -16,43 +16,47 @@ from app.modules.auth.oidc import (
 
 
 class TestJWKSCache:
-    @patch("app.modules.auth.oidc.httpx.Client")
+    @patch("app.modules.auth.oidc._get_http_client")
     @patch("app.modules.auth.oidc.get_settings")
-    def test_fetches_jwks_on_first_call(self, mock_settings, mock_client):
+    def test_fetches_jwks_on_first_call(self, mock_settings, mock_get_client):
         settings = MagicMock()
         settings.auth0_domain = "test.auth0.com"
         mock_settings.return_value = settings
-        
+
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "keys": [{"kid": "key1", "kty": "RSA"}]
         }
-        mock_client.return_value.__enter__.return_value.get.return_value = mock_response
-        
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
         clear_jwks_cache()
         result = _fetch_jwks()
-        
+
         assert "key1" in result
         assert result["key1"]["kty"] == "RSA"
-    
-    @patch("app.modules.auth.oidc.httpx.Client")
+
+    @patch("app.modules.auth.oidc._get_http_client")
     @patch("app.modules.auth.oidc.get_settings")
-    def test_uses_cache_on_subsequent_calls(self, mock_settings, mock_client):
+    def test_uses_cache_on_subsequent_calls(self, mock_settings, mock_get_client):
         settings = MagicMock()
         settings.auth0_domain = "test.auth0.com"
         mock_settings.return_value = settings
-        
+
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "keys": [{"kid": "key1", "kty": "RSA"}]
         }
-        mock_client.return_value.__enter__.return_value.get.return_value = mock_response
-        
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
         clear_jwks_cache()
         _fetch_jwks()
         _fetch_jwks()
-        
-        assert mock_client.return_value.__enter__.return_value.get.call_count == 1
+
+        assert mock_client.get.call_count == 1
 
 
 class TestAuth0TokenValidation:
@@ -111,34 +115,37 @@ class TestUserinfoCache:
         _userinfo_cache.clear()
 
     @patch("app.modules.auth.oidc.jwt.get_unverified_claims", return_value={"sub": "auth0|cached"})
-    @patch("app.modules.auth.oidc.httpx.Client")
+    @patch("app.modules.auth.oidc._get_http_client")
     @patch("app.modules.auth.oidc.get_settings")
-    def test_caches_userinfo_by_sub(self, mock_settings, mock_client, _mock_jwt):
+    def test_caches_userinfo_by_sub(self, mock_settings, mock_get_client, _mock_jwt):
         settings = MagicMock()
         settings.auth0_domain = "test.auth0.com"
         mock_settings.return_value = settings
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"email": "a@b.com", "email_verified": True}
-        mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+        mock_client = MagicMock()
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
 
         fetch_userinfo("tok")
         fetch_userinfo("tok")
 
-        assert mock_client.return_value.__enter__.return_value.get.call_count == 1
+        assert mock_client.get.call_count == 1
 
     @patch("app.modules.auth.oidc.jwt.get_unverified_claims", return_value={"sub": "auth0|stale"})
-    @patch("app.modules.auth.oidc.httpx.Client")
+    @patch("app.modules.auth.oidc._get_http_client")
     @patch("app.modules.auth.oidc.get_settings")
-    def test_returns_stale_cache_on_http_error(self, mock_settings, mock_client, _mock_jwt):
+    def test_returns_stale_cache_on_http_error(self, mock_settings, mock_get_client, _mock_jwt):
         settings = MagicMock()
         settings.auth0_domain = "test.auth0.com"
         mock_settings.return_value = settings
 
         import httpx
         from app.modules.auth.oidc import _UserinfoEntry
-        mock_ctx = mock_client.return_value.__enter__.return_value
-        mock_ctx.get.side_effect = httpx.HTTPError("429")
+        mock_client = MagicMock()
+        mock_client.get.side_effect = httpx.HTTPError("429")
+        mock_get_client.return_value = mock_client
 
         _userinfo_cache["auth0|stale"] = _UserinfoEntry(
             data={"email": "a@b.com", "email_verified": True}, fetched_at=0
@@ -148,15 +155,17 @@ class TestUserinfoCache:
         assert result["email"] == "a@b.com"
 
     @patch("app.modules.auth.oidc.jwt.get_unverified_claims", return_value={"sub": "auth0|nocache"})
-    @patch("app.modules.auth.oidc.httpx.Client")
+    @patch("app.modules.auth.oidc._get_http_client")
     @patch("app.modules.auth.oidc.get_settings")
-    def test_empty_result_on_http_error_no_cache(self, mock_settings, mock_client, _mock_jwt):
+    def test_empty_result_on_http_error_no_cache(self, mock_settings, mock_get_client, _mock_jwt):
         settings = MagicMock()
         settings.auth0_domain = "test.auth0.com"
         mock_settings.return_value = settings
 
         import httpx
-        mock_client.return_value.__enter__.return_value.get.side_effect = httpx.HTTPError("429")
+        mock_client = MagicMock()
+        mock_client.get.side_effect = httpx.HTTPError("429")
+        mock_get_client.return_value = mock_client
 
         result = fetch_userinfo("tok")
         assert result == {}

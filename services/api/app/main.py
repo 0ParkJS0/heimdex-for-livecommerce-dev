@@ -85,6 +85,9 @@ async def lifespan(app: FastAPI):
 
     await engine.dispose()
 
+    from app.modules.auth.oidc import close_http_client
+    close_http_client()
+
 
 async def _startup_search_checks(client):
     """

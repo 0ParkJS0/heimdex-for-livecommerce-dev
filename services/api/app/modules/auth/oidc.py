@@ -35,6 +35,21 @@ class _UserinfoEntry:
 
 _jwks_cache: JWKSCache | None = None
 _userinfo_cache: dict[str, _UserinfoEntry] = {}
+_http_client: httpx.Client | None = None
+
+
+def _get_http_client() -> httpx.Client:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=10.0)
+    return _http_client
+
+
+def close_http_client() -> None:
+    global _http_client
+    if _http_client is not None:
+        _http_client.close()
+        _http_client = None
 
 
 def _get_jwks_uri() -> str:
@@ -53,10 +68,10 @@ def _fetch_jwks() -> dict[str, Any]:
     logger.info("fetching_jwks", uri=jwks_uri)
     
     try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(jwks_uri)
-            response.raise_for_status()
-            jwks = response.json()
+        client = _get_http_client()
+        response = client.get(jwks_uri)
+        response.raise_for_status()
+        jwks = response.json()
     except httpx.HTTPError as e:
         logger.error("jwks_fetch_failed", error=str(e))
         if _jwks_cache:
@@ -166,16 +181,16 @@ def fetch_userinfo(token: str) -> dict[str, Any]:
     userinfo_url = f"https://{settings.auth0_domain}/userinfo"
 
     try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(
-                userinfo_url,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            response.raise_for_status()
-            data = response.json()
-            if sub:
-                _userinfo_cache[sub] = _UserinfoEntry(data=data, fetched_at=now)
-            return data
+        client = _get_http_client()
+        response = client.get(
+            userinfo_url,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        if sub:
+            _userinfo_cache[sub] = _UserinfoEntry(data=data, fetched_at=now)
+        return data
     except httpx.HTTPError as e:
         logger.warning("userinfo_fetch_failed", error=str(e))
         if sub and sub in _userinfo_cache:
