@@ -62,6 +62,7 @@ class VideoScene(BaseModel):
     end_ms: int
     transcript_raw: str = ""
     transcript_char_count: int = 0
+    scene_caption: str = ""
     keyword_tags: list[str] = Field(default_factory=list)
     product_tags: list[str] = Field(default_factory=list)
     product_entities: list[str] = Field(default_factory=list)
