@@ -280,6 +280,7 @@ services:
       dockerfile: Dockerfile
     container_name: heimdex-llama-caption
     networks:
+      - default
       - caption-net
     expose:
       - "8089"
