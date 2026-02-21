@@ -4,6 +4,7 @@ import { useSearch } from "../hooks/useSearch";
 import { useAgent } from "../hooks/useAgent";
 import { SearchBar } from "./SearchBar";
 import { AlphaSlider } from "./AlphaSlider";
+import { GroupByToggle } from "./GroupByToggle";
 import { FilterPanel } from "./FilterPanel";
 import { SearchResults } from "./SearchResults";
 import { AgentTroubleshooting } from "./AgentTroubleshooting";
@@ -11,6 +12,7 @@ import { AgentTroubleshooting } from "./AgentTroubleshooting";
 export function SearchContainer() {
   const {
     alpha,
+    groupBy,
     filters,
     response,
     isLoading,
@@ -18,6 +20,7 @@ export function SearchContainer() {
     showDebug,
     includeOcr,
     setAlpha,
+    setGroupBy,
     setShowDebug,
     setIncludeOcr,
     handleSearch,
@@ -89,8 +92,13 @@ export function SearchContainer() {
         <div className="mb-6 space-y-4">
           <SearchBar onSearch={handleSearch} isLoading={isLoading} />
           
-          <div className="card p-4">
-            <AlphaSlider value={alpha} onChange={setAlpha} />
+          <div className="flex gap-4">
+            <div className="card p-4 flex-1">
+              <AlphaSlider value={alpha} onChange={setAlpha} />
+            </div>
+            <div className="card p-4 w-48 flex-shrink-0">
+              <GroupByToggle value={groupBy} onChange={setGroupBy} />
+            </div>
           </div>
 
           <div className="flex items-center gap-6">

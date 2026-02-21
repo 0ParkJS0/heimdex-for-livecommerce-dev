@@ -61,6 +61,10 @@ class SearchRequest(BaseModel):
         default=None,
         description="Per-request OCR toggle. None=server default, True=include, False=exclude",
     )
+    group_by: Literal["video", "scene"] = Field(
+        default="scene",
+        description="Result granularity. 'scene' returns individual scenes, 'video' groups by video.",
+    )
 
 
 class DebugInfo(BaseModel):
@@ -155,3 +159,28 @@ class SceneSearchResponse(BaseModel):
     query: str
     alpha: float
     result_type: Literal["scene"] = "scene"
+
+
+# ---------------------------------------------------------------------------
+# Video-grouped search models
+# ---------------------------------------------------------------------------
+
+
+class VideoResult(BaseModel):
+    video_id: str
+    video_title: str | None = None
+    library_id: UUID
+    library_name: str
+    source_type: SourceType
+    matching_scene_count: int
+    best_scene: SceneResult
+    score: float
+
+
+class VideoSearchResponse(BaseModel):
+    results: list[VideoResult]
+    total_candidates: int
+    facets: Facets
+    query: str
+    alpha: float
+    result_type: Literal["video"] = "video"

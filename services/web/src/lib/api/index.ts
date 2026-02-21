@@ -26,6 +26,8 @@ export type {
   SearchResponse,
   SceneResult,
   SceneSearchResponse,
+  VideoResult,
+  VideoSearchResponse,
   AnySearchResponse,
   SegmentResult,
   Facets,

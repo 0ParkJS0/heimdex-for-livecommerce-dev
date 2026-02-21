@@ -32,6 +32,8 @@ from app.modules.search.schemas import (
     SceneResult,
     SceneSearchResponse,
     SearchFilters,
+    VideoResult,
+    VideoSearchResponse,
 )
 
 logger = get_logger(__name__)
@@ -58,7 +60,8 @@ class SceneSearchService:
         filters: SearchFilters,
         include_ocr: bool | None = None,
         user_id: UUID | None = None,
-    ) -> SceneSearchResponse:
+        group_by: str = "scene",
+    ) -> SceneSearchResponse | VideoSearchResponse:
         logger.info(
             "scene_search_started",
             org_id=str(org_id),
@@ -223,6 +226,45 @@ class SceneSearchService:
                 for bucket in facet_data.get("people", [])
             ],
         )
+
+        if group_by == "video":
+            video_groups: dict[str, list[SceneResult]] = {}
+            for scene in results:
+                video_groups.setdefault(scene.video_id, []).append(scene)
+
+            video_results: list[VideoResult] = []
+            for vid, scenes in video_groups.items():
+                best = scenes[0]
+                video_results.append(
+                    VideoResult(
+                        video_id=vid,
+                        video_title=best.video_title,
+                        library_id=best.library_id,
+                        library_name=best.library_name,
+                        source_type=best.source_type,
+                        matching_scene_count=len(scenes),
+                        best_scene=best,
+                        score=best.debug.adjusted_score,
+                    )
+                )
+            video_results.sort(key=lambda v: v.score, reverse=True)
+
+            unique_video_count = len(set(item.video_id for item in ranked_items))
+
+            logger.info(
+                "video_search_completed",
+                org_id=str(org_id),
+                result_count=len(video_results),
+                total_candidates=unique_video_count,
+            )
+
+            return VideoSearchResponse(
+                results=video_results,
+                total_candidates=unique_video_count,
+                facets=facets,
+                query=query,
+                alpha=alpha,
+            )
 
         logger.info(
             "scene_search_completed",

@@ -12,6 +12,7 @@ from app.modules.search.schemas import (
     SceneSearchResponse,
     SearchRequest,
     SearchResponse,
+    VideoSearchResponse,
 )
 from app.modules.search.service import SearchService
 from app.modules.tenancy import OrgContext, get_current_org
@@ -53,6 +54,7 @@ async def search(
             filters=request.filters,
             include_ocr=request.include_ocr,
             user_id=user_id,
+            group_by=request.group_by,
         )
 
     return await search_service.search(
@@ -64,7 +66,7 @@ async def search(
     )
 
 
-@router.post("/scenes", response_model=SceneSearchResponse)
+@router.post("/scenes", response_model=SceneSearchResponse | VideoSearchResponse)
 async def search_scenes(
     request: SearchRequest,
     org_ctx: OrgContext = Depends(get_current_org),
@@ -88,4 +90,5 @@ async def search_scenes(
         filters=request.filters,
         include_ocr=request.include_ocr,
         user_id=user_id,
+        group_by=request.group_by,
     )

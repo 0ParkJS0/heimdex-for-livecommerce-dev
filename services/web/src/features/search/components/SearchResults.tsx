@@ -3,6 +3,7 @@
 import {
   SegmentResult,
   SceneResult,
+  VideoResult,
   AnySearchResponse,
   DebugInfo,
   formatDuration,
@@ -145,23 +146,40 @@ export function SearchResults({
     );
   }
 
-  const isScene = response.result_type === "scene";
+  const resultType = response.result_type;
+
+  const badgeText =
+    resultType === "video" ? "Video results" :
+    resultType === "scene" ? "Scene results" :
+    null;
+
+  const badgeClass =
+    resultType === "video"
+      ? "bg-blue-100 text-blue-700"
+      : "bg-purple-100 text-purple-700";
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between text-sm text-gray-600">
         <span>
-          Showing {response.results.length} of {response.total_candidates} candidates
+          Showing {response.results.length} of {response.total_candidates}{" "}
+          {resultType === "video" ? "videos" : "candidates"}
         </span>
-        {isScene && (
-          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-            Scene results
+        {badgeText && (
+          <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", badgeClass)}>
+            {badgeText}
           </span>
         )}
       </div>
 
       <div className="space-y-3">
-        {isScene ? (
+        {resultType === "video" ? (
+          <VideoCardList
+            results={response.results as VideoResult[]}
+            showDebug={showDebug}
+            agentAvailable={agentAvailable}
+          />
+        ) : resultType === "scene" ? (
           <VideoGroupList
             groups={groupScenesByVideo(response.results as SceneResult[])}
             showDebug={showDebug}
@@ -262,6 +280,169 @@ function VideoGroupList({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ============================================================================
+// VideoCardList — one card per video (best-match scene)
+// ============================================================================
+
+function VideoCardList({
+  results,
+  showDebug,
+  agentAvailable,
+}: {
+  results: VideoResult[];
+  showDebug: boolean;
+  agentAvailable: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      {results.map((video, index) => (
+        <VideoCard
+          key={video.video_id}
+          video={video}
+          rank={index + 1}
+          showDebug={showDebug}
+          agentAvailable={agentAvailable}
+        />
+      ))}
+    </div>
+  );
+}
+
+function VideoCard({
+  video,
+  rank,
+  showDebug,
+  agentAvailable,
+}: {
+  video: VideoResult;
+  rank: number;
+  showDebug: boolean;
+  agentAvailable: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const best = video.best_scene;
+  const matchSignal = getMatchSignal(best.debug);
+
+  return (
+    <div className="card p-4 hover:shadow-md transition-shadow">
+      <div className="flex gap-4">
+        <div className="flex-shrink-0 relative">
+          <SceneThumbnail
+            videoId={best.video_id}
+            sceneId={best.scene_id}
+            agentAvailable={agentAvailable}
+            className="w-32 h-20 rounded-lg"
+          />
+          <span className="absolute -top-2 -left-2 bg-primary-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">
+            {rank}
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                href={`/videos/${video.video_id}`}
+                className="text-sm font-medium text-gray-900 hover:text-primary-600 truncate transition-colors"
+              >
+                {video.video_title || video.video_id}
+              </a>
+              <Breadcrumb libraryName={video.library_name} sourceType={video.source_type} />
+              <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", matchSignal.color)}>
+                {matchSignal.label}
+              </span>
+            </div>
+            <span className="text-xs text-gray-500 whitespace-nowrap">
+              {video.matching_scene_count} scene{video.matching_scene_count !== 1 ? "s" : ""} matched
+            </span>
+          </div>
+
+          {best.snippet && (
+            <p className="text-sm text-gray-700 line-clamp-2 mb-2">
+              {best.snippet}
+            </p>
+          )}
+
+          {best.scene_caption && best.scene_caption.trim() && (
+            <p className="text-sm text-gray-500 mt-0.5 mb-2 line-clamp-1">
+              <span className="text-gray-400">AI</span> {best.scene_caption}
+            </p>
+          )}
+
+          <div className="flex items-center gap-3">
+            <a
+              href={`/videos/${video.video_id}`}
+              className="text-sm flex items-center gap-1 px-2 py-1 rounded-md border text-primary-600 hover:bg-primary-50 border-primary-200"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              View Video
+            </a>
+
+            <button
+              className={cn(
+                "text-sm flex items-center gap-1 px-2 py-1 rounded-md border",
+                agentAvailable
+                  ? "text-primary-600 hover:bg-primary-50 border-primary-200 cursor-pointer"
+                  : "text-gray-400 border-gray-200 cursor-not-allowed"
+              )}
+              disabled={!agentAvailable}
+              onClick={() => {
+                if (agentAvailable) {
+                  window.open(playbackUrl(best.video_id, best.source_type, best.start_ms), "_blank");
+                }
+              }}
+              title={agentAvailable ? "Play best matching scene" : "Playback requires the Heimdex agent"}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              Play
+            </button>
+
+            <span className="text-xs text-gray-400">
+              Best: {formatDuration(best.start_ms, best.end_ms)}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {showDebug && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+          >
+            <svg
+              className={cn("w-3 h-3 transition-transform", expanded && "rotate-90")}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            Debug Info (best scene)
+          </button>
+          {expanded && <DebugPanel debug={best.debug} />}
+        </div>
+      )}
     </div>
   );
 }

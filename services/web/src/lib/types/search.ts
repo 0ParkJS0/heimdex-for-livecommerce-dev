@@ -47,6 +47,7 @@ export interface SearchRequest {
   alpha: number;
   filters: SearchFilters;
   include_ocr?: boolean;
+  group_by?: "video" | "scene";
 }
 
 export interface DebugInfo {
@@ -133,4 +134,24 @@ export interface SceneSearchResponse {
   result_type: "scene";
 }
 
-export type AnySearchResponse = SearchResponse | SceneSearchResponse;
+export interface VideoResult {
+  video_id: string;
+  video_title: string | null;
+  library_id: string;
+  library_name: string;
+  source_type: "gdrive" | "removable_disk" | "local";
+  matching_scene_count: number;
+  best_scene: SceneResult;
+  score: number;
+}
+
+export interface VideoSearchResponse {
+  results: VideoResult[];
+  total_candidates: number;
+  facets: Facets;
+  query: string;
+  alpha: number;
+  result_type: "video";
+}
+
+export type AnySearchResponse = SearchResponse | SceneSearchResponse | VideoSearchResponse;

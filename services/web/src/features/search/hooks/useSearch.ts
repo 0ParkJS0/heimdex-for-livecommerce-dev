@@ -16,9 +16,12 @@ export interface SearchError {
   type?: string;
 }
 
+export type GroupBy = "video" | "scene";
+
 export interface UseSearchReturn {
   // State
   alpha: number;
+  groupBy: GroupBy;
   filters: SearchFilters;
   response: AnySearchResponse | null;
   isLoading: boolean;
@@ -37,6 +40,7 @@ export interface UseSearchReturn {
 
   // Actions
   setAlpha: (value: number) => void;
+  setGroupBy: (value: GroupBy) => void;
   setShowDebug: (value: boolean) => void;
   setIncludeOcr: (value: boolean) => void;
   handleSearch: (query: string) => Promise<void>;
@@ -47,6 +51,7 @@ export interface UseSearchReturn {
 
 export function useSearch(): UseSearchReturn {
   const [alpha, setAlpha] = useState(0.5);
+  const [groupBy, setGroupBy] = useState<GroupBy>("scene");
   const [filters, setFilters] = useState<SearchFilters>({});
   const [response, setResponse] = useState<AnySearchResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -75,7 +80,7 @@ export function useSearch(): UseSearchReturn {
         let result: AnySearchResponse;
         if (searchMode === "scenes") {
           try {
-            const sceneResult: SceneSearchResponse = await searchScenes({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr });
+            const sceneResult = await searchScenes({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr, group_by: groupBy });
             result = sceneResult;
           } catch (err) {
             if (err instanceof ApiError && err.status === 404) {
@@ -99,8 +104,15 @@ export function useSearch(): UseSearchReturn {
         setIsLoading(false);
       }
     },
-    [alpha, filters, search, searchScenes, searchMode, includeOcr]
+    [alpha, groupBy, filters, search, searchScenes, searchMode, includeOcr]
   );
+
+  useEffect(() => {
+    if (lastQuery) {
+      handleSearch(lastQuery);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupBy]);
 
   const handleFiltersChange = useCallback(
     (newFilters: SearchFilters) => {
@@ -115,6 +127,7 @@ export function useSearch(): UseSearchReturn {
   return {
     // State
     alpha,
+    groupBy,
     filters,
     response,
     isLoading,
@@ -133,6 +146,7 @@ export function useSearch(): UseSearchReturn {
 
     // Actions
     setAlpha,
+    setGroupBy,
     setShowDebug,
     setIncludeOcr,
     handleSearch,
