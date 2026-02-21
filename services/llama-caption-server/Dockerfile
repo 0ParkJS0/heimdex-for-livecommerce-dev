@@ -34,8 +34,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
-COPY --from=builder /llama.cpp/build/src/libllama.so /usr/local/lib/libllama.so
-COPY --from=builder /llama.cpp/build/ggml/src/*.so /usr/local/lib/
+COPY --from=builder /llama.cpp/build/bin/lib*.so /usr/local/lib/
 
 RUN useradd --uid 1000 --create-home --shell /bin/bash appuser \
     && mkdir -p /models \
