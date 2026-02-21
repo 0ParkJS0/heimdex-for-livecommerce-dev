@@ -146,6 +146,9 @@ class Settings(BaseSettings):
     drive_caption_poll_interval_seconds: int = 30
     drive_caption_concurrency: int = 1
     drive_caption_model: str = "OpenGVLab/InternVL2-1B"
+    caption_engine: str = "internvl2"  # "internvl2", "florence2", or "llama_http"
+    llama_caption_url: str = "http://llama-caption-server:8089"
+    llama_caption_api_key: str = ""
 
     # --- CORS ---
     cors_allow_origin_regex: str = (

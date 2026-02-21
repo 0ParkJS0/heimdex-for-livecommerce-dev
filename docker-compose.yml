@@ -274,6 +274,35 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
+  llama-caption-server:
+    build:
+      context: ./services/llama-caption-server
+      dockerfile: Dockerfile
+    container_name: heimdex-llama-caption
+    networks:
+      - caption-net
+    expose:
+      - "8089"
+    mem_limit: 4g
+    cpus: "2.0"
+    environment:
+      - LLAMA_API_KEY=${LLAMA_CAPTION_API_KEY:-}
+      - LLAMA_THREADS=${LLAMA_CAPTION_THREADS:-2}
+      - LLAMA_MLOCK=${LLAMA_MLOCK:-false}
+    volumes:
+      - llama_models:/models
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD", "bash", "/usr/local/bin/healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+
   drive-caption-worker:
     build:
       context: ./services/drive-caption-worker
@@ -288,12 +317,15 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=${MINIO_SECURE:-false}
       - SCENE_CAPTION_ENABLED=${SCENE_CAPTION_ENABLED:-false}
+      - CAPTION_ENGINE=${CAPTION_ENGINE:-internvl2}
       - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
       - DRIVE_CAPTION_POLL_INTERVAL_SECONDS=${DRIVE_CAPTION_POLL_INTERVAL_SECONDS:-30}
       - DRIVE_CAPTION_CONCURRENCY=${DRIVE_CAPTION_CONCURRENCY:-1}
       - DRIVE_CAPTION_MODEL=${DRIVE_CAPTION_MODEL:-OpenGVLab/InternVL2-1B}
+      - LLAMA_CAPTION_URL=http://llama-caption-server:8089
+      - LLAMA_CAPTION_API_KEY=${LLAMA_CAPTION_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - HF_HOME=/data/huggingface
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
@@ -304,6 +336,9 @@ services:
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
       - ../heimdex-media-pipelines:/opt/heimdex-media-pipelines:ro
       - huggingface_cache:/data/huggingface
+    networks:
+      - default
+      - caption-net
     depends_on:
       postgres:
         condition: service_healthy
@@ -311,6 +346,10 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      # llama-caption-server dependency is NOT listed here intentionally.
+      # Dev environments use CAPTION_ENGINE=internvl2 (default) and don't run the sidecar.
+      # On staging, deploy.sh starts llama-caption-server first and waits 30s.
+      # The LlamaCppCaptionEngine has a circuit breaker for connection failures.
     command: >
       sh -c "pip install --no-deps -e /opt/heimdex-media-contracts 2>/dev/null;
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
@@ -364,3 +403,8 @@ volumes:
   minio_data:
   huggingface_cache:
   whisper_model_cache:
+  llama_models:
+
+networks:
+  caption-net:
+    internal: true

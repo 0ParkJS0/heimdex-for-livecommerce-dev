@@ -74,10 +74,18 @@ def main() -> None:
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     create_caption_engine = importlib.import_module("heimdex_media_pipelines.vision").create_caption_engine
-    model_key = "internvl2"
-    if "florence" in settings.drive_caption_model.lower():
-        model_key = "florence2"
-    caption_engine = create_caption_engine(model=model_key, use_gpu=False)
+    engine_key = getattr(settings, "caption_engine", "internvl2")
+    if engine_key == "llama_http":
+        caption_engine = create_caption_engine(
+            model="llama_http",
+            base_url=getattr(settings, "llama_caption_url", "http://llama-caption-server:8089"),
+            api_key=getattr(settings, "llama_caption_api_key", ""),
+        )
+    else:
+        model_key = "internvl2"
+        if "florence" in settings.drive_caption_model.lower():
+            model_key = "florence2"
+        caption_engine = create_caption_engine(model=model_key, use_gpu=False)
     logger.info("caption_engine_loaded_once", extra={"model": settings.drive_caption_model})
 
     scheduler = AsyncIOScheduler()
