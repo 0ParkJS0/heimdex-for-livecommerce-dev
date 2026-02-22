@@ -873,7 +873,7 @@ export default function DashboardContent() {
           </button>
         </form>
 
-        <div className="mt-3 w-48">
+        <div className="mt-3">
           <GroupByToggle value={groupBy} onChange={setGroupBy} />
         </div>
       </div>
