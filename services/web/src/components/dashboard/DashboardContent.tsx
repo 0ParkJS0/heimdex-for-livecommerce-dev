@@ -6,7 +6,9 @@ import { useAuth } from "@/lib/auth";
 import { getVideos, getVideoStats } from "@/lib/api/videos";
 import { searchScenes } from "@/lib/api/search";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
-import type { VideoSummary, VideoStats, SceneResult } from "@/lib/types";
+import { GroupByToggle } from "@/features/search/components/GroupByToggle";
+import type { GroupBy } from "@/features/search/hooks/useSearch";
+import type { VideoSummary, VideoStats, SceneResult, VideoResult, AnySearchResponse, SceneSearchResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -633,6 +635,35 @@ function SceneCard({ scene }: { scene: SceneResult }) {
   );
 }
 
+function SearchVideoCard({ video }: { video: VideoResult }) {
+  const title = video.video_title || "제목 없음";
+  const best = video.best_scene;
+  return (
+    <Link href={`/videos/${video.video_id}`} className="group cursor-pointer block">
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg">
+        <SceneThumbnail
+          videoId={best.video_id}
+          sceneId={best.scene_id}
+          agentAvailable={true}
+          className="w-full h-full"
+          sourceType={video.source_type}
+        />
+        <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-xs text-white">
+          {video.matching_scene_count}개 장면
+        </span>
+      </div>
+      <p className="mt-2 truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
+        {title}
+      </p>
+      {best.snippet && (
+        <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">
+          {best.snippet}
+        </p>
+      )}
+    </Link>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // DashboardContent (main export)
 // ---------------------------------------------------------------------------
@@ -656,9 +687,10 @@ export default function DashboardContent() {
   const [dateEnd, setDateEnd] = useState<Date | null>(() => new Date());
   const [showCalendar, setShowCalendar] = useState(false);
 
-  const [searchResults, setSearchResults] = useState<SceneResult[] | null>(null);
+  const [groupBy, setGroupBy] = useState<GroupBy>("scene");
+  const [searchResponse, setSearchResponse] = useState<AnySearchResponse | null>(null);
   const [activeQuery, setActiveQuery] = useState("");
-  const isSearchMode = searchResults !== null;
+  const isSearchMode = searchResponse !== null;
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -721,48 +753,70 @@ export default function DashboardContent() {
     }
   }, [fetchData, isSearchMode]);
 
-  const searchTotalPages = Math.max(1, Math.ceil((searchResults?.length ?? 0) / PAGE_SIZE));
+  const searchTotalPages = Math.max(1, Math.ceil((searchResponse?.results.length ?? 0) / PAGE_SIZE));
 
   const totalPages = isSearchMode ? searchTotalPages : 1;
 
-  const paginatedScenes = useMemo(() => {
-    if (!searchResults) return [];
+  const paginatedResults = useMemo(() => {
+    if (!searchResponse) return [];
     const start = (currentPage - 1) * PAGE_SIZE;
-    return searchResults.slice(start, start + PAGE_SIZE);
-  }, [searchResults, currentPage]);
+    return searchResponse.results.slice(start, start + PAGE_SIZE);
+  }, [searchResponse, currentPage]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [sortBy]);
+
+  const performSearch = useCallback(
+    async (q: string) => {
+      setIsLoading(true);
+      setCurrentPage(1);
+      try {
+        const tokenGetter = () => getAccessToken();
+        const res = await searchScenes(
+          { q, alpha: 0.5, filters: {}, group_by: groupBy },
+          tokenGetter,
+        );
+        setSearchResponse(res);
+        setActiveQuery(q);
+      } catch {
+        const emptyResponse: SceneSearchResponse = {
+          results: [],
+          total_candidates: 0,
+          facets: { libraries: [], source_types: [], people_cluster_ids: [] },
+          query: q,
+          alpha: 0.5,
+          result_type: "scene",
+        };
+        setSearchResponse(emptyResponse);
+        setActiveQuery(q);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [getAccessToken, groupBy],
+  );
 
   const handleSearch = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
       const q = query.trim();
       if (!q) return;
-
-      setIsLoading(true);
-      setCurrentPage(1);
-      try {
-        const tokenGetter = () => getAccessToken();
-        const res = await searchScenes(
-          { q, alpha: 0.5, filters: {} },
-          tokenGetter,
-        );
-        setSearchResults(res.results);
-        setActiveQuery(q);
-      } catch {
-        setSearchResults([]);
-        setActiveQuery(q);
-      } finally {
-        setIsLoading(false);
-      }
+      await performSearch(q);
     },
-    [query, getAccessToken],
+    [query, performSearch],
   );
 
+  // Re-search when groupBy changes
+  useEffect(() => {
+    if (activeQuery) {
+      performSearch(activeQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupBy]);
+
   const handleClearSearch = useCallback(() => {
-    setSearchResults(null);
+    setSearchResponse(null);
     setActiveQuery("");
     setQuery("");
     setCurrentPage(1);
@@ -775,10 +829,10 @@ export default function DashboardContent() {
     setCurrentPage(1);
   }, []);
 
-  const videoCount = isSearchMode ? (searchResults?.length ?? 0) : totalVideos;
+  const videoCount = isSearchMode ? (searchResponse?.results.length ?? 0) : totalVideos;
   const libraryCount = stats?.total_libraries ?? 0;
   const hasResults = isSearchMode
-    ? (searchResults?.length ?? 0) > 0
+    ? (searchResponse?.results.length ?? 0) > 0
     : videos.length > 0;
 
   const dateLabel = useMemo(() => {
@@ -818,6 +872,10 @@ export default function DashboardContent() {
             검색
           </button>
         </form>
+
+        <div className="mt-3 w-48">
+          <GroupByToggle value={groupBy} onChange={setGroupBy} />
+        </div>
       </div>
 
       {/* Results section */}
@@ -880,7 +938,7 @@ export default function DashboardContent() {
               <VideoIcon />
               <span>
                 {isSearchMode
-                  ? `${videoCount} scenes`
+                  ? `${videoCount} ${searchResponse?.result_type === "video" ? "videos" : "scenes"}`
                   : `${videoCount} videos`}
               </span>
             </div>
@@ -954,9 +1012,13 @@ export default function DashboardContent() {
           <>
             <div className="mt-6 grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
               {isSearchMode
-                ? paginatedScenes.map((scene) => (
-                    <SceneCard key={scene.scene_id} scene={scene} />
-                  ))
+                ? searchResponse?.result_type === "video"
+                  ? (paginatedResults as VideoResult[]).map((video) => (
+                      <SearchVideoCard key={video.video_id} video={video} />
+                    ))
+                  : (paginatedResults as SceneResult[]).map((scene) => (
+                      <SceneCard key={scene.scene_id} scene={scene} />
+                    ))
                 : videos.map((video) => (
                     <VideoCard key={video.video_id} video={video} />
                   ))}
