@@ -54,6 +54,9 @@ class DriveConnection(Base, UUIDMixin, TimestampMixin):
     last_full_sync_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    sync_requested_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__: tuple[object, ...] = (

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TypedDict
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -70,6 +70,25 @@ class DriveConnectionRepository:
             select(DriveConnection).where(DriveConnection.status == "active")
         )
         return list(result.scalars().all())
+
+    async def set_sync_requested(self, connection_id: UUID, org_id: UUID) -> Optional[DriveConnection]:
+        """Set sync_requested_at to now() to signal the worker to trigger discovery."""
+        conn = await self.get_by_id(connection_id, org_id)
+        if conn is None:
+            return None
+        conn.sync_requested_at = func.now()
+        await self.session.flush()
+        await self.session.refresh(conn)
+        return conn
+
+
+class DriveFolderStats(TypedDict):
+    folder_path: str
+    file_count: int
+    indexed_count: int
+    processing_count: int
+    failed_count: int
+    pending_count: int
 
 
 class DriveFileRepository:
@@ -150,6 +169,75 @@ class DriveFileRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_folder_stats(
+        self,
+        connection_id: UUID,
+        org_id: UUID,
+    ) -> list[DriveFolderStats]:
+        """Group files by folder path prefix and return per-folder status counts."""
+        root_folder = "(루트)"
+        folder_path = sa.case(
+            (DriveFile.drive_path.is_(None), root_folder),
+            (DriveFile.drive_path == "", root_folder),
+            (func.strpos(DriveFile.drive_path, "/") == 0, root_folder),
+            else_=func.left(
+                DriveFile.drive_path,
+                func.length(DriveFile.drive_path)
+                - func.strpos(func.reverse(DriveFile.drive_path), "/"),
+            ),
+        ).label("folder_path")
+
+        indexed_count = func.sum(
+            sa.case((DriveFile.processing_status == "indexed", 1), else_=0)
+        ).label("indexed_count")
+        processing_count = func.sum(
+            sa.case(
+                (
+                    DriveFile.processing_status.in_(
+                        ["downloading", "transcoding", "processing"]
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("processing_count")
+        failed_count = func.sum(
+            sa.case((DriveFile.processing_status == "failed", 1), else_=0)
+        ).label("failed_count")
+        pending_count = func.sum(
+            sa.case((DriveFile.processing_status == "pending", 1), else_=0)
+        ).label("pending_count")
+
+        result = await self.session.execute(
+            select(
+                folder_path,
+                func.count().label("file_count"),
+                indexed_count,
+                processing_count,
+                failed_count,
+                pending_count,
+            )
+            .where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.is_deleted.is_(False),
+            )
+            .group_by(folder_path)
+            .order_by(func.count().desc(), folder_path.asc())
+            .limit(500)
+        )
+        return [
+            {
+                "folder_path": str(row["folder_path"]),
+                "file_count": int(row["file_count"]),
+                "indexed_count": int(row["indexed_count"]),
+                "processing_count": int(row["processing_count"]),
+                "failed_count": int(row["failed_count"]),
+                "pending_count": int(row["pending_count"]),
+            }
+            for row in result.mappings().all()
+        ]
 
     async def create(self, drive_file: DriveFile) -> DriveFile:
         self.session.add(drive_file)

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -17,9 +17,12 @@ from app.modules.drive.schemas import (
     DriveConnectionUpdate,
     DriveFileListResponse,
     DriveFileResponse,
+    DriveFolderInfo,
+    DriveFolderListResponse,
     DriveSecretCreate,
     DriveSecretResponse,
     DriveStatusResponse,
+    SyncTriggerResponse,
 )
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
@@ -114,6 +117,40 @@ async def get_connection(
     if conn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
     return conn
+
+
+@router.post("/connections/{connection_id}/sync", response_model=SyncTriggerResponse)
+async def trigger_sync(
+    connection_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+    _: Annotated[None, Depends(_require_drive_enabled)],
+):
+    conn_repo = DriveConnectionRepository(db)
+    conn = await conn_repo.set_sync_requested(connection_id, org_ctx.org_id)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
+    if conn.sync_requested_at is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Sync request failed")
+    return SyncTriggerResponse(status="requested", sync_requested_at=conn.sync_requested_at)
+
+
+@router.get("/connections/{connection_id}/folders", response_model=DriveFolderListResponse)
+async def list_folders(
+    connection_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+    _: Annotated[None, Depends(_require_drive_enabled)],
+):
+    conn_repo = DriveConnectionRepository(db)
+    file_repo = DriveFileRepository(db)
+    conn = await conn_repo.get_by_id(connection_id, org_ctx.org_id)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
+    folder_stats = await file_repo.get_folder_stats(connection_id, org_ctx.org_id)
+    folders = [DriveFolderInfo(**f) for f in folder_stats]
+    total_files = sum(f.file_count for f in folders)
+    return DriveFolderListResponse(folders=folders, total_files=total_files)
 
 
 @router.patch("/connections/{connection_id}", response_model=DriveConnectionResponse)

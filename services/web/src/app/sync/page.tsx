@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { getDevices } from "@/lib/api/devices";
-import { getDriveStatus } from "@/lib/api/drive";
+import { getDriveStatus, getDriveConnections, triggerDriveSync, getDriveFolders } from "@/lib/api/drive";
 import {
   getAgentStatus,
   getAgentSources,
@@ -16,9 +16,10 @@ import { AuthGuard } from "@/components/AuthGuard";
 import { SyncSourceCard } from "@/components/sync/SyncSourceCard";
 import type { ConnectionStatus, ProcessingStatus } from "@/components/sync/SyncSourceCard";
 import { SyncedFolderList } from "@/components/sync/SyncedFolderList";
+import { DriveFolderList } from "@/components/sync/DriveFolderList";
 import { UploadProgress } from "@/components/sync/UploadProgress";
 import { StopConfirmDialog } from "@/components/sync/StopConfirmDialog";
-import type { DeviceListItem, DriveStatusResponse } from "@/lib/types";
+import type { DeviceListItem, DriveStatusResponse, DriveFolderInfo, DriveConnectionResponse } from "@/lib/types";
 
 type UploadState = "hidden" | "uploading" | "paused" | "complete" | "error";
 
@@ -110,6 +111,12 @@ function SyncContent() {
   const [sources, setSources] = useState<AgentSource[]>([]);
   const [showFolders, setShowFolders] = useState(false);
   const [driveStatus, setDriveStatus] = useState<DriveStatusResponse | null>(null);
+  const [showDriveFolders, setShowDriveFolders] = useState(false);
+  const [driveFolders, setDriveFolders] = useState<DriveFolderInfo[]>([]);
+  const [driveFoldersTotal, setDriveFoldersTotal] = useState(0);
+  const [driveFoldersLoading, setDriveFoldersLoading] = useState(false);
+  const [driveSyncing, setDriveSyncing] = useState(false);
+  const [driveConnections, setDriveConnections] = useState<DriveConnectionResponse[]>([]);
   const pollingRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unreachableCountRef = useRef(0);
@@ -142,13 +149,45 @@ function SyncContent() {
     }
   }, [getAccessToken]);
 
+  const loadDriveConnections = useCallback(async () => {
+    try {
+      const conns = await getDriveConnections(getAccessToken);
+      setDriveConnections(conns);
+    } catch {
+      setDriveConnections([]);
+    }
+  }, [getAccessToken]);
+
+  const loadDriveFolders = useCallback(async () => {
+    const activeConn = driveConnections.find(c => c.status === "active");
+    if (!activeConn) return;
+    setDriveFoldersLoading(true);
+    try {
+      const resp = await getDriveFolders(activeConn.id, getAccessToken);
+      setDriveFolders(resp.folders);
+      setDriveFoldersTotal(resp.total_files);
+    } catch {
+      setDriveFolders([]);
+      setDriveFoldersTotal(0);
+    } finally {
+      setDriveFoldersLoading(false);
+    }
+  }, [driveConnections, getAccessToken]);
+
   useEffect(() => {
     loadDevices();
     loadSources();
     loadDriveStatus();
-    const id = setInterval(() => { loadDevices(); loadSources(); loadDriveStatus(); }, DEVICE_POLL_INTERVAL_MS);
+    loadDriveConnections();
+    const id = setInterval(() => { loadDevices(); loadSources(); loadDriveStatus(); loadDriveConnections(); }, DEVICE_POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [loadDevices, loadSources, loadDriveStatus]);
+  }, [loadDevices, loadSources, loadDriveStatus, loadDriveConnections]);
+
+  useEffect(() => {
+    if (showDriveFolders) {
+      loadDriveFolders();
+    }
+  }, [showDriveFolders, loadDriveFolders]);
 
   useEffect(() => {
     let mounted = true;
@@ -276,8 +315,29 @@ function SyncContent() {
   const handleCardClick = useCallback((title: string) => {
     if (title === "로컬 파일") {
       setShowFolders((prev) => !prev);
+      setShowDriveFolders(false);
+    } else if (title === "클라우드") {
+      setShowDriveFolders((prev) => !prev);
+      setShowFolders(false);
     }
   }, []);
+
+  const handleDriveSync = useCallback(async () => {
+    const activeConn = driveConnections.find(c => c.status === "active");
+    if (!activeConn) return;
+    setDriveSyncing(true);
+    try {
+      await triggerDriveSync(activeConn.id, getAccessToken);
+      setTimeout(() => {
+        loadDriveStatus();
+        if (showDriveFolders) loadDriveFolders();
+      }, 3000);
+    } catch (err) {
+      console.error("Drive sync trigger failed:", err);
+    } finally {
+      setTimeout(() => setDriveSyncing(false), 3000);
+    }
+  }, [driveConnections, getAccessToken, loadDriveStatus, showDriveFolders, loadDriveFolders]);
 
   const handleDeleteSource = useCallback(async (id: string) => {
     const ok = await deleteAgentSource(id);
@@ -309,8 +369,11 @@ function SyncContent() {
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <SyncSourceCard
           title="클라우드"
-          onUpdate={() => {}}
+          onUpdate={handleDriveSync}
+          onCardClick={() => handleCardClick("클라우드")}
           disabled={!driveStatus?.connected}
+          isUploading={driveSyncing}
+          selected={showDriveFolders}
           connectionStatus={deriveDriveConnectionStatus(driveStatus)}
           processingStatus={deriveDriveProcessingStatus(driveStatus)}
           lastAnalyzedAt={driveStatus?.last_indexed_at ?? null}
@@ -344,6 +407,14 @@ function SyncContent() {
           onAddFolder={handleStartUpload}
           onDelete={handleDeleteSource}
           onRename={handleRenameSource}
+        />
+      )}
+
+      {showDriveFolders && (
+        <DriveFolderList
+          folders={driveFolders}
+          totalFiles={driveFoldersTotal}
+          loading={driveFoldersLoading}
         />
       )}
 

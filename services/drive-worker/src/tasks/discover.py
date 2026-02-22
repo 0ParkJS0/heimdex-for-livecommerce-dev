@@ -57,6 +57,7 @@ async def discover_new_files(session: AsyncSession, settings: Any) -> int:
                     extra={"org_id": org_id_str, "connection_id": str(connection.id)},
                 )
                 connection.last_sync_at = func.now()
+                connection.sync_requested_at = None
                 await session.flush()
                 continue
 
@@ -133,6 +134,7 @@ async def discover_new_files(session: AsyncSession, settings: Any) -> int:
                     break
 
             connection.last_sync_at = func.now()
+            connection.sync_requested_at = None
             await session.flush()
             logger.info(
                 "discover_connection_complete",

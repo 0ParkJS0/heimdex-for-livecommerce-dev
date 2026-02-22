@@ -20,6 +20,7 @@ class DriveConnectionResponse(BaseModel):
     status: str
     last_sync_at: Optional[datetime] = None
     last_full_sync_at: Optional[datetime] = None
+    sync_requested_at: Optional[datetime] = None
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -40,6 +41,7 @@ class DriveFileResponse(BaseModel):
     file_name: str
     mime_type: str
     file_size_bytes: Optional[int] = None
+    drive_path: Optional[str] = None
     video_id: str
     processing_status: str
     proxy_s3_key: Optional[str] = None
@@ -58,6 +60,25 @@ class DriveFileResponse(BaseModel):
 class DriveFileListResponse(BaseModel):
     files: list[DriveFileResponse]
     total: int
+
+
+class DriveFolderInfo(BaseModel):
+    folder_path: str
+    file_count: int
+    indexed_count: int
+    processing_count: int
+    failed_count: int
+    pending_count: int
+
+
+class DriveFolderListResponse(BaseModel):
+    folders: list[DriveFolderInfo]
+    total_files: int
+
+
+class SyncTriggerResponse(BaseModel):
+    status: str
+    sync_requested_at: datetime
 
 
 class DriveStatusResponse(BaseModel):
