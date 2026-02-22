@@ -20,7 +20,9 @@ exec llama-server \
     --mmproj /models/mmproj-Qwen2-VL-2B-Instruct-f16.gguf \
     --host 0.0.0.0 \
     --port 8089 \
-    --ctx-size 2048 \
+    --ctx-size 4096 \
+    --parallel 1 \
+    --batch-size 1024 \
     --n-predict 200 \
     --threads "${LLAMA_THREADS:-2}" \
     $LLAMA_MLOCK_FLAG \

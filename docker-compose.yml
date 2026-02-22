@@ -285,7 +285,7 @@ services:
     expose:
       - "8089"
     mem_limit: 4g
-    cpus: "2.0"
+    cpus: "4.0"
     environment:
       - LLAMA_API_KEY=${LLAMA_CAPTION_API_KEY:-}
       - LLAMA_THREADS=${LLAMA_CAPTION_THREADS:-2}
