@@ -31,7 +31,7 @@ export class ApiError extends Error {
       return new ApiError("unauthorized", status, "Session expired. Please login again.");
     }
     if (status === 403) {
-      return new ApiError("forbidden", status, "You don't have access to this organization.");
+      return new ApiError("forbidden", status, detail);
     }
     if (status === 400 && detail.toLowerCase().includes("tenancy")) {
       return new ApiError("tenancy", status, "Invalid organization hostname. Check your URL.");

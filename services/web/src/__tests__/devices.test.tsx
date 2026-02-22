@@ -30,6 +30,7 @@ vi.mock("@/lib/api/devices", () => ({
 // Must import AFTER mocks
 import { DevicesSettings } from "@/features/devices";
 import { PairingCodeModal } from "@/features/devices";
+import { ApiError } from "@/lib/types";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -112,6 +113,22 @@ describe("DevicesSettings", () => {
       expect(screen.getByText("Device Pairing Code")).toBeInTheDocument();
     });
     expect(screen.getByText("482917")).toBeInTheDocument();
+  });
+
+  it("shows permission denied message for non-admin users", async () => {
+    mockGetDevices.mockRejectedValue(
+      new ApiError("forbidden", 403, "Insufficient permissions"),
+    );
+
+    render(<DevicesSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText("관리자 권한이 필요합니다")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText("디바이스 관리는 조직 관리자만 사용할 수 있습니다."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Generate Pairing Code")).not.toBeInTheDocument();
   });
 });
 
