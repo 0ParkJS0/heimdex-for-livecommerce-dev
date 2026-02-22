@@ -14,11 +14,12 @@ class DriveConnectionRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def list_by_org(self, org_id: UUID) -> list[DriveConnection]:
+    async def list_by_org(self, org_id: UUID, limit: int = 100) -> list[DriveConnection]:
         result = await self.session.execute(
             select(DriveConnection)
             .where(DriveConnection.org_id == org_id)
             .order_by(DriveConnection.created_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())
 

@@ -76,11 +76,12 @@ class DeviceRepository:
         await self.session.flush()
         return device
 
-    async def list_by_org(self, org_id: UUID) -> list[Device]:
+    async def list_by_org(self, org_id: UUID, limit: int = 200) -> list[Device]:
         result = await self.session.execute(
             select(Device)
             .where(Device.org_id == org_id)
             .order_by(Device.created_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())
 

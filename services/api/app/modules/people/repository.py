@@ -43,9 +43,11 @@ class DriveNicknameRepository:
         await self.session.flush()
         return entry
 
-    async def list_by_org(self, org_id: UUID) -> list[DriveNicknameRegistry]:
+    async def list_by_org(self, org_id: UUID, limit: int = 500) -> list[DriveNicknameRegistry]:
         result = await self.session.execute(
-            select(DriveNicknameRegistry).where(DriveNicknameRegistry.org_id == org_id)
+            select(DriveNicknameRegistry)
+            .where(DriveNicknameRegistry.org_id == org_id)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
@@ -81,18 +83,20 @@ class PeopleClusterLabelRepository:
         await self.session.flush()
         return entry
 
-    async def list_by_org(self, org_id: UUID) -> list[PeopleClusterLabel]:
+    async def list_by_org(self, org_id: UUID, limit: int = 500) -> list[PeopleClusterLabel]:
         result = await self.session.execute(
-            select(PeopleClusterLabel).where(PeopleClusterLabel.org_id == org_id)
+            select(PeopleClusterLabel)
+            .where(PeopleClusterLabel.org_id == org_id)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
-    async def list_labeled(self, org_id: UUID) -> list[PeopleClusterLabel]:
+    async def list_labeled(self, org_id: UUID, limit: int = 500) -> list[PeopleClusterLabel]:
         result = await self.session.execute(
             select(PeopleClusterLabel).where(
                 PeopleClusterLabel.org_id == org_id,
                 PeopleClusterLabel.label.isnot(None),
-            )
+            ).limit(limit)
         )
         return list(result.scalars().all())
 
@@ -101,12 +105,12 @@ class PeopleExcludePreferenceRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def list_by_user(self, org_id: UUID, user_id: UUID) -> list[str]:
+    async def list_by_user(self, org_id: UUID, user_id: UUID, limit: int = 500) -> list[str]:
         result = await self.session.execute(
             select(PeopleExcludePreference.person_cluster_id).where(
                 PeopleExcludePreference.org_id == org_id,
                 PeopleExcludePreference.user_id == user_id,
-            )
+            ).limit(limit)
         )
         return list(result.scalars().all())
 

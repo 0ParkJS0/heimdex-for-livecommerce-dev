@@ -34,7 +34,7 @@ class SavedShortRepository:
         await self.session.flush()
         return short
 
-    async def list_by_user(self, org_id: UUID, user_id: UUID) -> list[SavedShort]:
+    async def list_by_user(self, org_id: UUID, user_id: UUID, limit: int = 200) -> list[SavedShort]:
         result = await self.session.execute(
             select(SavedShort)
             .where(
@@ -42,6 +42,7 @@ class SavedShortRepository:
                 SavedShort.user_id == user_id,
             )
             .order_by(SavedShort.created_at.desc())
+            .limit(limit)
         )
         return list(result.scalars().all())
 

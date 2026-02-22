@@ -37,6 +37,7 @@ async def scene_client(unique_prefix):
         settings = MagicMock()
         settings.opensearch_url = "http://opensearch:9200"
         settings.opensearch_index_prefix = unique_prefix
+        settings.opensearch_bulk_refresh = "true"
         mock_settings.return_value = settings
 
         from app.modules.search.scene_client import SceneSearchClient

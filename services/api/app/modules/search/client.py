@@ -417,7 +417,7 @@ class OpenSearchClient:
             index=self.index_name,
             id=doc_id,
             body=document,
-            params={"refresh": "true"},
+            params={"refresh": self.settings.opensearch_bulk_refresh},
         )
 
     async def bulk_index(self, documents: list[tuple[str, dict[str, Any]]]) -> None:
@@ -429,7 +429,7 @@ class OpenSearchClient:
             actions.append({"index": {"_index": self.index_name, "_id": doc_id}})
             actions.append(doc)
         
-        await self.client.bulk(body=actions, params={"refresh": "true"})
+        await self.client.bulk(body=actions, params={"refresh": self.settings.opensearch_bulk_refresh})
         logger.info("bulk_indexed_documents", count=len(documents))
 
     async def search_lexical(

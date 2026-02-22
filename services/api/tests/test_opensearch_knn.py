@@ -117,6 +117,7 @@ class TestKnnIntegrationMocked:
             settings = MagicMock()
             settings.opensearch_url = "http://localhost:9200"
             settings.opensearch_index_prefix = "test"
+            settings.opensearch_bulk_refresh = "true"
             mock_settings.return_value = settings
             
             async_client = MagicMock()
@@ -211,6 +212,7 @@ class TestKnnIntegrationLive:
             settings = MagicMock()
             settings.opensearch_url = "http://localhost:9200"
             settings.opensearch_index_prefix = "test_knn"
+            settings.opensearch_bulk_refresh = "true"
             mock_settings.return_value = settings
             
             client = OpenSearchClient()

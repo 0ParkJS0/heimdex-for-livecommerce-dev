@@ -24,8 +24,8 @@ class OrgRepository:
         await self.session.flush()
         return org
 
-    async def list_all(self) -> list[Org]:
-        result = await self.session.execute(select(Org))
+    async def list_all(self, limit: int = 500) -> list[Org]:
+        result = await self.session.execute(select(Org).limit(limit))
         return list(result.scalars().all())
 
     async def rotate_agent_api_key(self, org_id: UUID, new_key: str) -> Org:

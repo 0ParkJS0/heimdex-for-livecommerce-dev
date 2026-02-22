@@ -28,6 +28,7 @@ class TestSceneSearchClient:
             settings = MagicMock()
             settings.opensearch_url = "http://localhost:9200"
             settings.opensearch_index_prefix = "test_scenes"
+            settings.opensearch_bulk_refresh = "true"
             settings.ocr_search_enabled = True
             settings.ocr_bm25_boost = 0.6
             mock_settings.return_value = settings
