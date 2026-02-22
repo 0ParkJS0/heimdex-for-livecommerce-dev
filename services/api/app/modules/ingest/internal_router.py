@@ -14,8 +14,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
-from app.dependencies import get_scene_ingest_service
+from app.dependencies import get_db_session, get_scene_ingest_service
 from app.logging_config import get_logger
 from app.modules.ingest.schemas import IngestScenesRequest, IngestScenesResponse
 from app.modules.ingest.service import SceneIngestService
@@ -61,6 +63,7 @@ async def internal_ingest_scenes(
     request: IngestScenesRequest,
     x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
     ingest_service: SceneIngestService = Depends(get_scene_ingest_service),
 ):
     """Ingest scenes from drive-worker. Auth: internal API key. Tenancy: X-Heimdex-Org-Id header."""
@@ -70,6 +73,16 @@ async def internal_ingest_scenes(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
+        )
+
+    from app.modules.orgs.repository import OrgRepository
+    org_repo = OrgRepository(db)
+    org = await org_repo.get_by_id(org_id)
+    if org is None:
+        logger.warning("internal_ingest_unknown_org", org_id=str(org_id))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
         )
 
     settings = get_settings()
