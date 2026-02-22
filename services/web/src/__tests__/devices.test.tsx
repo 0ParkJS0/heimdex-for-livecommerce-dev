@@ -30,11 +30,10 @@ vi.mock("@/lib/api/devices", () => ({
 // Must import AFTER mocks
 import { DevicesSettings } from "@/features/devices";
 import { PairingCodeModal } from "@/features/devices";
-import { ApiError } from "@/lib/types";
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  mockGetDevices.mockResolvedValue({ devices: [] });
+  mockGetDevices.mockResolvedValue({ devices: [], is_admin: true });
   mockCreatePairingCode.mockResolvedValue({
     code: "482917",
     expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -69,6 +68,7 @@ describe("DevicesSettings", () => {
           created_at: "2026-02-15T00:00:00Z",
         },
       ],
+      is_admin: true,
     });
 
     render(<DevicesSettings />);
@@ -91,6 +91,7 @@ describe("DevicesSettings", () => {
           created_at: "2026-01-01T00:00:00Z",
         },
       ],
+      is_admin: true,
     });
 
     render(<DevicesSettings />);
@@ -115,19 +116,27 @@ describe("DevicesSettings", () => {
     expect(screen.getByText("482917")).toBeInTheDocument();
   });
 
-  it("shows permission denied message for non-admin users", async () => {
-    mockGetDevices.mockRejectedValue(
-      new ApiError("forbidden", 403, "Insufficient permissions"),
-    );
+  it("hides admin buttons for non-admin users but shows device list", async () => {
+    mockGetDevices.mockResolvedValue({
+      devices: [
+        {
+          device_id: "uuid-1",
+          device_public_id: "cam-001",
+          device_name: "Studio Camera",
+          is_revoked: false,
+          last_seen_at: null,
+          created_at: "2026-02-15T00:00:00Z",
+        },
+      ],
+      is_admin: false,
+    });
 
     render(<DevicesSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText("관리자 권한이 필요합니다")).toBeInTheDocument();
+      expect(screen.getByText("Studio Camera")).toBeInTheDocument();
     });
-    expect(
-      screen.getByText("디바이스 관리는 조직 관리자만 사용할 수 있습니다."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("cam-001")).toBeInTheDocument();
     expect(screen.queryByText("Generate Pairing Code")).not.toBeInTheDocument();
   });
 });

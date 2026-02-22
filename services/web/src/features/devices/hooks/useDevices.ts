@@ -10,7 +10,7 @@ export interface UseDevicesReturn {
   devices: DeviceListItem[];
   isLoading: boolean;
   error: string | null;
-  isForbidden: boolean;
+  isAdmin: boolean;
   pairingCode: PairingCodeResponse | null;
   isGenerating: boolean;
   fetchDevices: () => Promise<void>;
@@ -24,25 +24,20 @@ export function useDevices(): UseDevicesReturn {
   const [devices, setDevices] = useState<DeviceListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isForbidden, setIsForbidden] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [pairingCode, setPairingCode] = useState<PairingCodeResponse | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const fetchDeviceList = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    setIsForbidden(false);
     try {
       const response = await getDevices(getAccessToken);
       setDevices(response.devices);
+      setIsAdmin(response.is_admin);
     } catch (err) {
-      if (err instanceof ApiError && err.type === "forbidden") {
-        setIsForbidden(true);
-        setError(err.detail);
-      } else {
-        const msg = err instanceof ApiError ? err.detail : "Failed to load devices";
-        setError(msg);
-      }
+      const msg = err instanceof ApiError ? err.detail : "Failed to load devices";
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -74,7 +69,7 @@ export function useDevices(): UseDevicesReturn {
     devices,
     isLoading,
     error,
-    isForbidden,
+    isAdmin,
     pairingCode,
     isGenerating,
     fetchDevices: fetchDeviceList,

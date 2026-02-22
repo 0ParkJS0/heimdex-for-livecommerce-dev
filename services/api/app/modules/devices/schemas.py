@@ -58,6 +58,7 @@ class DeviceListItem(BaseModel):
 
 class DeviceListResponse(BaseModel):
     devices: list[DeviceListItem]
+    is_admin: bool = False
 
 
 class HeartbeatResponse(BaseModel):

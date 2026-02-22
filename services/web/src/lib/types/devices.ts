@@ -9,6 +9,7 @@ export interface DeviceListItem {
 
 export interface DeviceListResponse {
   devices: DeviceListItem[];
+  is_admin: boolean;
 }
 
 export interface PairingCodeResponse {

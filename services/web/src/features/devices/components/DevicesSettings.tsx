@@ -9,38 +9,12 @@ export function DevicesSettings() {
     devices,
     isLoading,
     error,
-    isForbidden,
+    isAdmin,
     pairingCode,
     isGenerating,
     generatePairingCode,
     clearPairingCode,
   } = useDevices();
-
-  if (isForbidden) {
-    return (
-      <div>
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Devices</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage registered agent devices and generate pairing codes.
-          </p>
-        </div>
-        <div className="card text-center py-12">
-          <div className="text-gray-400 mb-3">
-            <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
-            </svg>
-          </div>
-          <p className="text-gray-700 font-medium">
-            관리자 권한이 필요합니다
-          </p>
-          <p className="text-sm text-gray-500 mt-1">
-            디바이스 관리는 조직 관리자만 사용할 수 있습니다.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -51,17 +25,19 @@ export function DevicesSettings() {
             Manage registered agent devices and generate pairing codes.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <AddFolderButton devices={devices} />
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={generatePairingCode}
-            disabled={isGenerating}
-          >
-            {isGenerating ? "Generating..." : "Generate Pairing Code"}
-          </button>
-        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            <AddFolderButton devices={devices} />
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={generatePairingCode}
+              disabled={isGenerating}
+            >
+              {isGenerating ? "Generating..." : "Generate Pairing Code"}
+            </button>
+          </div>
+        )}
       </div>
 
       {error && (
