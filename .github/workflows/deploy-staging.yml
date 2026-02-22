@@ -34,21 +34,24 @@ jobs:
             exec > >(tee -a "$LOG") 2>&1
             echo "=== Deploy started at $(date) ==="
 
-            # ---- Sync all repos (force refspec to avoid stale ref locks) ----
-            for REPO_DIR in "$APP_DIR" "$CONTRACTS_DIR" "$PIPELINES_DIR"; do
-              echo "--- git pull: $REPO_DIR ---"
-              cd "$REPO_DIR"
-              git remote prune origin 2>/dev/null || true
-              git fetch origin +refs/heads/main:refs/remotes/origin/main
-              PREV_HEAD=$(git rev-parse HEAD)
-              git reset --hard origin/main
-              NEW_HEAD=$(git rev-parse HEAD)
-              if [ "$PREV_HEAD" = "$NEW_HEAD" ]; then
-                echo "  (no changes)"
-              else
-                echo "  $PREV_HEAD -> $NEW_HEAD"
-              fi
-            done
+            # ---- Sync repos (force fetch to avoid stale ref locks) ----
+            echo "--- git pull (app) ---"
+            cd "$APP_DIR"
+            git remote prune origin 2>/dev/null || true
+            git fetch origin main --force
+            git reset --hard origin/main
+
+            echo "--- git pull (contracts) ---"
+            cd "$CONTRACTS_DIR"
+            git remote prune origin 2>/dev/null || true
+            git fetch origin main --force
+            git reset --hard origin/main
+
+            echo "--- git pull (pipelines) ---"
+            cd "$PIPELINES_DIR"
+            git remote prune origin 2>/dev/null || true
+            git fetch origin main --force
+            git reset --hard origin/main
 
             cd "$APP_DIR"
 
@@ -60,11 +63,11 @@ jobs:
             WORKER_CHANGED=false
 
             if [ -n "$PREV" ]; then
-              DIFF_FILES=$(git diff --name-only "$PREV" "$CURR")
+              DIFF_FILES=$(git diff --name-only "$PREV" "$CURR" || true)
               echo "$DIFF_FILES" | grep -q '^services/api/' && API_CHANGED=true || true
               echo "$DIFF_FILES" | grep -q '^services/web/' && WEB_CHANGED=true || true
               echo "$DIFF_FILES" | grep -q '^services/drive-caption-worker/' && WORKER_CHANGED=true || true
-              echo "$DIFF_FILES" | grep -qE '^(docker-compose\.yml|\.env\.example)' && { API_CHANGED=true; WEB_CHANGED=true; WORKER_CHANGED=true; } || true
+              echo "$DIFF_FILES" | grep -qE '^(docker-compose\.yml|\.env\.example)' && API_CHANGED=true && WEB_CHANGED=true && WORKER_CHANGED=true || true
             else
               API_CHANGED=true
               WEB_CHANGED=true
