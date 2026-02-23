@@ -44,7 +44,6 @@ class DriveClient:
             client_id=client_id,
             client_secret=client_secret,
             token_uri="https://oauth2.googleapis.com/token",
-            scopes=DRIVE_SCOPES,
         )
         credentials.refresh(GoogleAuthRequest())
         instance = cls.__new__(cls)
