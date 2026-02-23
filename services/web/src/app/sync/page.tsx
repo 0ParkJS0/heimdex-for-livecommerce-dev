@@ -12,7 +12,9 @@ import {
   getOAuthAuthorizeUrl,
   disconnectOAuth,
   createFolderConnection,
+  getDriveConnectionProgress,
 } from "@/lib/api/drive";
+import { DriveSyncProgress as DriveSyncProgressComponent } from "@/components/sync/DriveSyncProgress";
 import {
   getAgentStatus,
   getAgentSources,
@@ -29,7 +31,7 @@ import { DriveFolderList } from "@/components/sync/DriveFolderList";
 import { UploadProgress } from "@/components/sync/UploadProgress";
 import { StopConfirmDialog } from "@/components/sync/StopConfirmDialog";
 import { DriveFolderBrowser } from "@/components/sync/DriveFolderBrowser";
-import type { DeviceListItem, DriveStatusResponse, DriveFolderInfo, DriveConnectionResponse, DriveOAuthStatus } from "@/lib/types";
+import type { DeviceListItem, DriveStatusResponse, DriveFolderInfo, DriveConnectionResponse, DriveOAuthStatus, DriveSyncProgress } from "@/lib/types";
 
 type UploadState = "hidden" | "uploading" | "paused" | "complete" | "error";
 
@@ -130,6 +132,8 @@ function SyncContent() {
   const [oauthStatus, setOauthStatus] = useState<DriveOAuthStatus | null>(null);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<DriveSyncProgress | null>(null);
+  const syncProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unreachableCountRef = useRef(0);
@@ -180,6 +184,16 @@ function SyncContent() {
     }
   }, [getAccessToken]);
 
+  const loadSyncProgress = useCallback(async () => {
+    const activeConn = driveConnections.find(c => c.status === "active");
+    if (!activeConn) return;
+    try {
+      const prog = await getDriveConnectionProgress(activeConn.id, getAccessToken);
+      setSyncProgress(prog);
+    } catch {
+    }
+  }, [driveConnections, getAccessToken]);
+
   const loadDriveFolders = useCallback(async () => {
     const activeConn = driveConnections.find(c => c.status === "active");
     if (!activeConn) return;
@@ -211,6 +225,23 @@ function SyncContent() {
       loadDriveFolders();
     }
   }, [showDriveFolders, loadDriveFolders]);
+
+  useEffect(() => {
+    if (syncProgressIntervalRef.current) {
+      clearInterval(syncProgressIntervalRef.current);
+      syncProgressIntervalRef.current = null;
+    }
+    loadSyncProgress();
+    const isActive = (syncProgress?.processing ?? 0) > 0 || (syncProgress?.pending ?? 0) > 0;
+    const intervalMs = isActive ? 5000 : 30000;
+    syncProgressIntervalRef.current = setInterval(loadSyncProgress, intervalMs);
+    return () => {
+      if (syncProgressIntervalRef.current) {
+        clearInterval(syncProgressIntervalRef.current);
+        syncProgressIntervalRef.current = null;
+      }
+    };
+  }, [driveConnections, loadSyncProgress, syncProgress?.processing, syncProgress?.pending]);
 
   useEffect(() => {
     let mounted = true;
@@ -545,6 +576,10 @@ function SyncContent() {
                     </div>
                   ))}
               </div>
+            )}
+
+            {driveConnections.length > 0 && (
+              <DriveSyncProgressComponent progress={syncProgress} />
             )}
           </div>
         ) : (

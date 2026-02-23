@@ -158,6 +158,110 @@ class DriveFileRepository:
         rows = result.fetchall()
         return {str(r[0]): int(r[1]) for r in rows}
 
+    async def count_by_status_for_connection(self, connection_id: UUID, org_id: UUID) -> dict[str, int]:
+        result = await self.session.execute(
+            select(DriveFile.processing_status, func.count())
+            .where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.is_deleted.is_(False),
+            )
+            .group_by(DriveFile.processing_status)
+        )
+        rows = result.fetchall()
+        return {str(r[0]): int(r[1]) for r in rows}
+
+    async def get_currently_processing(self, connection_id: UUID, org_id: UUID) -> Optional[DriveFile]:
+        result = await self.session.execute(
+            select(DriveFile)
+            .where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.processing_status.in_(["downloading", "transcoding", "processing"]),
+                DriveFile.is_deleted.is_(False),
+            )
+            .order_by(DriveFile.updated_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_recent_completed(
+        self,
+        connection_id: UUID,
+        org_id: UUID,
+        limit: int = 5,
+    ) -> list[DriveFile]:
+        result = await self.session.execute(
+            select(DriveFile)
+            .where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.processing_status == "indexed",
+                DriveFile.is_deleted.is_(False),
+            )
+            .order_by(DriveFile.updated_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def get_failed_files(
+        self,
+        connection_id: UUID,
+        org_id: UUID,
+        limit: int = 10,
+    ) -> list[DriveFile]:
+        result = await self.session.execute(
+            select(DriveFile)
+            .where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.processing_status == "failed",
+                DriveFile.is_deleted.is_(False),
+            )
+            .order_by(DriveFile.updated_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def get_enrichment_summary(self, connection_id: UUID, org_id: UUID) -> dict[str, int]:
+        result = await self.session.execute(
+            select(
+                func.sum(sa.case((DriveFile.stt_status == "done", 1), else_=0)).label("stt_done"),
+                func.sum(sa.case((DriveFile.stt_status == "pending", 1), else_=0)).label("stt_pending"),
+                func.sum(sa.case((DriveFile.stt_status == "running", 1), else_=0)).label("stt_running"),
+                func.sum(sa.case((DriveFile.ocr_status == "done", 1), else_=0)).label("ocr_done"),
+                func.sum(sa.case((DriveFile.ocr_status == "pending", 1), else_=0)).label("ocr_pending"),
+                func.sum(sa.case((DriveFile.ocr_status == "running", 1), else_=0)).label("ocr_running"),
+                func.sum(sa.case((DriveFile.caption_status == "done", 1), else_=0)).label(
+                    "caption_done"
+                ),
+                func.sum(sa.case((DriveFile.caption_status == "pending", 1), else_=0)).label(
+                    "caption_pending"
+                ),
+                func.sum(sa.case((DriveFile.caption_status == "running", 1), else_=0)).label(
+                    "caption_running"
+                ),
+            )
+            .where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.processing_status == "indexed",
+                DriveFile.is_deleted.is_(False),
+            )
+        )
+        row = result.mappings().one()
+        return {
+            "stt_done": int(row["stt_done"] or 0),
+            "stt_pending": int(row["stt_pending"] or 0),
+            "stt_running": int(row["stt_running"] or 0),
+            "ocr_done": int(row["ocr_done"] or 0),
+            "ocr_pending": int(row["ocr_pending"] or 0),
+            "ocr_running": int(row["ocr_running"] or 0),
+            "caption_done": int(row["caption_done"] or 0),
+            "caption_pending": int(row["caption_pending"] or 0),
+            "caption_running": int(row["caption_running"] or 0),
+        }
+
     async def latest_indexed_at(self, org_id: UUID) -> Optional[datetime]:
         """Return the most recent updated_at among indexed files for this org."""
         result = await self.session.execute(

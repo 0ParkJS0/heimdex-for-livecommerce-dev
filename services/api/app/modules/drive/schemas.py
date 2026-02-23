@@ -111,6 +111,52 @@ class DriveOAuthStatusResponse(BaseModel):
     connected_at: Optional[datetime] = None
 
 
+class CurrentFileInfo(BaseModel):
+    file_name: str
+    processing_status: str
+    file_size_bytes: Optional[int] = None
+    started_at: Optional[datetime] = None
+
+
+class RecentCompletedFile(BaseModel):
+    file_name: str
+    scene_count: int
+    completed_at: datetime
+
+
+class FailedFileInfo(BaseModel):
+    id: UUID
+    file_name: str
+    last_error: Optional[str] = None
+    retry_count: int
+    failed_at: Optional[datetime] = None
+
+
+class EnrichmentSummary(BaseModel):
+    stt_done: int = 0
+    stt_pending: int = 0
+    stt_running: int = 0
+    ocr_done: int = 0
+    ocr_pending: int = 0
+    ocr_running: int = 0
+    caption_done: int = 0
+    caption_pending: int = 0
+    caption_running: int = 0
+
+
+class DriveSyncProgressResponse(BaseModel):
+    total_files: int = 0
+    indexed: int = 0
+    processing: int = 0
+    pending: int = 0
+    failed: int = 0
+    percent_complete: float = 0.0
+    current_file: Optional[CurrentFileInfo] = None
+    recent_completed: list[RecentCompletedFile] = Field(default_factory=list)
+    failed_files: list[FailedFileInfo] = Field(default_factory=list)
+    enrichment: EnrichmentSummary = Field(default_factory=EnrichmentSummary)
+
+
 class DriveSecretCreate(BaseModel):
     sa_key_json: str = Field(..., min_length=1, description="Raw SA key JSON (will be encrypted at rest)")
     impersonate_email: str = Field(..., min_length=1, max_length=320)

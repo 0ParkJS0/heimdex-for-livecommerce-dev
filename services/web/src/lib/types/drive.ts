@@ -63,3 +63,49 @@ export interface BrowseFoldersResponse {
   folders: DriveFolderItem[];
   parent_id: string;
 }
+
+export interface CurrentFileInfo {
+  file_name: string;
+  processing_status: string;
+  file_size_bytes: number | null;
+  started_at: string | null;
+}
+
+export interface RecentCompletedFile {
+  file_name: string;
+  scene_count: number;
+  completed_at: string;
+}
+
+export interface FailedFileInfo {
+  id: string;
+  file_name: string;
+  last_error: string | null;
+  retry_count: number;
+  failed_at: string | null;
+}
+
+export interface EnrichmentSummary {
+  stt_done: number;
+  stt_pending: number;
+  stt_running: number;
+  ocr_done: number;
+  ocr_pending: number;
+  ocr_running: number;
+  caption_done: number;
+  caption_pending: number;
+  caption_running: number;
+}
+
+export interface DriveSyncProgress {
+  total_files: number;
+  indexed: number;
+  processing: number;
+  pending: number;
+  failed: number;
+  percent_complete: number;
+  current_file: CurrentFileInfo | null;
+  recent_completed: RecentCompletedFile[];
+  failed_files: FailedFileInfo[];
+  enrichment: EnrichmentSummary;
+}

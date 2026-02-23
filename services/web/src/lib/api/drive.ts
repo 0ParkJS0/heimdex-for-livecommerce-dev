@@ -6,6 +6,7 @@ import {
   DriveOAuthStatus,
   BrowseFoldersResponse,
   SyncTriggerResponse,
+  DriveSyncProgress,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -301,6 +302,27 @@ export async function createFolderConnection(
         folder_path: folderPath,
       }),
     });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw ApiError.fromResponse(response.status, body);
+    }
+    return response.json();
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError("network", 0, "Network error.");
+  }
+}
+
+export async function getDriveConnectionProgress(
+  connectionId: string,
+  getToken?: TokenGetter,
+): Promise<DriveSyncProgress> {
+  const headers = await _buildHeaders(getToken);
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/drive/connections/${connectionId}/progress`,
+      { method: "GET", headers },
+    );
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       throw ApiError.fromResponse(response.status, body);

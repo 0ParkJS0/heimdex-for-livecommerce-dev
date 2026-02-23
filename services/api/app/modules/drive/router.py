@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.db.base import get_db_session
 from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository, DriveSecretRepository
 from app.modules.drive.schemas import (
+    CurrentFileInfo,
     DriveConnectionCreate,
     DriveConnectionResponse,
     DriveConnectionUpdate,
@@ -20,6 +21,10 @@ from app.modules.drive.schemas import (
     DriveFolderConnectionCreate,
     DriveFolderInfo,
     DriveFolderListResponse,
+    DriveSyncProgressResponse,
+    EnrichmentSummary,
+    FailedFileInfo,
+    RecentCompletedFile,
     DriveSecretCreate,
     DriveSecretResponse,
     DriveStatusResponse,
@@ -246,6 +251,72 @@ async def upsert_secret(
         impersonate_email=body.impersonate_email,
     )
     return secret
+
+
+@router.get("/connections/{connection_id}/progress", response_model=DriveSyncProgressResponse)
+async def get_connection_progress(
+    connection_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+    _: Annotated[None, Depends(_require_drive_enabled)],
+):
+    conn_repo = DriveConnectionRepository(db)
+    file_repo = DriveFileRepository(db)
+
+    conn = await conn_repo.get_by_id(connection_id, org_ctx.org_id)
+    if conn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
+
+    counts = await file_repo.count_by_status_for_connection(connection_id, org_ctx.org_id)
+    total = sum(counts.values())
+    indexed = counts.get("indexed", 0)
+    processing = sum(v for k, v in counts.items() if k in PROCESSING_STATUSES)
+    pending = counts.get("pending", 0)
+    failed = counts.get("failed", 0)
+    percent = round((indexed / total) * 100, 1) if total > 0 else 0.0
+
+    current = await file_repo.get_currently_processing(connection_id, org_ctx.org_id)
+    current_file = None
+    if current:
+        current_file = CurrentFileInfo(
+            file_name=current.file_name,
+            processing_status=current.processing_status,
+            file_size_bytes=current.file_size_bytes,
+            started_at=current.last_attempt_at or current.updated_at,
+        )
+
+    recent = await file_repo.get_recent_completed(connection_id, org_ctx.org_id)
+    recent_completed = [
+        RecentCompletedFile(file_name=f.file_name, scene_count=f.scene_count, completed_at=f.updated_at)
+        for f in recent
+    ]
+
+    failed_list = await file_repo.get_failed_files(connection_id, org_ctx.org_id)
+    failed_files = [
+        FailedFileInfo(
+            id=f.id,
+            file_name=f.file_name,
+            last_error=f.last_error,
+            retry_count=f.retry_count,
+            failed_at=f.updated_at,
+        )
+        for f in failed_list
+    ]
+
+    enrichment = await file_repo.get_enrichment_summary(connection_id, org_ctx.org_id)
+
+    return DriveSyncProgressResponse(
+        total_files=total,
+        indexed=indexed,
+        processing=processing,
+        pending=pending,
+        failed=failed,
+        percent_complete=percent,
+        current_file=current_file,
+        recent_completed=recent_completed,
+        failed_files=failed_files,
+        enrichment=EnrichmentSummary(**enrichment),
+    )
 
 
 @router.post("/folder-connections", response_model=DriveConnectionResponse, status_code=status.HTTP_201_CREATED)
