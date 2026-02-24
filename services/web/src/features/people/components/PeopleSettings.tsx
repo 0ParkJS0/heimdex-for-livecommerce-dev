@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePeople } from "../hooks/usePeople";
 import { useAuth } from "@/lib/auth";
+import { useAgent } from "@/features/search/hooks/useAgent";
 import { getPersonVideos } from "@/lib/api/people";
 import { getCloudThumbnailUrl, getFaceThumbnailUrl } from "@/lib/agent";
 import type { PersonResponse, PersonVideoItem } from "@/lib/types";
@@ -71,10 +72,12 @@ function PersonAvatar({
   person,
   isSelected,
   onToggle,
+  agentAvailable,
 }: {
   person: PersonResponse;
   isSelected: boolean;
   onToggle: (id: string) => void;
+  agentAvailable: boolean;
 }) {
   const [imgError, setImgError] = useState(false);
   const faceThumbnailUrl = getFaceThumbnailUrl(person.person_cluster_id);
@@ -111,7 +114,14 @@ function PersonAvatar({
             }}
           />
         ) : (
-          <PersonIcon className="h-10 w-10 text-gray-400" />
+          <div className="relative flex h-full w-full items-center justify-center">
+            <PersonIcon className="h-10 w-10 text-gray-400" />
+            {!agentAvailable && (
+              <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-gray-500/80 px-1.5 py-0.5 text-[8px] font-medium leading-tight text-white">
+                오프라인
+              </span>
+            )}
+          </div>
         )}
       </div>
       {person.label && (
@@ -223,7 +233,9 @@ function SelectedPersonCard({
             }}
           />
         ) : (
-          <PersonIcon className="h-5 w-5 text-gray-400" />
+          <div className="relative flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-100">
+            <PersonIcon className="h-5 w-5 text-gray-400" />
+          </div>
         )}
         {isEditing ? (
           <input
@@ -306,6 +318,7 @@ export function PeopleSettings() {
     isSavingExcludes,
   } = usePeople();
   const { getAccessToken } = useAuth();
+  const { isAvailable: agentAvailable } = useAgent();
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredPeople = useMemo(() => {
@@ -444,6 +457,7 @@ export function PeopleSettings() {
                       person={person}
                       isSelected={excludedIds.has(person.person_cluster_id)}
                       onToggle={toggleExclude}
+                      agentAvailable={agentAvailable}
                     />
                   ))}
                 </div>
