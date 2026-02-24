@@ -74,6 +74,16 @@ class WorkerSettings(BaseSettings):
     drive_ocr_max_frames_per_scene: int = 10
     drive_ocr_max_frames_per_video: int = 300
 
+
+    # --- SQS (dormant — Phase 0) ---
+    sqs_enabled: bool = False
+    sqs_endpoint_url: str = ""
+    sqs_region: str = "ap-northeast-2"
+    sqs_processing_queue_url: str = ""
+    sqs_caption_queue_url: str = ""
+    sqs_stt_queue_url: str = ""
+    sqs_ocr_queue_url: str = ""
+
     class Config:
         env_file: str = ".env"
         env_file_encoding: str = "utf-8"

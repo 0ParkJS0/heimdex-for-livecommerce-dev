@@ -155,6 +155,16 @@ class Settings(BaseSettings):
     llama_caption_url: str = "http://llama-caption-server:8089"
     llama_caption_api_key: str = ""
 
+
+    # --- SQS (dormant — Phase 0) ---
+    sqs_enabled: bool = False
+    sqs_endpoint_url: str = ""
+    sqs_region: str = "ap-northeast-2"
+    sqs_processing_queue_url: str = ""
+    sqs_caption_queue_url: str = ""
+    sqs_stt_queue_url: str = ""
+    sqs_ocr_queue_url: str = ""
+
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"
