@@ -158,6 +158,13 @@ jobs:
               FAIL=1
             fi
 
+            # ---- Docker cleanup (prevent disk bloat across deploys) ----
+            echo "--- docker cleanup ---"
+            docker image prune -f || true
+            docker volume prune -f || true
+            docker builder prune -f --keep-storage=5G || true
+            echo "Disk after cleanup: $(df -h / | tail -1)"
+
             echo "=== Deploy finished at $(date) | commit=$CURR | status=$([ $FAIL -eq 0 ] && echo 'SUCCESS' || echo 'DEGRADED') ==="
 
             exit $FAIL
