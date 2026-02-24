@@ -1,0 +1,242 @@
+"""
+Internal drive job management router for drive-workers.
+
+Endpoints allow workers to claim pending jobs, update enrichment status,
+and fetch file metadata — all over HTTP instead of direct DB access.
+
+POST  /internal/drive/jobs/claim          — Atomic claim with SELECT FOR UPDATE SKIP LOCKED
+PATCH /internal/drive/jobs/{file_id}/status — Update enrichment status + recompute enrichment_state
+GET   /internal/drive/files/{file_id}      — Return minimal file metadata for processing
+
+Auth: Pre-shared internal API key (Bearer token) via DRIVE_INTERNAL_API_KEY.
+Feature-gated: only registered when DRIVE_CONNECTOR_ENABLED=true.
+"""
+import hmac
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status as http_status
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import func
+
+from app.config import get_settings
+from app.dependencies import get_db_session
+from app.logging_config import get_logger
+from app.modules.drive.internal_schemas import (
+    ClaimedFileInfo,
+    ClaimJobsRequest,
+    ClaimJobsResponse,
+    DriveFileMetadataResponse,
+    UpdateJobStatusRequest,
+    UpdateJobStatusResponse,
+)
+from app.modules.drive.models import DriveFile
+from app.modules.drive.repository import _compute_enrichment_state
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/internal/drive", tags=["internal-drive"])
+
+
+# ── Auth dependency (same pattern as internal_ingest_router) ──────────
+
+async def _verify_internal_token(
+    authorization: str = Header(..., alias="Authorization"),
+) -> str:
+    """Validate internal Bearer token against DRIVE_INTERNAL_API_KEY."""
+    settings = get_settings()
+
+    if not settings.drive_internal_api_key:
+        logger.error("drive_internal_api_key_not_configured")
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal drive API not configured",
+        )
+
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header",
+        )
+
+    token = parts[1]
+    if not hmac.compare_digest(token, settings.drive_internal_api_key):
+        logger.warning("internal_drive_invalid_token")
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal API key",
+        )
+
+    return token
+
+
+# ── Claim jobs ────────────────────────────────────────────────────────
+
+_STATUS_COLUMN_MAP = {
+    "caption": "caption_status",
+    "stt": "stt_status",
+    "ocr": "ocr_status",
+}
+
+_ERROR_COLUMN_MAP = {
+    "caption": "caption_error",
+    "stt": "enrichment_error",
+    "ocr": "enrichment_error",
+}
+
+_PREREQUISITE_MAP = {
+    "caption": lambda: DriveFile.keyframe_s3_prefix.isnot(None),
+    "stt": lambda: DriveFile.audio_s3_key.isnot(None),
+    "ocr": lambda: DriveFile.keyframe_s3_prefix.isnot(None),
+}
+
+
+@router.post("/jobs/claim", response_model=ClaimJobsResponse)
+async def claim_jobs(
+    request: ClaimJobsRequest,
+    _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Atomically claim pending enrichment jobs using SELECT FOR UPDATE SKIP LOCKED.
+
+    Cross-org: workers claim globally without org context. The response
+    includes org_id so the worker knows which org each file belongs to.
+    """
+    status_col = _STATUS_COLUMN_MAP.get(request.job_type)
+    if status_col is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported job_type: {request.job_type}",
+        )
+
+    prerequisite = _PREREQUISITE_MAP.get(request.job_type)
+
+    query = (
+        select(DriveFile)
+        .where(
+            getattr(DriveFile, status_col) == "pending",
+            DriveFile.is_deleted.is_(False),
+        )
+        .order_by(DriveFile.created_at.asc())
+        .limit(request.limit)
+        .with_for_update(skip_locked=True)
+    )
+    if prerequisite is not None:
+        query = query.where(prerequisite())
+
+    result = await db.execute(query)
+    files = list(result.scalars().all())
+
+    # Mark claimed files as "running"
+    for f in files:
+        setattr(f, status_col, "running")
+    if files:
+        await db.flush()
+
+    logger.info(
+        "internal_drive_jobs_claimed",
+        job_type=request.job_type,
+        claimed_count=len(files),
+    )
+
+    return ClaimJobsResponse(
+        files=[
+            ClaimedFileInfo(
+                id=f.id,
+                org_id=f.org_id,
+                video_id=f.video_id,
+                keyframe_s3_prefix=f.keyframe_s3_prefix,
+                audio_s3_key=f.audio_s3_key,
+            )
+            for f in files
+        ]
+    )
+
+
+# ── Update job status ─────────────────────────────────────────────────
+
+@router.patch("/jobs/{file_id}/status", response_model=UpdateJobStatusResponse)
+async def update_job_status(
+    file_id: UUID,
+    request: UpdateJobStatusRequest,
+    _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Update enrichment status for a specific job type and recompute enrichment_state."""
+    status_col = _STATUS_COLUMN_MAP.get(request.job_type)
+    if status_col is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported job_type: {request.job_type}",
+        )
+
+    error_col = _ERROR_COLUMN_MAP.get(request.job_type)
+    result = await db.execute(
+        select(DriveFile).where(DriveFile.id == file_id)
+    )
+    drive_file = result.scalar_one_or_none()
+    if drive_file is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Drive file not found: {file_id}",
+        )
+
+    # Build the three status values for enrichment_state computation.
+    # The current request overrides the stored value for its job_type.
+    stt = request.status if request.job_type == "stt" else drive_file.stt_status
+    ocr = request.status if request.job_type == "ocr" else drive_file.ocr_status
+    caption = request.status if request.job_type == "caption" else drive_file.caption_status
+
+    new_state = _compute_enrichment_state(stt, ocr, caption)
+    values: dict[str, object] = {
+        status_col: request.status,
+        "enrichment_state": new_state,
+        "enrichment_updated_at": func.now(),
+    }
+    if request.error is not None and error_col is not None:
+        values[error_col] = request.error
+    await db.execute(
+        update(DriveFile).where(DriveFile.id == file_id).values(**values)
+    )
+    await db.flush()
+    logger.info(
+        "internal_drive_job_status_updated",
+        file_id=str(file_id),
+        job_type=request.job_type,
+        status=request.status,
+        enrichment_state=new_state,
+    )
+    return UpdateJobStatusResponse(ok=True)
+
+
+# ── Get file metadata ─────────────────────────────────────────────────
+
+@router.get("/files/{file_id}", response_model=DriveFileMetadataResponse)
+async def get_file_metadata(
+    file_id: UUID,
+    _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return minimal file metadata needed by workers for processing."""
+    result = await db.execute(
+        select(DriveFile).where(DriveFile.id == file_id)
+    )
+    drive_file = result.scalar_one_or_none()
+    if drive_file is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Drive file not found: {file_id}",
+        )
+
+    return DriveFileMetadataResponse(
+        id=drive_file.id,
+        org_id=drive_file.org_id,
+        video_id=drive_file.video_id,
+        keyframe_s3_prefix=drive_file.keyframe_s3_prefix,
+        audio_s3_key=drive_file.audio_s3_key,
+        caption_status=drive_file.caption_status,
+        stt_status=drive_file.stt_status,
+        ocr_status=drive_file.ocr_status,
+        enrichment_state=drive_file.enrichment_state,
+    )
