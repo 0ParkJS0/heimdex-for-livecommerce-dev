@@ -93,9 +93,9 @@ services:
       - AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-true}
       - AUTH_COOKIE_SAMESITE=${AUTH_COOKIE_SAMESITE:-lax}
       # Embedding configuration - set EMBEDDING_USE_MOCK=false for real semantic search
-      - EMBEDDING_MODEL=intfloat/multilingual-e5-large
-      - EMBEDDING_DIMENSION=1024
-      - EMBEDDING_DEVICE=cpu
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
       - EMBEDDING_USE_MOCK=${EMBEDDING_USE_MOCK:-true}
       # Auth0 configuration
       - AUTH0_ENABLED=${AUTH0_ENABLED:-false}
@@ -120,6 +120,14 @@ services:
       - INGEST_TIMESTAMP_SKEW_SECONDS=${INGEST_TIMESTAMP_SKEW_SECONDS:-300}
       - INGEST_REQUIRE_IDEMPOTENCY=${INGEST_REQUIRE_IDEMPOTENCY:-false}
       - INGEST_IDEMPOTENCY_TTL_SECONDS=${INGEST_IDEMPOTENCY_TTL_SECONDS:-600}
+      # SQS queue configuration
+      - SQS_ENABLED=${SQS_ENABLED:-false}
+      - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
+      - SQS_REGION=${SQS_REGION:-ap-northeast-2}
+      - SQS_PROCESSING_QUEUE_URL=${SQS_PROCESSING_QUEUE_URL:-}
+      - SQS_CAPTION_QUEUE_URL=${SQS_CAPTION_QUEUE_URL:-}
+      - SQS_STT_QUEUE_URL=${SQS_STT_QUEUE_URL:-}
+      - SQS_OCR_QUEUE_URL=${SQS_OCR_QUEUE_URL:-}
       # Dev features
       - ENABLE_DEV_REFRESH=${ENABLE_DEV_REFRESH:-true}
       # Drive internal ingest key (shared with drive-worker)
