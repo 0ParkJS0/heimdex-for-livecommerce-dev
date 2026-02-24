@@ -37,6 +37,7 @@ def _process_single_caption(
     org_id = claimed_file.org_id
     org_id_str = str(org_id)
     file_id = claimed_file.id
+    lease_token = claimed_file.lease_token
     video_id = claimed_file.video_id
     temp_dir = Path(tempfile.mkdtemp(prefix=f"caption_{video_id}_"))
 
@@ -49,7 +50,7 @@ def _process_single_caption(
             s3.download_file(manifest_key, manifest_path)
         except Exception as e:
             error_msg = f"manifest_download_failed: {type(e).__name__}: {e}"
-            api_client.update_job_status(file_id, job_type="caption", status="failed", error=error_msg)
+            api_client.update_job_status(file_id, job_type="caption", status="failed", error=error_msg, lease_token=lease_token)
             return
 
         manifest = json.loads(manifest_path.read_text())
@@ -57,7 +58,7 @@ def _process_single_caption(
         scene_count = len(scenes)
 
         if scene_count == 0:
-            api_client.update_job_status(file_id, job_type="caption", status="done")
+            api_client.update_job_status(file_id, job_type="caption", status="done", lease_token=lease_token)
             return
 
         keyframes_dir = temp_dir / "keyframes"
@@ -105,7 +106,7 @@ def _process_single_caption(
 
         if not downloaded_keyframes:
             api_client.update_job_status(
-                file_id, job_type="caption", status="failed", error="no_keyframes_downloaded",
+                file_id, job_type="caption", status="failed", error="no_keyframes_downloaded", lease_token=lease_token,
             )
             return
 
@@ -130,10 +131,10 @@ def _process_single_caption(
             )
         except Exception as e:
             error_msg = f"caption_reingest_failed: {type(e).__name__}: {e}"
-            api_client.update_job_status(file_id, job_type="caption", status="failed", error=error_msg)
+            api_client.update_job_status(file_id, job_type="caption", status="failed", error=error_msg, lease_token=lease_token)
             return
 
-        api_client.update_job_status(file_id, job_type="caption", status="done")
+        api_client.update_job_status(file_id, job_type="caption", status="done", lease_token=lease_token)
 
         logger.info(
             "caption_processing_complete",
@@ -151,7 +152,7 @@ def _process_single_caption(
 
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
-        api_client.update_job_status(file_id, job_type="caption", status="failed", error=error_msg)
+        api_client.update_job_status(file_id, job_type="caption", status="failed", error=error_msg, lease_token=lease_token)
         logger.exception(
             "caption_processing_failed",
             extra={"org_id": org_id_str, "video_id": video_id},

@@ -63,6 +63,12 @@ class DriveConnection(Base, UUIDMixin, TimestampMixin):
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # --- Lease tracking (connection-level, for sync claim) ---
+    lease_token: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     __table_args__: tuple[object, ...] = (
         Index(
             "uq_drive_connections_org_drive_not_null",
@@ -156,6 +162,13 @@ class DriveFile(Base, UUIDMixin, TimestampMixin):
     )  # pending | running | done | failed
     caption_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+    # --- Lease tracking (Internal API Hardening) ---
+    lease_token: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

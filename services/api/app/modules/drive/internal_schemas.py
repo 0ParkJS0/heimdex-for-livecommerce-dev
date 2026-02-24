@@ -1,12 +1,11 @@
 """
 Pydantic schemas for internal drive endpoints.
-
 Used by drive workers (caption, STT, OCR) to claim jobs and update status
 via HTTP instead of direct database access.
 """
+from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
-
 from pydantic import BaseModel, Field
 
 
@@ -29,6 +28,8 @@ class ClaimedFileInfo(BaseModel):
     video_id: str
     keyframe_s3_prefix: Optional[str] = None
     audio_s3_key: Optional[str] = None
+    lease_token: str
+    lease_expires_at: datetime
 
 
 class ClaimJobsResponse(BaseModel):
@@ -47,6 +48,7 @@ class UpdateJobStatusRequest(BaseModel):
     job_type: JobType
     status: EnrichmentStatus
     error: Optional[str] = Field(default=None, max_length=2000)
+    lease_token: Optional[str] = None
 
 
 class UpdateJobStatusResponse(BaseModel):

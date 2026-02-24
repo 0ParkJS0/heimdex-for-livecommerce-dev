@@ -10,12 +10,18 @@ GET   /internal/drive/files/{file_id}      — Return minimal file metadata for 
 
 Auth: Pre-shared internal API key (Bearer token) via DRIVE_INTERNAL_API_KEY.
 Feature-gated: only registered when DRIVE_CONNECTOR_ENABLED=true.
+
+Lease tokens: Each claimed job receives a UUID lease_token with an expiry.
+Status updates must present the matching lease_token; mismatches yield 409.
 """
 import hmac
+import time
+import uuid as _uuid
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status as http_status
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -36,6 +42,12 @@ from app.modules.drive.repository import _compute_enrichment_state
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/internal/drive", tags=["internal-drive"])
+
+# Lease duration: 10 minutes. Workers must complete within this window.
+LEASE_DURATION_SECONDS = 600
+
+# Terminal statuses that cannot transition back to running.
+_TERMINAL_STATUSES = frozenset({"done", "failed"})
 
 
 # ── Auth dependency (same pattern as internal_ingest_router) ──────────
@@ -71,6 +83,13 @@ async def _verify_internal_token(
     return token
 
 
+def _mask_lease_token(token: str | None) -> str:
+    """Return last 6 chars of lease_token for safe logging."""
+    if not token:
+        return "none"
+    return f"...{token[-6:]}"
+
+
 # ── Claim jobs ────────────────────────────────────────────────────────
 
 _STATUS_COLUMN_MAP = {
@@ -100,9 +119,11 @@ async def claim_jobs(
 ):
     """Atomically claim pending enrichment jobs using SELECT FOR UPDATE SKIP LOCKED.
 
-    Cross-org: workers claim globally without org context. The response
-    includes org_id so the worker knows which org each file belongs to.
+    Each claimed file receives a lease_token (UUID) and lease_expires_at.
+    Only files that are pending AND (not leased OR lease expired) can be claimed.
     """
+    t0 = time.monotonic()
+
     status_col = _STATUS_COLUMN_MAP.get(request.job_type)
     if status_col is None:
         raise HTTPException(
@@ -111,12 +132,18 @@ async def claim_jobs(
         )
 
     prerequisite = _PREREQUISITE_MAP.get(request.job_type)
+    now = datetime.now(timezone.utc)
 
     query = (
         select(DriveFile)
         .where(
             getattr(DriveFile, status_col) == "pending",
             DriveFile.is_deleted.is_(False),
+            # Only claim files with no active lease
+            or_(
+                DriveFile.lease_token.is_(None),
+                DriveFile.lease_expires_at < now,
+            ),
         )
         .order_by(DriveFile.created_at.asc())
         .limit(request.limit)
@@ -128,16 +155,23 @@ async def claim_jobs(
     result = await db.execute(query)
     files = list(result.scalars().all())
 
-    # Mark claimed files as "running"
+    lease_expires_at = now + timedelta(seconds=LEASE_DURATION_SECONDS)
+
+    # Mark claimed files as "running" and assign lease tokens
     for f in files:
         setattr(f, status_col, "running")
+        f.lease_token = str(_uuid.uuid4())
+        f.lease_expires_at = lease_expires_at
     if files:
         await db.flush()
 
+    latency_ms = int((time.monotonic() - t0) * 1000)
     logger.info(
         "internal_drive_jobs_claimed",
         job_type=request.job_type,
         claimed_count=len(files),
+        latency_ms=latency_ms,
+        file_ids=[str(f.id) for f in files],
     )
 
     return ClaimJobsResponse(
@@ -148,6 +182,8 @@ async def claim_jobs(
                 video_id=f.video_id,
                 keyframe_s3_prefix=f.keyframe_s3_prefix,
                 audio_s3_key=f.audio_s3_key,
+                lease_token=f.lease_token,
+                lease_expires_at=f.lease_expires_at,
             )
             for f in files
         ]
@@ -163,7 +199,18 @@ async def update_job_status(
     _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Update enrichment status for a specific job type and recompute enrichment_state."""
+    """Update enrichment status for a specific job type and recompute enrichment_state.
+
+    Lease enforcement:
+    - If the file has a lease_token, request.lease_token must match.
+    - If the lease has expired, returns 409.
+
+    Idempotency:
+    - Re-sending the same terminal status (done/failed) is safe → returns ok=True.
+    - Attempting to set "running" on a terminal status → returns 409.
+    """
+    t0 = time.monotonic()
+
     status_col = _STATUS_COLUMN_MAP.get(request.job_type)
     if status_col is None:
         raise HTTPException(
@@ -182,6 +229,49 @@ async def update_job_status(
             detail=f"Drive file not found: {file_id}",
         )
 
+    current_status = getattr(drive_file, status_col)
+
+    # ── Idempotency: re-sending same terminal status is safe ──
+    if current_status in _TERMINAL_STATUSES and request.status == current_status:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        logger.info(
+            "internal_drive_job_status_idempotent",
+            file_id=str(file_id),
+            job_type=request.job_type,
+            status=request.status,
+            latency_ms=latency_ms,
+            lease_token=_mask_lease_token(request.lease_token),
+        )
+        return UpdateJobStatusResponse(ok=True)
+
+    # ── Lease enforcement ──
+    if drive_file.lease_token is not None:
+        if request.lease_token is None or request.lease_token != drive_file.lease_token:
+            logger.warning(
+                "internal_drive_lease_token_mismatch",
+                file_id=str(file_id),
+                job_type=request.job_type,
+                expected=_mask_lease_token(drive_file.lease_token),
+                received=_mask_lease_token(request.lease_token),
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="lease_token_mismatch",
+            )
+        now = datetime.now(timezone.utc)
+        if drive_file.lease_expires_at and drive_file.lease_expires_at < now:
+            logger.warning(
+                "internal_drive_lease_expired",
+                file_id=str(file_id),
+                job_type=request.job_type,
+                lease_token=_mask_lease_token(drive_file.lease_token),
+                expired_at=drive_file.lease_expires_at.isoformat(),
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="lease_expired",
+            )
+
     # Build the three status values for enrichment_state computation.
     # The current request overrides the stored value for its job_type.
     stt = request.status if request.job_type == "stt" else drive_file.stt_status
@@ -193,6 +283,9 @@ async def update_job_status(
         status_col: request.status,
         "enrichment_state": new_state,
         "enrichment_updated_at": func.now(),
+        # Clear lease on terminal status
+        "lease_token": None,
+        "lease_expires_at": None,
     }
     if request.error is not None and error_col is not None:
         values[error_col] = request.error
@@ -200,12 +293,16 @@ async def update_job_status(
         update(DriveFile).where(DriveFile.id == file_id).values(**values)
     )
     await db.flush()
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
     logger.info(
         "internal_drive_job_status_updated",
         file_id=str(file_id),
         job_type=request.job_type,
         status=request.status,
         enrichment_state=new_state,
+        latency_ms=latency_ms,
+        lease_token=_mask_lease_token(request.lease_token),
     )
     return UpdateJobStatusResponse(ok=True)
 
@@ -219,6 +316,8 @@ async def get_file_metadata(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Return minimal file metadata needed by workers for processing."""
+    t0 = time.monotonic()
+
     result = await db.execute(
         select(DriveFile).where(DriveFile.id == file_id)
     )
@@ -228,6 +327,13 @@ async def get_file_metadata(
             status_code=http_status.HTTP_404_NOT_FOUND,
             detail=f"Drive file not found: {file_id}",
         )
+
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    logger.info(
+        "internal_drive_file_metadata_fetched",
+        file_id=str(file_id),
+        latency_ms=latency_ms,
+    )
 
     return DriveFileMetadataResponse(
         id=drive_file.id,

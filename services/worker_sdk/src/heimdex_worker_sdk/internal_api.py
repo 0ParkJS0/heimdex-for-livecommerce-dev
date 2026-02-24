@@ -37,6 +37,8 @@ class ClaimedFile:
     video_id: str
     keyframe_s3_prefix: Optional[str] = None
     audio_s3_key: Optional[str] = None
+    lease_token: Optional[str] = None
+    lease_expires_at: Optional[str] = None
 
 
 @dataclass
@@ -83,6 +85,8 @@ class InternalAPIClient:
                 video_id=f["video_id"],
                 keyframe_s3_prefix=f.get("keyframe_s3_prefix"),
                 audio_s3_key=f.get("audio_s3_key"),
+                lease_token=f.get("lease_token"),
+                lease_expires_at=f.get("lease_expires_at"),
             )
             for f in data.get("files", [])
         ]
@@ -94,20 +98,23 @@ class InternalAPIClient:
         job_type: str,
         status: str,
         error: Optional[str] = None,
+        lease_token: Optional[str] = None,
     ) -> bool:
         """Update enrichment status for a file.
-
         Args:
             file_id: Drive file UUID.
             job_type: One of 'caption', 'stt', 'ocr'.
             status: One of 'done', 'failed'.
             error: Optional error description (max 2000 chars).
+            lease_token: Lease token received from claim_jobs.
         Returns True on success.
         """
         url = f"{self.base_url.rstrip('/')}/internal/drive/jobs/{file_id}/status"
         payload: dict[str, Any] = {"job_type": job_type, "status": status}
         if error is not None:
             payload["error"] = error
+        if lease_token is not None:
+            payload["lease_token"] = lease_token
         data = self._request_with_retry("PATCH", url, json=payload)
         return data.get("ok", False)
 

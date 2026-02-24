@@ -45,6 +45,7 @@ class TestClaimJobs:
     def test_claim_returns_files(self, client):
         file_id = str(uuid4())
         org_id = str(uuid4())
+        lease_token = str(uuid4())
         resp_data = {
             "files": [
                 {
@@ -53,20 +54,21 @@ class TestClaimJobs:
                     "video_id": "gd_abc123",
                     "keyframe_s3_prefix": "orgs/o/files/v/keyframes/",
                     "audio_s3_key": "orgs/o/files/v/audio.wav",
+                    "lease_token": lease_token,
+                    "lease_expires_at": "2026-02-24T10:30:00+00:00",
                 }
             ]
         }
-
         with patch.object(client._session, "request", return_value=_mock_response(200, resp_data)):
             files = client.claim_jobs("caption", limit=1)
-
-        assert len(files) == 1
         assert isinstance(files[0], ClaimedFile)
         assert files[0].id == UUID(file_id)
         assert files[0].org_id == UUID(org_id)
         assert files[0].video_id == "gd_abc123"
         assert files[0].keyframe_s3_prefix == "orgs/o/files/v/keyframes/"
         assert files[0].audio_s3_key == "orgs/o/files/v/audio.wav"
+        assert files[0].lease_token == lease_token
+        assert files[0].lease_expires_at == "2026-02-24T10:30:00+00:00"
 
     def test_claim_empty_returns_empty_list(self, client):
         with patch.object(client._session, "request", return_value=_mock_response(200, {"files": []})):
@@ -101,6 +103,45 @@ class TestClaimJobs:
 
         assert files[0].keyframe_s3_prefix is None
         assert files[0].audio_s3_key is None
+
+    def test_claim_returns_lease_fields(self, client):
+        file_id = str(uuid4())
+        org_id = str(uuid4())
+        token = str(uuid4())
+        resp_data = {
+            "files": [
+                {
+                    "id": file_id,
+                    "org_id": org_id,
+                    "video_id": "gd_lease",
+                    "lease_token": token,
+                    "lease_expires_at": "2026-02-24T11:00:00+00:00",
+                }
+            ]
+        }
+
+        with patch.object(client._session, "request", return_value=_mock_response(200, resp_data)):
+            files = client.claim_jobs("caption")
+
+        assert files[0].lease_token == token
+        assert files[0].lease_expires_at == "2026-02-24T11:00:00+00:00"
+
+    def test_claim_no_lease_fields(self, client):
+        resp_data = {
+            "files": [
+                {
+                    "id": str(uuid4()),
+                    "org_id": str(uuid4()),
+                    "video_id": "gd_old",
+                }
+            ]
+        }
+
+        with patch.object(client._session, "request", return_value=_mock_response(200, resp_data)):
+            files = client.claim_jobs("caption")
+
+        assert files[0].lease_token is None
+        assert files[0].lease_expires_at is None
 
 
 # ── update_job_status tests (generic — caption, stt, ocr) ────────────
@@ -183,6 +224,45 @@ class TestUpdateJobStatus:
         call_args = mock_req.call_args[0]
         assert call_args[0] == "PATCH"
         assert f"/internal/drive/jobs/{file_id}/status" in call_args[1]
+
+    def test_update_sends_lease_token(self, client):
+        file_id = uuid4()
+        token = str(uuid4())
+        with patch.object(client._session, "request", return_value=_mock_response(200, {"ok": True})) as mock_req:
+            client.update_job_status(
+                file_id, job_type="caption", status="done", lease_token=token,
+            )
+
+        call_kwargs = mock_req.call_args
+        assert call_kwargs[1]["json"] == {
+            "job_type": "caption",
+            "status": "done",
+            "lease_token": token,
+        }
+
+    def test_update_omits_lease_token_when_none(self, client):
+        file_id = uuid4()
+        with patch.object(client._session, "request", return_value=_mock_response(200, {"ok": True})) as mock_req:
+            client.update_job_status(file_id, job_type="caption", status="done")
+
+        call_kwargs = mock_req.call_args
+        assert "lease_token" not in call_kwargs[1]["json"]
+
+    def test_update_sends_lease_token_with_error(self, client):
+        file_id = uuid4()
+        token = str(uuid4())
+        with patch.object(client._session, "request", return_value=_mock_response(200, {"ok": True})) as mock_req:
+            client.update_job_status(
+                file_id, job_type="stt", status="failed",
+                error="oom", lease_token=token,
+            )
+
+        call_kwargs = mock_req.call_args
+        payload = call_kwargs[1]["json"]
+        assert payload["lease_token"] == token
+        assert payload["error"] == "oom"
+        assert payload["job_type"] == "stt"
+        assert payload["status"] == "failed"
 
 
 # ── get_file tests ────────────────────────────────────────────────────

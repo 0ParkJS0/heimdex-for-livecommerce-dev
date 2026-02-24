@@ -53,6 +53,7 @@ def _process_single_ocr(
     org_id = claimed_file.org_id
     org_id_str = str(org_id)
     file_id = claimed_file.id
+    lease_token = claimed_file.lease_token
     video_id = claimed_file.video_id
     temp_dir = Path(tempfile.mkdtemp(prefix=f"ocr_{video_id}_"))
 
@@ -66,7 +67,7 @@ def _process_single_ocr(
         except Exception as e:
             error_msg = f"manifest_download_failed: {type(e).__name__}: {e}"
             api_client.update_job_status(
-                file_id, job_type="ocr", status="failed", error=error_msg,
+                file_id, job_type="ocr", status="failed", error=error_msg, lease_token=lease_token,
             )
             return
 
@@ -75,7 +76,7 @@ def _process_single_ocr(
         scene_count = len(scenes)
 
         if scene_count == 0:
-            api_client.update_job_status(file_id, job_type="ocr", status="done")
+            api_client.update_job_status(file_id, job_type="ocr", status="done", lease_token=lease_token)
             return
 
         max_frames = min(settings.drive_ocr_max_frames_per_video, scene_count)
@@ -103,7 +104,7 @@ def _process_single_ocr(
 
         if not downloaded_keyframes:
             api_client.update_job_status(
-                file_id, job_type="ocr", status="failed", error="no_keyframes_downloaded",
+                file_id, job_type="ocr", status="failed", error="no_keyframes_downloaded", lease_token=lease_token,
             )
             return
 
@@ -144,11 +145,11 @@ def _process_single_ocr(
         except Exception as e:
             error_msg = f"ocr_reingest_failed: {type(e).__name__}: {e}"
             api_client.update_job_status(
-                file_id, job_type="ocr", status="failed", error=error_msg,
+                file_id, job_type="ocr", status="failed", error=error_msg, lease_token=lease_token,
             )
             return
 
-        api_client.update_job_status(file_id, job_type="ocr", status="done")
+        api_client.update_job_status(file_id, job_type="ocr", status="done", lease_token=lease_token)
 
         logger.info(
             "ocr_processing_complete",
@@ -167,7 +168,7 @@ def _process_single_ocr(
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         api_client.update_job_status(
-            file_id, job_type="ocr", status="failed", error=error_msg,
+            file_id, job_type="ocr", status="failed", error=error_msg, lease_token=lease_token,
         )
         logger.exception(
             "ocr_processing_failed",

@@ -43,6 +43,7 @@ def _process_single_stt(
     org_id = claimed_file.org_id
     org_id_str = str(org_id)
     file_id = claimed_file.id
+    lease_token = claimed_file.lease_token
     video_id = claimed_file.video_id
     temp_dir = Path(tempfile.mkdtemp(prefix=f"stt_{video_id}_"))
 
@@ -55,7 +56,7 @@ def _process_single_stt(
         except Exception as e:
             error_msg = f"audio_download_failed: {type(e).__name__}: {e}"
             api_client.update_job_status(
-                file_id, job_type="stt", status="failed", error=error_msg,
+                file_id, job_type="stt", status="failed", error=error_msg, lease_token=lease_token,
             )
             return
 
@@ -75,7 +76,7 @@ def _process_single_stt(
                 },
             )
             api_client.update_job_status(
-                file_id, job_type="stt", status="failed", error=error_msg,
+                file_id, job_type="stt", status="failed", error=error_msg, lease_token=lease_token,
             )
             return
 
@@ -86,7 +87,7 @@ def _process_single_stt(
         except Exception as e:
             error_msg = f"manifest_download_failed: {type(e).__name__}: {e}"
             api_client.update_job_status(
-                file_id, job_type="stt", status="failed", error=error_msg,
+                file_id, job_type="stt", status="failed", error=error_msg, lease_token=lease_token,
             )
             return
 
@@ -94,7 +95,7 @@ def _process_single_stt(
         scenes = manifest.get("scenes", [])
 
         if not scenes:
-            api_client.update_job_status(file_id, job_type="stt", status="done")
+            api_client.update_job_status(file_id, job_type="stt", status="done", lease_token=lease_token)
             return
 
         stt_started = time.monotonic()
@@ -132,11 +133,11 @@ def _process_single_stt(
         except Exception as e:
             error_msg = f"stt_reingest_failed: {type(e).__name__}: {e}"
             api_client.update_job_status(
-                file_id, job_type="stt", status="failed", error=error_msg,
+                file_id, job_type="stt", status="failed", error=error_msg, lease_token=lease_token,
             )
             return
 
-        api_client.update_job_status(file_id, job_type="stt", status="done")
+        api_client.update_job_status(file_id, job_type="stt", status="done", lease_token=lease_token)
 
         total_segment_count = sum(
             s.get("speech_segment_count", 0) for s in updated_scenes
@@ -164,7 +165,7 @@ def _process_single_stt(
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
         api_client.update_job_status(
-            file_id, job_type="stt", status="failed", error=error_msg,
+            file_id, job_type="stt", status="failed", error=error_msg, lease_token=lease_token,
         )
         logger.exception(
             "stt_processing_failed",
