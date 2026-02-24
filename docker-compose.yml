@@ -395,6 +395,17 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:latest
+    container_name: heimdex-elasticmq
+    mem_limit: 256m
+    ports:
+      - "9324:9324"
+      - "9325:9325"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
+
 volumes:
   postgres_data:
   opensearch_data:
