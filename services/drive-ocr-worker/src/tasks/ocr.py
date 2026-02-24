@@ -27,27 +27,22 @@ def select_keyframe_indices(scene_count: int, max_frames: int) -> list[int]:
     return sorted(indices)[:max_frames]
 
 
-async def process_ocr_pending_files(session: Any, settings: Any, ocr_engine: Any = None) -> None:
-    importlib.import_module("app.db.models")
-    drive_repository = importlib.import_module("app.modules.drive.repository")
-    file_repo = drive_repository.DriveFileRepository(session)
-    files = await file_repo.claim_ocr_pending_files(limit=1)
+async def process_ocr_pending_files(api_client: Any, settings: Any, ocr_engine: Any = None) -> None:
+    files = api_client.claim_jobs("ocr", limit=1)
 
-    for drive_file in files:
-        await _process_single_ocr(
-            session=session,
+    for claimed_file in files:
+        _process_single_ocr(
+            api_client=api_client,
             settings=settings,
-            drive_file=drive_file,
-            file_repo=file_repo,
+            claimed_file=claimed_file,
             ocr_engine=ocr_engine,
         )
 
 
-async def _process_single_ocr(
-    session: Any,
+def _process_single_ocr(
+    api_client: Any,
     settings: Any,
-    drive_file: Any,
-    file_repo: Any,
+    claimed_file: Any,
     ocr_engine: Any = None,
 ) -> None:
     drive_keys = importlib.import_module("heimdex_worker_sdk.drive_keys")
@@ -55,10 +50,10 @@ async def _process_single_ocr(
     enrichment_keyframe_s3_key = drive_keys.enrichment_keyframe_s3_key
     S3Client = importlib.import_module("heimdex_worker_sdk.s3").S3Client
 
-    _ = session
-    org_id = drive_file.org_id
+    org_id = claimed_file.org_id
     org_id_str = str(org_id)
-    video_id = drive_file.video_id
+    file_id = claimed_file.id
+    video_id = claimed_file.video_id
     temp_dir = Path(tempfile.mkdtemp(prefix=f"ocr_{video_id}_"))
 
     try:
@@ -70,10 +65,8 @@ async def _process_single_ocr(
             s3.download_file(manifest_key, manifest_path)
         except Exception as e:
             error_msg = f"manifest_download_failed: {type(e).__name__}: {e}"
-            await file_repo.update_enrichment_status(
-                drive_file.id,
-                ocr_status="failed",
-                enrichment_error=error_msg,
+            api_client.update_job_status(
+                file_id, job_type="ocr", status="failed", error=error_msg,
             )
             return
 
@@ -82,7 +75,7 @@ async def _process_single_ocr(
         scene_count = len(scenes)
 
         if scene_count == 0:
-            await file_repo.update_enrichment_status(drive_file.id, ocr_status="done")
+            api_client.update_job_status(file_id, job_type="ocr", status="done")
             return
 
         max_frames = min(settings.drive_ocr_max_frames_per_video, scene_count)
@@ -109,10 +102,8 @@ async def _process_single_ocr(
                 )
 
         if not downloaded_keyframes:
-            await file_repo.update_enrichment_status(
-                drive_file.id,
-                ocr_status="failed",
-                enrichment_error="no_keyframes_downloaded",
+            api_client.update_job_status(
+                file_id, job_type="ocr", status="failed", error="no_keyframes_downloaded",
             )
             return
 
@@ -152,14 +143,12 @@ async def _process_single_ocr(
             )
         except Exception as e:
             error_msg = f"ocr_reingest_failed: {type(e).__name__}: {e}"
-            await file_repo.update_enrichment_status(
-                drive_file.id,
-                ocr_status="failed",
-                enrichment_error=error_msg,
+            api_client.update_job_status(
+                file_id, job_type="ocr", status="failed", error=error_msg,
             )
             return
 
-        await file_repo.update_enrichment_status(drive_file.id, ocr_status="done")
+        api_client.update_job_status(file_id, job_type="ocr", status="done")
 
         logger.info(
             "ocr_processing_complete",
@@ -177,10 +166,8 @@ async def _process_single_ocr(
 
     except Exception as e:
         error_msg = f"{type(e).__name__}: {e}"
-        await file_repo.update_enrichment_status(
-            drive_file.id,
-            ocr_status="failed",
-            enrichment_error=error_msg,
+        api_client.update_job_status(
+            file_id, job_type="ocr", status="failed", error=error_msg,
         )
         logger.exception(
             "ocr_processing_failed",

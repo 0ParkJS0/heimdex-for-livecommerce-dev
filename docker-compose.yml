@@ -261,9 +261,7 @@ services:
     mem_limit: 2g
     cpus: "2.0"
     environment:
-      - PYTHONPATH=/app:/opt/heimdex-api:/opt/heimdex-worker-sdk/src
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://heimdex:heimdex_dev_password@postgres:5432/heimdex}
-      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC:-postgresql://heimdex:heimdex_dev_password@postgres:5432/heimdex}
+      - PYTHONPATH=/app:/opt/heimdex-worker-sdk/src
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
@@ -279,13 +277,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./services/drive-ocr-worker:/app
-      - ./services/api:/opt/heimdex-api:ro
       - ./services/worker_sdk:/opt/heimdex-worker-sdk:ro
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
       - ../heimdex-media-pipelines:/opt/heimdex-media-pipelines:ro
     depends_on:
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
       api:
