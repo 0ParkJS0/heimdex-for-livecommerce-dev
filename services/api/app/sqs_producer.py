@@ -1,0 +1,199 @@
+"""
+SQS dual-write producer for job creation events.
+
+Phase 1: Publishes SQS messages alongside DB writes when sqs_enabled=true.
+All sends are fire-and-forget with structured error logging.
+DB operations are NEVER affected by SQS failures.
+
+Trigger points:
+  1. publish_processing_job()  — called from upsert_files() after new DriveFile created
+  2. publish_enrichment_jobs() — called from update_processing_status() when status='indexed'
+"""
+
+import json
+from datetime import datetime, timezone
+from functools import lru_cache
+from typing import Any, Optional
+from uuid import UUID
+
+import boto3
+
+from app.config import get_settings
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+# ── Queue URL mapping ──────────────────────────────────────────────────
+
+_QUEUE_URL_ATTRS = {
+    "processing": "sqs_processing_queue_url",
+    "caption": "sqs_caption_queue_url",
+    "stt": "sqs_stt_queue_url",
+    "ocr": "sqs_ocr_queue_url",
+}
+
+
+# ── Internal helpers ───────────────────────────────────────────────────
+
+@lru_cache(maxsize=1)
+def _get_sqs_client():
+    """Lazily create boto3 SQS client (cached singleton)."""
+    settings = get_settings()
+    kwargs: dict[str, Any] = {"region_name": settings.sqs_region}
+    if settings.sqs_endpoint_url:
+        kwargs["endpoint_url"] = settings.sqs_endpoint_url
+    return boto3.client("sqs", **kwargs)
+
+
+def _publish(
+    job_type: str,
+    body: dict[str, Any],
+    deduplication_id: Optional[str] = None,
+) -> None:
+    """Publish a single SQS message.  Fire-and-forget.
+
+    * If sqs_enabled is False → immediate no-op.
+    * If SQS send fails → logs error, does NOT raise.
+    * DB operations are never affected.
+    """
+    settings = get_settings()
+    if not settings.sqs_enabled:
+        return
+
+    queue_attr = _QUEUE_URL_ATTRS.get(job_type)
+    if queue_attr is None:
+        logger.warning("sqs_unknown_job_type", job_type=job_type)
+        return
+
+    queue_url = getattr(settings, queue_attr, "")
+    if not queue_url:
+        logger.warning("sqs_no_queue_url", job_type=job_type)
+        return
+
+    try:
+        client = _get_sqs_client()
+        kwargs: dict[str, Any] = {
+            "QueueUrl": queue_url,
+            "MessageBody": json.dumps(body, default=str),
+            "MessageAttributes": {
+                "job_type": {"StringValue": job_type, "DataType": "String"},
+                "org_id": {
+                    "StringValue": body.get("org_id", ""),
+                    "DataType": "String",
+                },
+                "source": {"StringValue": "api", "DataType": "String"},
+            },
+        }
+        if deduplication_id:
+            kwargs["MessageDeduplicationId"] = deduplication_id
+
+        resp = client.send_message(**kwargs)
+        logger.info(
+            "sqs_job_published",
+            job_type=job_type,
+            message_id=resp.get("MessageId"),
+            file_id=body.get("file_id", ""),
+        )
+    except Exception:
+        logger.exception(
+            "sqs_publish_failed",
+            job_type=job_type,
+            file_id=body.get("file_id", ""),
+        )
+
+
+# ── Public API ─────────────────────────────────────────────────────────
+
+def publish_processing_job(
+    *,
+    file_id: UUID,
+    org_id: UUID,
+    connection_id: UUID,
+    video_id: str,
+    google_file_id: str,
+    file_name: str,
+    mime_type: str,
+    file_size_bytes: Optional[int],
+    library_id: UUID,
+    scope_type: str,
+    drive_id: Optional[str],
+) -> None:
+    """Publish a processing-job-created event to the processing queue.
+
+    Called from ``upsert_files`` after new DriveFile rows are flushed.
+    """
+    now = datetime.now(timezone.utc)
+    body = {
+        "version": "1",
+        "type": "processing.job_created",
+        "timestamp": now.isoformat(),
+        "file_id": str(file_id),
+        "org_id": str(org_id),
+        "connection_id": str(connection_id),
+        "video_id": video_id,
+        "google_file_id": google_file_id,
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "file_size_bytes": file_size_bytes,
+        "library_id": str(library_id),
+        "scope_type": scope_type,
+        "drive_id": drive_id,
+    }
+    dedup_id = f"{file_id}:processing:{now.strftime('%Y%m%dT%H%M')}"
+    _publish("processing", body, dedup_id)
+
+
+def publish_enrichment_jobs(
+    *,
+    file_id: UUID,
+    org_id: UUID,
+    video_id: str,
+    keyframe_s3_prefix: Optional[str],
+    audio_s3_key: Optional[str],
+) -> None:
+    """Publish enrichment-job-created events based on available S3 artifacts.
+
+    Called from ``update_processing_status`` when status transitions to 'indexed'.
+
+    * Caption + OCR published when ``keyframe_s3_prefix`` is set.
+    * STT published when ``audio_s3_key`` is set.
+    """
+    now = datetime.now(timezone.utc)
+    timestamp = now.isoformat()
+    minute = now.strftime("%Y%m%dT%H%M")
+
+    if keyframe_s3_prefix:
+        for job_type in ("caption", "ocr"):
+            _publish(
+                job_type,
+                {
+                    "version": "1",
+                    "type": "enrichment.job_created",
+                    "timestamp": timestamp,
+                    "job_type": job_type,
+                    "file_id": str(file_id),
+                    "org_id": str(org_id),
+                    "video_id": video_id,
+                    "keyframe_s3_prefix": keyframe_s3_prefix,
+                    "audio_s3_key": None,
+                },
+                f"{file_id}:{job_type}:{minute}",
+            )
+
+    if audio_s3_key:
+        _publish(
+            "stt",
+            {
+                "version": "1",
+                "type": "enrichment.job_created",
+                "timestamp": timestamp,
+                "job_type": "stt",
+                "file_id": str(file_id),
+                "org_id": str(org_id),
+                "video_id": video_id,
+                "keyframe_s3_prefix": None,
+                "audio_s3_key": audio_s3_key,
+            },
+            f"{file_id}:stt:{minute}",
+        )

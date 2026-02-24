@@ -50,6 +50,7 @@ from app.modules.drive.internal_sync_schemas import (
     UpsertFilesResponse,
 )
 from app.modules.drive.models import DriveConnection, DriveFile, DriveSecret
+from app.sqs_producer import publish_processing_job
 
 logger = get_logger(__name__)
 
@@ -386,6 +387,7 @@ async def upsert_files(
     existing_google_ids: set[str] = {row[0] for row in existing_result.all()}
 
     created_count = 0
+    new_files: list[DriveFile] = []
     unchanged_count = 0
     seen_in_batch: set[str] = set()
 
@@ -416,10 +418,29 @@ async def upsert_files(
             ocr_status="pending",
         )
         db.add(drive_file)
+        new_files.append(drive_file)
         created_count += 1
 
     if created_count > 0:
         await db.flush()
+
+
+    # SQS dual-write: publish processing jobs for newly created files.
+    # Fire-and-forget — failures are logged but never block the DB commit.
+    for f in new_files:
+        publish_processing_job(
+            file_id=f.id,
+            org_id=org_id,
+            connection_id=connection_id,
+            video_id=f.video_id,
+            google_file_id=f.google_file_id,
+            file_name=f.file_name,
+            mime_type=f.mime_type,
+            file_size_bytes=f.file_size_bytes,
+            library_id=connection.library_id,
+            scope_type=connection.scope_type,
+            drive_id=connection.drive_id,
+        )
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     logger.info(

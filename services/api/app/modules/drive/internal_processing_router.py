@@ -25,6 +25,7 @@ from app.modules.drive.internal_router import (
     _verify_internal_token,
 )
 from app.modules.drive.models import DriveConnection, DriveFile
+from app.sqs_producer import publish_enrichment_jobs
 
 logger = get_logger(__name__)
 
@@ -197,6 +198,28 @@ async def update_processing_status(
         update(DriveFile).where(DriveFile.id == file_id).values(**values)
     )
     await db.flush()
+
+
+    # SQS dual-write: publish enrichment jobs when processing completes.
+    # Only fires when status transitions to 'indexed'; fire-and-forget.
+    if values.get("processing_status") == "indexed":
+        _eff_keyframe = (
+            request.keyframe_s3_prefix
+            if request.keyframe_s3_prefix is not None
+            else drive_file.keyframe_s3_prefix
+        )
+        _eff_audio = (
+            request.audio_s3_key
+            if request.audio_s3_key is not None
+            else drive_file.audio_s3_key
+        )
+        publish_enrichment_jobs(
+            file_id=file_id,
+            org_id=drive_file.org_id,
+            video_id=drive_file.video_id,
+            keyframe_s3_prefix=_eff_keyframe,
+            audio_s3_key=_eff_audio,
+        )
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     logger.info(
