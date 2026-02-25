@@ -53,7 +53,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jlee-heimdex/heimdex-media-contracts
-          token: ${{ secrets.REPO_ACCESS_TOKEN }}
           path: heimdex-media-contracts
 
       - name: Checkout media-pipelines
@@ -61,7 +60,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jlee-heimdex/heimdex-media-pipelines
-          token: ${{ secrets.REPO_ACCESS_TOKEN }}
           path: heimdex-media-pipelines
 
       - name: Log in to GHCR
