@@ -250,7 +250,7 @@ export function ShortsCreatePage() {
         <span>&gt;</span>
         <Link href={`/videos/${videoId}`} className="hover:text-gray-700">{videoTitle}</Link>
         <span>&gt;</span>
-        <span className="text-gray-700 font-medium">숏츠 제작</span>
+        <span className="text-gray-700 font-medium">쇼츠 제작</span>
       </div>
 
       <div className="flex gap-8">

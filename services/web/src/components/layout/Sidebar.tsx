@@ -9,7 +9,7 @@ const navItems = [
   { label: "전체 아카이브 검색", href: "/" },
   { label: "파일 동기화", href: "/sync" },
   { label: "인물 라벨 관리", href: "/settings/people" },
-  { label: "저장된 숏츠", href: "/shorts" },
+  { label: "저장된 쇼츠", href: "/shorts" },
   { label: "에이전트", href: "/agent" },
 ];
 
