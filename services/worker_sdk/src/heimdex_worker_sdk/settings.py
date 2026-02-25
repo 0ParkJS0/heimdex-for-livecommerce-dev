@@ -22,10 +22,13 @@ class WorkerSettings(BaseSettings):
     log_level: str = "INFO"
 
     # --- MinIO / S3 ---
+    # When minio_endpoint is empty, the S3 client uses real AWS S3 with
+    # IAM/env credentials instead of a MinIO-compatible endpoint.
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "heimdex"
     minio_secret_key: str = "heimdex_dev_password"
     minio_secure: bool = False
+    s3_region: str = "ap-northeast-2"
 
     # --- Drive common ---
     drive_s3_bucket: str = "heimdex-drive"

@@ -1,3 +1,11 @@
+"""S3/MinIO client for the API.
+
+Supports two modes based on ``Settings.minio_endpoint``:
+  - **MinIO mode** (default): ``minio_endpoint`` is set → connects to a
+    MinIO-compatible endpoint with explicit credentials.
+  - **AWS S3 mode**: ``minio_endpoint`` is empty → uses the default boto3
+    credential chain (env vars, IAM role) and the real AWS S3 endpoint.
+"""
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -5,7 +13,6 @@ from typing import Optional
 
 import boto3
 from botocore.config import Config as BotoConfig
-
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -14,19 +21,41 @@ logger = logging.getLogger(__name__)
 @lru_cache(maxsize=1)
 def _build_s3_client():
     settings = get_settings()
-    boto_config = BotoConfig(
-        signature_version="s3v4",
-        retries={"max_attempts": 3, "mode": "adaptive"},
-        s3={"addressing_style": "path"},
+    if settings.minio_endpoint:
+        # MinIO / S3-compatible mode
+        boto_config = BotoConfig(
+            signature_version="s3v4",
+            retries={"max_attempts": 3, "mode": "adaptive"},
+            s3={"addressing_style": "path"},
+        )
+        client = boto3.client(
+            "s3",
+            endpoint_url=f"{'https' if settings.minio_secure else 'http'}://{settings.minio_endpoint}",
+            aws_access_key_id=settings.minio_access_key,
+            aws_secret_access_key=settings.minio_secret_key,
+            config=boto_config,
+            region_name="us-east-1",
+        )
+    else:
+        # Real AWS S3 mode — credentials from env/IAM
+        boto_config = BotoConfig(
+            signature_version="s3v4",
+            retries={"max_attempts": 3, "mode": "adaptive"},
+        )
+        client = boto3.client(
+            "s3",
+            config=boto_config,
+            region_name=settings.s3_region,
+        )
+
+    logger.info(
+        "s3_client_initialized",
+        extra={
+            "mode": "minio" if settings.minio_endpoint else "aws-s3",
+            "region": "us-east-1" if settings.minio_endpoint else settings.s3_region,
+        },
     )
-    return boto3.client(
-        "s3",
-        endpoint_url=f"{'https' if settings.minio_secure else 'http'}://{settings.minio_endpoint}",
-        aws_access_key_id=settings.minio_access_key,
-        aws_secret_access_key=settings.minio_secret_key,
-        config=boto_config,
-        region_name="us-east-1",
-    )
+    return client
 
 
 class S3Client:

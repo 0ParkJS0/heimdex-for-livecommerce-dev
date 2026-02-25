@@ -123,7 +123,37 @@ class TestSQSEnabled:
         attrs = call_kwargs["MessageAttributes"]
         assert attrs["job_type"]["StringValue"] == "processing"
         assert attrs["source"]["StringValue"] == "api"
-        # Deduplication ID
+        # Standard queues: no MessageDeduplicationId
+        assert "MessageDeduplicationId" not in call_kwargs
+
+    @patch("app.sqs_producer._get_sqs_client")
+    @patch("app.sqs_producer.get_settings")
+    def test_processing_job_dedup_id_on_fifo_queue(self, mock_settings, mock_get_client):
+        """FIFO queues should include MessageDeduplicationId."""
+        mock_settings.return_value = _make_settings(
+            sqs_enabled=True,
+            sqs_processing_queue_url="https://sqs.ap-northeast-2.amazonaws.com/123/heimdex-processing-queue.fifo",
+        )
+        mock_client = MagicMock()
+        mock_client.send_message.return_value = {"MessageId": "msg-fifo-001"}
+        mock_get_client.return_value = mock_client
+
+        file_id = uuid4()
+        publish_processing_job(
+            file_id=file_id,
+            org_id=uuid4(),
+            connection_id=uuid4(),
+            video_id="gd_test123",
+            google_file_id="gfile_abc",
+            file_name="test.mp4",
+            mime_type="video/mp4",
+            file_size_bytes=1024,
+            library_id=uuid4(),
+            scope_type="drive",
+            drive_id="0AO_drive",
+        )
+
+        call_kwargs = mock_client.send_message.call_args[1]
         assert "MessageDeduplicationId" in call_kwargs
         assert call_kwargs["MessageDeduplicationId"].startswith(str(file_id))
 

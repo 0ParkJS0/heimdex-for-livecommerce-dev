@@ -85,7 +85,9 @@ def _publish(
                 "source": {"StringValue": "api", "DataType": "String"},
             },
         }
-        if deduplication_id:
+        # MessageDeduplicationId is FIFO-queue only.  Standard queues
+        # reject it with InvalidParameterValueException.
+        if deduplication_id and queue_url.endswith(".fifo"):
             kwargs["MessageDeduplicationId"] = deduplication_id
 
         resp = client.send_message(**kwargs)

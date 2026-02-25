@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     minio_access_key: str = "heimdex"
     minio_secret_key: str = "heimdex_dev_password"
     minio_secure: bool = False
+    s3_region: str = "ap-northeast-2"  # Used in AWS S3 mode (when minio_endpoint is empty)
     
     jwt_secret_key: str = "dev-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
