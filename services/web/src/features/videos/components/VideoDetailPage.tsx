@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { useAgent } from "@/features/search/hooks/useAgent";
 import { getVideoScenes } from "@/lib/api/videos";
@@ -713,13 +713,15 @@ function ScenesPanel({
 export function VideoDetailPage({ videoId }: { videoId: string }) {
   const { getAccessToken } = useAuth();
   const { isAvailable: agentAvailable } = useAgent();
-  const [view, setView] = useState<ViewMode>("overview");
+  const searchParams = useSearchParams();
+  const initialT = searchParams.get("t");
+  const [view, setView] = useState<ViewMode>(initialT ? "scenes" : "overview");
   const [meta, setMeta] = useState<VideoScenesResponse | null>(null);
   const [scenes, setScenes] = useState<VideoScene[]>([]);
   const [totalScenes, setTotalScenes] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const [seekMs, setSeekMs] = useState<number | null>(null);
-  const [seekKey, setSeekKey] = useState(0);
+  const [seekMs, setSeekMs] = useState<number | null>(initialT ? Number(initialT) : null);
+  const [seekKey, setSeekKey] = useState(initialT ? 1 : 0);
 
   const handleSeekToScene = useCallback((startMs: number) => {
     setSeekMs(startMs);

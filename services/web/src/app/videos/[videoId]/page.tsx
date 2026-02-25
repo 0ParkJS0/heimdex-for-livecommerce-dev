@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { Suspense } from "react";
 
 const VideoDetail = dynamic(
   () =>
@@ -15,5 +16,5 @@ export default function VideoDetailRoute({
 }: {
   params: { videoId: string };
 }) {
-  return <VideoDetail videoId={params.videoId} />;
+  return <Suspense><VideoDetail videoId={params.videoId} /></Suspense>;
 }

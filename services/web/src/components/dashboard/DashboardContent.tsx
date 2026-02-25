@@ -618,7 +618,7 @@ function SceneCard({ scene }: { scene: SceneResult }) {
   const timestamp = `${min}:${String(sec).padStart(2, "0")}`;
 
   return (
-    <Link href={`/videos/${scene.video_id}`} className="group cursor-pointer block">
+    <Link href={`/videos/${scene.video_id}?t=${scene.start_ms}`} className="group cursor-pointer block">
       <div className="relative aspect-video w-full overflow-hidden rounded-lg">
         <SceneThumbnail
           videoId={scene.video_id}
@@ -647,7 +647,7 @@ function SearchVideoCard({ video }: { video: VideoResult }) {
   const title = video.video_title || "제목 없음";
   const best = video.best_scene;
   return (
-    <Link href={`/videos/${video.video_id}`} className="group cursor-pointer block">
+    <Link href={`/videos/${video.video_id}?t=${best.start_ms}`} className="group cursor-pointer block">
       <div className="relative aspect-video w-full overflow-hidden rounded-lg">
         <SceneThumbnail
           videoId={best.video_id}

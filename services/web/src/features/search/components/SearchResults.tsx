@@ -348,7 +348,7 @@ function VideoCard({
           <div className="flex items-start justify-between gap-2 mb-1">
             <div className="flex items-center gap-2 flex-wrap">
               <a
-                href={`/videos/${video.video_id}`}
+                href={`/videos/${video.video_id}?t=${best.start_ms}`}
                 className="text-sm font-medium text-gray-900 hover:text-primary-600 truncate transition-colors"
               >
                 {video.video_title || video.video_id}
@@ -377,7 +377,7 @@ function VideoCard({
 
           <div className="flex items-center gap-3">
             <a
-              href={`/videos/${video.video_id}`}
+              href={`/videos/${video.video_id}?t=${best.start_ms}`}
               className="text-sm flex items-center gap-1 px-2 py-1 rounded-md border text-primary-600 hover:bg-primary-50 border-primary-200"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -484,9 +484,12 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2 mb-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-medium text-gray-900 truncate">
+              <a
+                href={`/videos/${result.video_id}?t=${result.start_ms}`}
+                className="text-sm font-medium text-gray-900 hover:text-primary-600 truncate transition-colors"
+              >
                 {result.video_title || result.video_id}
-              </span>
+              </a>
               <Breadcrumb libraryName={result.library_name} sourceType={result.source_type} />
               <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
                 {result.speech_segment_count} segment{result.speech_segment_count !== 1 ? "s" : ""}
