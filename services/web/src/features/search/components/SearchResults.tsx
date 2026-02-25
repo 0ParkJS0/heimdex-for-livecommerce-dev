@@ -7,6 +7,7 @@ import {
   AnySearchResponse,
   DebugInfo,
   formatDuration,
+  formatTimestamp,
 } from "@/lib/api";
 import { getAgentPlaybackUrl, getCloudPlaybackUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
@@ -500,6 +501,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
           </div>
 
           <p className="text-sm text-gray-700 line-clamp-2 mb-2">
+            <span className="text-gray-400 font-mono text-xs">[{formatTimestamp(result.start_ms)}]</span>{" "}
             {result.snippet}
           </p>
 
