@@ -80,7 +80,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://heimdex:heimdex_dev_password@postgres:5432/heimdex}
       - DATABASE_URL_SYNC=${DATABASE_URL_SYNC:-postgresql://heimdex:heimdex_dev_password@postgres:5432/heimdex}
       - OPENSEARCH_URL=http://opensearch:9200
-      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=${MINIO_SECURE:-false}
@@ -135,6 +135,7 @@ services:
       - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
       - DRIVE_SA_ENCRYPTION_KEY=${DRIVE_SA_ENCRYPTION_KEY:-}
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - S3_REGION=${S3_REGION:-ap-northeast-2}
       # Google Drive OAuth (folder-scoped sync)
       - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
       - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
@@ -216,7 +217,7 @@ services:
     cpus: "2.0"
     environment:
       - PYTHONPATH=/app
-      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=${MINIO_SECURE:-false}
@@ -229,6 +230,7 @@ services:
       - DRIVE_TEMP_DISK_BUDGET_GB=${DRIVE_TEMP_DISK_BUDGET_GB:-50}
       - DRIVE_TEMP_DIR=/data/drive-tmp
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - S3_REGION=${S3_REGION:-ap-northeast-2}
       - DRIVE_PROXY_MAX_HEIGHT=${DRIVE_PROXY_MAX_HEIGHT:-720}
       - DRIVE_PROXY_CRF=${DRIVE_PROXY_CRF:-23}
       - DRIVE_PROXY_PRESET=${DRIVE_PROXY_PRESET:-fast}
@@ -267,7 +269,7 @@ services:
     cpus: "2.0"
     environment:
       - PYTHONPATH=/app
-      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=${MINIO_SECURE:-false}
@@ -275,6 +277,7 @@ services:
       - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - S3_REGION=${S3_REGION:-ap-northeast-2}
       - DRIVE_OCR_POLL_INTERVAL_SECONDS=${DRIVE_OCR_POLL_INTERVAL_SECONDS:-30}
       - DRIVE_OCR_CONCURRENCY=${DRIVE_OCR_CONCURRENCY:-1}
       - DRIVE_OCR_MAX_FRAMES_PER_SCENE=${DRIVE_OCR_MAX_FRAMES_PER_SCENE:-10}
@@ -338,7 +341,7 @@ services:
     cpus: "2.0"
     environment:
       - PYTHONPATH=/app
-      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=${MINIO_SECURE:-false}
@@ -347,6 +350,7 @@ services:
       - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - S3_REGION=${S3_REGION:-ap-northeast-2}
       - DRIVE_CAPTION_POLL_INTERVAL_SECONDS=${DRIVE_CAPTION_POLL_INTERVAL_SECONDS:-30}
       - DRIVE_CAPTION_CONCURRENCY=${DRIVE_CAPTION_CONCURRENCY:-1}
       - DRIVE_CAPTION_MODEL=${DRIVE_CAPTION_MODEL:-OpenGVLab/InternVL2-1B}
@@ -388,7 +392,7 @@ services:
     cpus: "2.0"
     environment:
       - PYTHONPATH=/app
-      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT-minio:9000}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-heimdex}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=${MINIO_SECURE:-false}
@@ -399,6 +403,7 @@ services:
       - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - S3_REGION=${S3_REGION:-ap-northeast-2}
       - DRIVE_STT_POLL_INTERVAL_SECONDS=${DRIVE_STT_POLL_INTERVAL_SECONDS:-30}
       - DRIVE_STT_CONCURRENCY=${DRIVE_STT_CONCURRENCY:-1}
       - DRIVE_STT_MAX_AUDIO_SECONDS=${DRIVE_STT_MAX_AUDIO_SECONDS:-3600}
