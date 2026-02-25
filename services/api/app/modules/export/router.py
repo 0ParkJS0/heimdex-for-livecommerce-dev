@@ -1,6 +1,7 @@
 import logging
 import re
 import unicodedata
+from urllib.parse import quote
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -102,11 +103,19 @@ async def export_edl(
         filename=filename,
     )
 
+    # RFC 5987: use ASCII-only filename fallback + UTF-8 filename* for non-ASCII
+    raw_filename = _response_meta.filename
+    ascii_filename = raw_filename.encode("ascii", "replace").decode("ascii")
+    utf8_filename = quote(raw_filename, safe="")
+    disposition = (
+        f'attachment; filename="{ascii_filename}"; '
+        f"filename*=UTF-8''{utf8_filename}"
+    )
     return Response(
         content=edl_content,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f'attachment; filename="{_response_meta.filename}"',
+            "Content-Disposition": disposition,
             "X-Clip-Count": str(_response_meta.clip_count),
             "X-Unresolved-Clips": ",".join(_response_meta.unresolved_clips)
             if _response_meta.unresolved_clips

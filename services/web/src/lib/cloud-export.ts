@@ -55,8 +55,12 @@ export async function exportEdlCloud(
   const unresolved = unresolvedRaw ? unresolvedRaw.split(",") : [];
 
   const disposition = response.headers.get("Content-Disposition") ?? "";
-  const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
-  const filename = filenameMatch?.[1] ?? `${request.project_name}.edl`;
+  // Prefer RFC 5987 filename* (UTF-8 encoded) over plain filename
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;\s]+)/i);
+  const plainMatch = disposition.match(/filename="?([^"]+)"?/);
+  const filename = utf8Match
+    ? decodeURIComponent(utf8Match[1])
+    : (plainMatch?.[1] ?? `${request.project_name}.edl`);
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
