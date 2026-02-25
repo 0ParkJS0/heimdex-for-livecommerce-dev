@@ -111,6 +111,10 @@ jobs:
               sleep 5
             fi
 
+            # WARNING (2026-02-26): Enrichment workers (STT, OCR, Caption) have migrated to Aircloud+ GPU.
+            # This block rebuilds and restarts EC2 CPU enrichment containers, creating DUAL SQS consumers
+            # that compete with Aircloud+ workers. This is the #1 priority fix in housekeeping PR2.
+            # PR2 will remove this block entirely. Until then, deploys may cause brief message duplication.
             if [ "$WORKER_CHANGED" = true ] || [ "$API_CHANGED" = true ]; then
               echo "--- rebuilding and restarting enrichment workers ---"
               docker compose build drive-stt-worker drive-ocr-worker drive-caption-worker

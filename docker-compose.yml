@@ -192,6 +192,8 @@ services:
     depends_on:
       - api
 
+  # DEPRECATED (2026-02-26): face-worker is dead code — never ran in production.
+  # Kept for reference only. Removal planned in PR4 (housekeeping).
   face-worker:
     build:
       context: ./services/worker
@@ -260,6 +262,10 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
+  # DEPRECATED (2026-02-26): OCR enrichment worker migrated to Aircloud+ GPU.
+  # This CPU service definition is kept for local dev only.
+  # Staging/prod uses ghcr.io/jlee-heimdex/heimdex-ocr-worker-gpu:latest on Aircloud+.
+  # PR2 will add 'profiles: [local-enrichment]' to prevent accidental startup.
   drive-ocr-worker:
     build:
       context: .
@@ -278,7 +284,7 @@ services:
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
       - S3_REGION=${S3_REGION:-ap-northeast-2}
-      - DRIVE_OCR_POLL_INTERVAL_SECONDS=${DRIVE_OCR_POLL_INTERVAL_SECONDS:-30}
+      - DRIVE_OCR_POLL_INTERVAL_SECONDS=${DRIVE_OCR_POLL_INTERVAL_SECONDS:-30}  # DEPRECATED: unused since SQS migration (Phase 3). Remove in PR3.
       - DRIVE_OCR_CONCURRENCY=${DRIVE_OCR_CONCURRENCY:-1}
       - DRIVE_OCR_MAX_FRAMES_PER_SCENE=${DRIVE_OCR_MAX_FRAMES_PER_SCENE:-10}
       - DRIVE_OCR_MAX_FRAMES_PER_VIDEO=${DRIVE_OCR_MAX_FRAMES_PER_VIDEO:-300}
@@ -302,6 +308,9 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
+  # DEPRECATED (2026-02-26): llama-caption-server replaced by Qwen2-VL-2B on Aircloud+ GPU.
+  # Caption worker no longer uses HTTP-based llama backend (CAPTION_ENGINE=qwen2vl on Aircloud+).
+  # Kept for local dev fallback only. Removal planned in PR2/PR4.
   llama-caption-server:
     build:
       context: ./services/llama-caption-server
@@ -332,6 +341,11 @@ services:
       start_period: 120s
     restart: unless-stopped
 
+  # DEPRECATED (2026-02-26): Caption enrichment worker migrated to Aircloud+ GPU.
+  # This CPU service definition is kept for local dev only.
+  # Staging/prod uses ghcr.io/jlee-heimdex/heimdex-caption-worker-gpu:latest on Aircloud+.
+  # Model: Qwen/Qwen2-VL-2B-Instruct (GPU) vs OpenGVLab/InternVL2-1B (CPU, below).
+  # PR2 will add 'profiles: [local-enrichment]' to prevent accidental startup.
   drive-caption-worker:
     build:
       context: .
@@ -351,7 +365,7 @@ services:
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
       - S3_REGION=${S3_REGION:-ap-northeast-2}
-      - DRIVE_CAPTION_POLL_INTERVAL_SECONDS=${DRIVE_CAPTION_POLL_INTERVAL_SECONDS:-30}
+      - DRIVE_CAPTION_POLL_INTERVAL_SECONDS=${DRIVE_CAPTION_POLL_INTERVAL_SECONDS:-30}  # DEPRECATED: unused since SQS migration (Phase 3). Remove in PR3.
       - DRIVE_CAPTION_CONCURRENCY=${DRIVE_CAPTION_CONCURRENCY:-1}
       - DRIVE_CAPTION_MODEL=${DRIVE_CAPTION_MODEL:-OpenGVLab/InternVL2-1B}
       - LLAMA_CAPTION_URL=http://llama-caption-server:8089
@@ -383,6 +397,11 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
+  # DEPRECATED (2026-02-26): STT enrichment worker migrated to Aircloud+ GPU.
+  # This CPU service definition is kept for local dev only.
+  # Staging/prod uses ghcr.io/jlee-heimdex/heimdex-stt-worker-gpu:latest on Aircloud+.
+  # Model: turbo/cuda/float16 (GPU) vs small/cpu/int8 (CPU, below).
+  # PR2 will add 'profiles: [local-enrichment]' to prevent accidental startup.
   drive-stt-worker:
     build:
       context: .
@@ -404,7 +423,7 @@ services:
       - DRIVE_API_BASE_URL=http://api:8000
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
       - S3_REGION=${S3_REGION:-ap-northeast-2}
-      - DRIVE_STT_POLL_INTERVAL_SECONDS=${DRIVE_STT_POLL_INTERVAL_SECONDS:-30}
+      - DRIVE_STT_POLL_INTERVAL_SECONDS=${DRIVE_STT_POLL_INTERVAL_SECONDS:-30}  # DEPRECATED: unused since SQS migration (Phase 3). Remove in PR3.
       - DRIVE_STT_CONCURRENCY=${DRIVE_STT_CONCURRENCY:-1}
       - DRIVE_STT_MAX_AUDIO_SECONDS=${DRIVE_STT_MAX_AUDIO_SECONDS:-3600}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -429,6 +448,9 @@ services:
              python -m src.worker"
 
 
+  # NOTE (2026-02-26): elasticmq is for LOCAL DEV SQS simulation only.
+  # Staging/prod uses real AWS SQS (ap-northeast-2). Not needed on EC2.
+  # EC2 still runs this container — removal planned in PR2.
   elasticmq:
     image: softwaremill/elasticmq-native:latest
     container_name: heimdex-elasticmq
