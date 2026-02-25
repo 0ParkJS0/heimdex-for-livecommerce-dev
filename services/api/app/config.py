@@ -140,19 +140,19 @@ class Settings(BaseSettings):
 
     # --- STT enrichment worker ---
     drive_stt_enabled: bool = False
-    drive_stt_model: str = "small"
+    drive_stt_model: str = "turbo"
     drive_stt_language: str = "ko"
     drive_stt_backend: str = "faster-whisper"
     drive_stt_poll_interval_seconds: int = 30
     drive_stt_concurrency: int = 1
-    drive_stt_max_audio_seconds: int = 3600
+    drive_stt_max_audio_seconds: int = 21600
 
     # --- Caption enrichment worker ---
     scene_caption_enabled: bool = False
     drive_caption_poll_interval_seconds: int = 30
     drive_caption_concurrency: int = 1
-    drive_caption_model: str = "OpenGVLab/InternVL2-1B"
-    caption_engine: str = "internvl2"  # "internvl2", "florence2", or "llama_http"
+    drive_caption_model: str = "Qwen/Qwen2-VL-2B-Instruct"
+    caption_engine: str = "qwen2vl"  # "qwen2vl", "internvl2", "florence2", or "llama_http"
     llama_caption_url: str = "http://llama-caption-server:8089"
     llama_caption_api_key: str = ""
 

@@ -29,7 +29,7 @@ class TestSttConfigDefaults:
 
     def test_stt_default_max_audio_seconds(self):
         settings = Settings()
-        assert settings.drive_stt_max_audio_seconds == 3600
+        assert settings.drive_stt_max_audio_seconds == 21600
 
 
 class TestEnrichmentStateWithStt:

@@ -66,10 +66,7 @@ def main() -> None:
             api_key=getattr(settings, "llama_caption_api_key", ""),
         )
     else:
-        model_key = "internvl2"
-        if "florence" in settings.drive_caption_model.lower():
-            model_key = "florence2"
-        caption_engine = create_caption_engine(model=model_key, use_gpu=settings.use_gpu)
+        caption_engine = create_caption_engine(model=engine_key, use_gpu=settings.use_gpu)
     logger.info("caption_engine_loaded_once", extra={"model": settings.drive_caption_model})
 
     # Initialize shared semaphore before starting any consumers

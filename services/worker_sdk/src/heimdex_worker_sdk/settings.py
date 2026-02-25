@@ -56,19 +56,19 @@ class WorkerSettings(BaseSettings):
     scene_caption_enabled: bool = False
     drive_caption_poll_interval_seconds: int = 30  # DEPRECATED (Phase 3): enrichment workers use SQS only
     drive_caption_concurrency: int = 1
-    drive_caption_model: str = "OpenGVLab/InternVL2-1B"
-    caption_engine: str = "internvl2"
+    drive_caption_model: str = "Qwen/Qwen2-VL-2B-Instruct"
+    caption_engine: str = "qwen2vl"  # "qwen2vl", "internvl2", "florence2", or "llama_http"
     llama_caption_url: str = "http://llama-caption-server:8089"
     llama_caption_api_key: str = ""
 
     # --- STT enrichment ---
     drive_stt_enabled: bool = False
-    drive_stt_model: str = "small"
+    drive_stt_model: str = "turbo"
     drive_stt_language: str = "ko"
     drive_stt_backend: str = "faster-whisper"
     drive_stt_poll_interval_seconds: int = 30  # DEPRECATED (Phase 3): enrichment workers use SQS only
     drive_stt_concurrency: int = 1
-    drive_stt_max_audio_seconds: int = 3600
+    drive_stt_max_audio_seconds: int = 21600  # 6 hours; faster-whisper handles long audio natively
 
     # --- OCR enrichment ---
     drive_ocr_enabled: bool = False

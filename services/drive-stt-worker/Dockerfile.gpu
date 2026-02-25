@@ -53,7 +53,7 @@ RUN pip install --no-cache-dir \
       "structlog>=23.0" "requests>=2.31"
 
 RUN mkdir -p "${WHISPER_CACHE_DIR}" "${HF_HOME}" \
-    && python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
+    && python -c "from faster_whisper import WhisperModel; WhisperModel('turbo', device='cpu', compute_type='int8')"
 
 COPY dev-heimdex-for-livecommerce/services/drive-stt-worker/src/ src/
 

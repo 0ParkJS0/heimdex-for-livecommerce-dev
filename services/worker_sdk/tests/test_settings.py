@@ -39,16 +39,16 @@ class TestWorkerSettingsDefaults:
         s = WorkerSettings()
         assert s.scene_caption_enabled is False
         assert s.drive_caption_concurrency == 1
-        assert s.caption_engine == "internvl2"
-        assert s.drive_caption_model == "OpenGVLab/InternVL2-1B"
+        assert s.caption_engine == "qwen2vl"
+        assert s.drive_caption_model == "Qwen/Qwen2-VL-2B-Instruct"
 
     def test_default_stt_settings(self):
         s = WorkerSettings()
         assert s.drive_stt_enabled is False
-        assert s.drive_stt_model == "small"
+        assert s.drive_stt_model == "turbo"
         assert s.drive_stt_language == "ko"
         assert s.drive_stt_backend == "faster-whisper"
-        assert s.drive_stt_max_audio_seconds == 3600
+        assert s.drive_stt_max_audio_seconds == 21600
 
     def test_default_ocr_settings(self):
         s = WorkerSettings()
