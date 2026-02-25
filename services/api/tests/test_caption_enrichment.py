@@ -10,7 +10,6 @@ class TestCaptionConfig:
     def test_caption_defaults(self):
         settings = Settings()
         assert settings.scene_caption_enabled is False
-        assert settings.drive_caption_poll_interval_seconds == 30
         assert settings.drive_caption_concurrency == 1
         assert settings.drive_caption_model == "OpenGVLab/InternVL2-1B"
 

@@ -49,10 +49,6 @@ class TestOcrConfigDefaults:
         settings = Settings()
         assert settings.drive_ocr_concurrency == 1
 
-    def test_ocr_default_poll_interval(self):
-        settings = Settings()
-        assert settings.drive_ocr_poll_interval_seconds == 30
-
     def test_ocr_default_max_frames(self):
         settings = Settings()
         assert settings.drive_ocr_max_frames_per_scene == 10

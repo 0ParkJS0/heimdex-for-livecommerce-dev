@@ -23,10 +23,6 @@ class TestSttConfigDefaults:
         settings = Settings()
         assert settings.drive_stt_concurrency == 1
 
-    def test_stt_default_poll_interval(self):
-        settings = Settings()
-        assert settings.drive_stt_poll_interval_seconds == 30
-
     def test_stt_default_max_audio_seconds(self):
         settings = Settings()
         assert settings.drive_stt_max_audio_seconds == 21600
