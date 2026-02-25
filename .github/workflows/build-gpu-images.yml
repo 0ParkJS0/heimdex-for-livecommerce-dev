@@ -30,6 +30,7 @@ jobs:
     strategy:
       matrix:
         worker: [caption, stt, ocr]
+      fail-fast: false
     steps:
       - name: Check if worker should build
         id: check
