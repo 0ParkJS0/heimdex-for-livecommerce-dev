@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/lib/auth";
 import { CandidateCard } from "./CandidateCard";
 import { ExportDialog } from "./ExportDialog";
 import { useShortsPlan } from "../hooks/useShortsPlan";
@@ -36,6 +37,7 @@ export function ShortsPlanPanel({
     clearExportResult,
     reset,
   } = useShortsPlan();
+  const { getAccessToken } = useAuth();
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -202,6 +204,7 @@ export function ShortsPlanPanel({
         defaultProjectName={defaultProjectName}
         agentAvailable={agentAvailable}
         isCloudExport={isCloudExport}
+        getAccessToken={getAccessToken}
       />
     </div>
   );

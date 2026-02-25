@@ -500,6 +500,7 @@ export function SavedShortsPage() {
             defaultProjectName={selectedShorts[0]?.title ?? "Heimdex Export"}
             agentAvailable={agentAvailable}
             isCloudExport={isCloudExport}
+            getAccessToken={getAccessToken}
           />
         )}
 

@@ -2,10 +2,24 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { pickDirectory } from "@/lib/agent";
+import { getOAuthStatus } from "@/lib/api/drive";
 
 const DEFAULT_OUTPUT_DIR = "~/Desktop/Heimdex Exports";
 const FRAME_RATE_OPTIONS = [24, 25, 29.97, 30, 60];
 const DRIVE_MOUNT_PATH_KEY = "heimdex_drive_mount_path";
+
+function getIsWindows(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Win/i.test(navigator.platform ?? "") || /Windows/i.test(navigator.userAgent ?? "");
+}
+
+function buildPredictedPath(email: string): string {
+  if (getIsWindows()) {
+    return "G:\\";
+  }
+  // macOS 12.1+ File Provider (most common, path is OS-controlled)
+  return `~/Library/CloudStorage/GoogleDrive-${email}`;
+}
 
 interface ExportDialogProps {
   isOpen: boolean;
@@ -21,6 +35,7 @@ interface ExportDialogProps {
   defaultProjectName: string;
   agentAvailable?: boolean;
   isCloudExport?: boolean;
+  getAccessToken?: () => Promise<string | null>;
 }
 
 export function ExportDialog({
@@ -32,6 +47,7 @@ export function ExportDialog({
   defaultProjectName,
   agentAvailable = false,
   isCloudExport = false,
+  getAccessToken,
 }: ExportDialogProps) {
   const [projectName, setProjectName] = useState(defaultProjectName);
   const [outputDir, setOutputDir] = useState(DEFAULT_OUTPUT_DIR);
@@ -41,6 +57,7 @@ export function ExportDialog({
     if (typeof window === "undefined") return "";
     return localStorage.getItem(DRIVE_MOUNT_PATH_KEY) ?? "";
   });
+  const [pathPredicted, setPathPredicted] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -60,9 +77,33 @@ export function ExportDialog({
     setProjectName(defaultProjectName);
   }, [defaultProjectName, isOpen]);
 
+  // Fetch Google email and predict drive mount path when dialog opens
+  useEffect(() => {
+    if (!isOpen || !isCloudExport) return;
+    // Skip if user already has a saved path
+    const saved = localStorage.getItem(DRIVE_MOUNT_PATH_KEY);
+    if (saved) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await getOAuthStatus(getAccessToken);
+        if (cancelled || !status.connected || !status.google_email) return;
+        const predicted = buildPredictedPath(status.google_email);
+        setDriveMountPath(predicted);
+        setPathPredicted(true);
+      } catch {
+        // Non-critical — user can type manually
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, isCloudExport, getAccessToken]);
+
   if (!isOpen) {
     return null;
   }
+
+  const isWindows = getIsWindows();
 
   const isSubmitDisabled =
     isExporting || projectName.trim().length === 0 || (!isCloudExport && outputDir.trim().length === 0) || (isCloudExport && driveMountPath.trim().length === 0);
@@ -129,13 +170,30 @@ export function ExportDialog({
                 id="export-drive-mount"
                 className="input-field"
                 value={driveMountPath}
-                onChange={(event) => setDriveMountPath(event.target.value)}
-                placeholder={typeof navigator !== "undefined" && navigator.platform?.includes("Win") ? "G:\\" : "/Volumes/GoogleDrive"}
+                onChange={(event) => {
+                  setDriveMountPath(event.target.value);
+                  setPathPredicted(false);
+                }}
+                placeholder={isWindows ? "G:\\" : "~/Library/CloudStorage/GoogleDrive-..."}
                 required
               />
-              <p className="mt-1.5 text-xs text-gray-500">
-                Google Drive for Desktop 마운트 경로를 입력하세요. Premiere Pro에서 영상 파일을 자동으로 연결합니다.
-              </p>
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs font-medium text-amber-800 mb-1">
+                  {pathPredicted ? "⚠ 자동 추정된 경로입니다. 반드시 확인해 주세요." : "⚠ 경로가 정확한지 확인해 주세요."}
+                </p>
+                <p className="text-xs text-amber-700">
+                  {isWindows
+                    ? "Google Drive for Desktop 설정에서 드라이브 문자를 확인하세요. 기본값은 G:\\ 입니다."
+                    : "Finder에서 Google Drive 폴더를 마우스 오른쪽 클릭 → \"경로 이름 복사\"로 정확한 경로를 확인할 수 있습니다."}
+                </p>
+                {!isWindows && (
+                  <p className="mt-1 text-xs text-amber-600">
+                    경로가 <span className="font-mono">~</span>로 시작하면 실제 홈 폴더 경로로 변경하세요.
+                    <br />
+                    <span className="font-mono text-amber-800">예: /Users/사용자이름/Library/CloudStorage/GoogleDrive-...</span>
+                  </p>
+                )}
+              </div>
             </div>
           ) : (
             <div>
