@@ -198,7 +198,7 @@ def _post_enrich_to_api(
             "X-Heimdex-Org-Id": str(org_id),
             "Content-Type": "application/json",
         },
-        timeout=120,
+        timeout=300,
     )
 
     if resp.status_code != 200:

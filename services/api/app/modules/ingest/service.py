@@ -27,7 +27,7 @@ from heimdex_media_contracts.ingest import IngestScenesRequest
 from app.logging_config import get_logger
 from app.modules.ingest.schemas import EnrichSceneUpdate, EnrichScenesRequest
 from app.modules.libraries.repository import LibraryRepository
-from app.modules.search.embedding import get_passage_embedding, get_passage_embeddings_batch
+from app.modules.search.embedding import get_passage_embeddings_batch
 from app.modules.search.normalize import normalize_transcript
 from app.modules.search.scene_client import SceneSearchClient
 
@@ -241,6 +241,7 @@ class SceneIngestService:
         now = datetime.now(timezone.utc)
         documents: list[tuple[str, dict[str, Any]]] = []
         skipped = 0
+        embedding_inputs: list[tuple[str, str]] = []
 
         for doc_id, enrichment in doc_id_map.items():
             existing = existing_docs.get(doc_id)
@@ -279,17 +280,33 @@ class SceneIngestService:
                 embedding_text = f"{transcript_norm} {ocr_norm}".strip() if transcript_norm else ocr_norm
 
             if embedding_text:
-                merged["embedding_vector"] = get_passage_embedding(embedding_text)
+                embedding_inputs.append((doc_id, embedding_text))
             else:
                 merged.pop("embedding_vector", None)
 
             merged["ingest_time"] = now.isoformat()
             documents.append((doc_id, merged))
 
+        t_after_prepare = _time.monotonic()
+
+        if embedding_inputs:
+            texts = [text for _, text in embedding_inputs]
+            vectors = get_passage_embeddings_batch(texts)
+            doc_embeddings = {
+                doc_id: vec for (doc_id, _), vec in zip(embedding_inputs, vectors)
+            }
+            for idx, (doc_id, merged) in enumerate(documents):
+                embedding = doc_embeddings.get(doc_id)
+                if embedding is not None:
+                    merged["embedding_vector"] = embedding
+                    documents[idx] = (doc_id, merged)
+
+        t_after_embedding = _time.monotonic()
+
         if documents:
             await self.scene_opensearch.bulk_index_scenes(documents)
 
-        t_end = _time.monotonic()
+        t_after_index = _time.monotonic()
 
         logger.info(
             "scene_enrich_completed",
@@ -297,7 +314,9 @@ class SceneIngestService:
             video_id=request.video_id,
             updated_count=len(documents),
             skipped_count=skipped,
-            duration_ms=round((t_end - t_start) * 1000, 1),
+            duration_embedding_ms=round((t_after_embedding - t_after_prepare) * 1000, 1),
+            duration_indexing_ms=round((t_after_index - t_after_embedding) * 1000, 1),
+            duration_total_ms=round((t_after_index - t_start) * 1000, 1),
         )
 
         return {

@@ -16,6 +16,10 @@ def get_opensearch_client() -> AsyncOpenSearch:
         use_ssl=False,
         verify_certs=False,
         ssl_show_warn=False,
+        timeout=60,
+        max_retries=3,
+        retry_on_timeout=True,
+        pool_maxsize=20,
     )
 
 
