@@ -75,11 +75,19 @@ def _enforce_connection_lease(
     connection: DriveConnection,
     provided_token: str | None,
 ) -> None:
-    """Validate lease_token on a connection. Raises 409 on mismatch/expiry."""
+    """Validate lease_token on a connection. Raises 409 on mismatch/expiry.
+
+    When ``provided_token`` is None the check is skipped entirely.  This
+    allows the processing path (which holds a *file* lease, not a connection
+    lease) to obtain Google access tokens without conflicting with the
+    discovery scheduler that periodically holds the connection lease.
+    """
     if connection.lease_token is None:
         return  # No active lease — allow (backward compat during migration)
+    if provided_token is None:
+        return  # Caller has no connection lease — allow (processing path)
 
-    if provided_token is None or provided_token != connection.lease_token:
+    if provided_token != connection.lease_token:
         logger.warning(
             "internal_sync_lease_token_mismatch",
             connection_id=str(connection.id),

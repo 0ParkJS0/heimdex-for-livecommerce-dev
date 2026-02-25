@@ -69,7 +69,7 @@ class SyncCheckpointResponse(BaseModel):
 class TokenRequest(BaseModel):
     """Request body for POST /internal/drive/sync/connections/{id}/token."""
 
-    lease_token: str
+    lease_token: str | None = None
 
 
 class TokenResponse(BaseModel):

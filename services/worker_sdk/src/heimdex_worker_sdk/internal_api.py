@@ -253,10 +253,17 @@ class InternalAPIClient:
         data = self._request_with_retry("PATCH", url, json=payload)
         return data.get("ok", False)
 
-    def get_drive_token(self, connection_id: UUID, *, lease_token: str) -> AccessToken:
-        """Get a short-lived Google access token for a connection."""
+    def get_drive_token(self, connection_id: UUID, *, lease_token: Optional[str] = None) -> AccessToken:
+        """Get a short-lived Google access token for a connection.
+
+        When ``lease_token`` is None the API skips connection-lease validation,
+        which is the correct path for the processing worker (it holds a file
+        lease, not a connection lease).
+        """
         url = f"{self.base_url.rstrip('/')}/internal/drive/sync/connections/{connection_id}/token"
-        payload = {"lease_token": lease_token}
+        payload: dict[str, Any] = {}
+        if lease_token is not None:
+            payload["lease_token"] = lease_token
         data = self._request_with_retry("POST", url, json=payload)
         return AccessToken(
             access_token=data["access_token"],

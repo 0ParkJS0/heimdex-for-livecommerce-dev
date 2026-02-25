@@ -63,30 +63,52 @@ async def poll_and_discover(api_client: InternalAPIClient) -> None:
 
 def _make_sqs_callback(api_client, settings):
     """Create the SQS message callback for processing.
-
-    The SQS path only handles processing claims — discovery stays HTTP-only.
-    The callback converts the SQS message to a ClaimedProcessingFile and
-    calls the same _process_single_file function used by the legacy poll.
+    The SQS message is treated as a wake-up signal.  On receipt the callback
+    claims the file via the HTTP API (which issues a lease_token via atomic
+    SKIP LOCKED) and then calls ``_process_single_file`` with the properly
+    claimed file.  This guarantees the same lease semantics used by all API
+    endpoints (status updates, token broker, etc.).
     """
     from heimdex_worker_sdk.message_adapters import sqs_to_claimed_processing_file
     from src.tasks.process import _process_single_file
 
     def callback(message):
-        claimed_file = sqs_to_claimed_processing_file(message)
-        org_id_str = str(claimed_file.org_id)
-
+        # Parse message for org_id (used for per-org concurrency check only)
+        sqs_file = sqs_to_claimed_processing_file(message)
+        org_id_str = str(sqs_file.org_id)
         # Per-org concurrency check (global semaphore already held by SQSConsumerLoop)
         with _org_lock:
             if _org_slots[org_id_str] >= settings.drive_worker_per_org_concurrency:
                 logger.info(
                     "sqs_processing_per_org_limit",
-                    extra={"org_id": org_id_str, "file_id": str(claimed_file.id)},
+                    extra={"org_id": org_id_str, "file_id": str(sqs_file.id)},
                 )
                 # Raise to trigger SQS redelivery after visibility timeout
                 raise RuntimeError(f"Per-org concurrency limit reached for {org_id_str}")
             _org_slots[org_id_str] += 1
-
         try:
+            # Claim the file via HTTP API to obtain a real lease_token.
+            # The SQS message is just a notification; the API claim does the
+            # atomic SKIP LOCKED and assigns a lease that status-update and
+            # token-broker endpoints require.
+            claimed_files = api_client.claim_processing(limit=1)
+            if not claimed_files:
+                logger.info(
+                    "sqs_no_claimable_file",
+                    extra={"sqs_file_id": str(sqs_file.id), "org_id": org_id_str},
+                )
+                return
+
+            claimed_file = claimed_files[0]
+            logger.info(
+                "sqs_file_claimed_via_api",
+                extra={
+                    "file_id": str(claimed_file.id),
+                    "video_id": claimed_file.video_id,
+                    "file_name": claimed_file.file_name,
+                    "has_lease": claimed_file.lease_token is not None,
+                },
+            )
             _process_single_file(
                 api_client=api_client,
                 settings=settings,

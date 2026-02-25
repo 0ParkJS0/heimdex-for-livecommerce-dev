@@ -106,10 +106,12 @@ def _process_single_file(
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Get access token via token broker
+        # Get access token via token broker.
+        # Pass lease_token=None because the processing path holds a *file*
+        # lease, not a *connection* lease.  The token endpoint allows None.
         token_info = api_client.get_drive_token(
             claimed_file.connection_id,
-            lease_token=claimed_file.lease_token,
+            lease_token=None,
         )
         service = _build_drive_service(token_info.access_token)
 
