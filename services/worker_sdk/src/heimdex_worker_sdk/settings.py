@@ -75,8 +75,9 @@ class WorkerSettings(BaseSettings):
     drive_ocr_max_frames_per_video: int = 300
 
 
-    # --- SQS (dormant — Phase 0) ---
+    # --- SQS (Phase 0 producer / Phase 2 consumer) ---
     sqs_enabled: bool = False
+    sqs_consumer_enabled: bool = False
     sqs_endpoint_url: str = ""
     sqs_region: str = "ap-northeast-2"
     sqs_processing_queue_url: str = ""

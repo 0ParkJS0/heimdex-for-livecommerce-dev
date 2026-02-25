@@ -237,6 +237,11 @@ services:
       - DRIVE_PROXY_BUFSIZE=${DRIVE_PROXY_BUFSIZE:-5000k}
       - DRIVE_ENRICHMENT_ENABLED=${DRIVE_ENRICHMENT_ENABLED:-false}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # SQS consumer configuration (Phase 2)
+      - SQS_CONSUMER_ENABLED=${SQS_CONSUMER_ENABLED:-false}
+      - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
+      - SQS_REGION=${SQS_REGION:-ap-northeast-2}
+      - SQS_PROCESSING_QUEUE_URL=${SQS_PROCESSING_QUEUE_URL:-}
     volumes:
       - ./services/drive-worker:/app
       # Mount pipeline repos for scene detection + keyframe extraction (V3a)
@@ -275,6 +280,11 @@ services:
       - DRIVE_OCR_MAX_FRAMES_PER_SCENE=${DRIVE_OCR_MAX_FRAMES_PER_SCENE:-10}
       - DRIVE_OCR_MAX_FRAMES_PER_VIDEO=${DRIVE_OCR_MAX_FRAMES_PER_VIDEO:-300}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # SQS consumer configuration (Phase 2)
+      - SQS_CONSUMER_ENABLED=${SQS_CONSUMER_ENABLED:-false}
+      - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
+      - SQS_REGION=${SQS_REGION:-ap-northeast-2}
+      - SQS_OCR_QUEUE_URL=${SQS_OCR_QUEUE_URL:-}
     volumes:
       - ./services/drive-ocr-worker:/app
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
@@ -346,6 +356,11 @@ services:
       - HF_HOME=/data/huggingface
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
       - MKL_NUM_THREADS=${MKL_NUM_THREADS:-2}
+      # SQS consumer configuration (Phase 2)
+      - SQS_CONSUMER_ENABLED=${SQS_CONSUMER_ENABLED:-false}
+      - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
+      - SQS_REGION=${SQS_REGION:-ap-northeast-2}
+      - SQS_CAPTION_QUEUE_URL=${SQS_CAPTION_QUEUE_URL:-}
     volumes:
       - ./services/drive-caption-worker:/app
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
@@ -388,6 +403,11 @@ services:
       - DRIVE_STT_CONCURRENCY=${DRIVE_STT_CONCURRENCY:-1}
       - DRIVE_STT_MAX_AUDIO_SECONDS=${DRIVE_STT_MAX_AUDIO_SECONDS:-3600}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # SQS consumer configuration (Phase 2)
+      - SQS_CONSUMER_ENABLED=${SQS_CONSUMER_ENABLED:-false}
+      - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
+      - SQS_REGION=${SQS_REGION:-ap-northeast-2}
+      - SQS_STT_QUEUE_URL=${SQS_STT_QUEUE_URL:-}
     volumes:
       - ./services/drive-stt-worker:/app
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro

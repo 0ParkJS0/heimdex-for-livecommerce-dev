@@ -2,27 +2,30 @@ import asyncio
 import importlib
 import logging
 import signal
-from threading import Lock
+import threading
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_global_active = 0
-_global_lock = Lock()
+# Shared concurrency semaphore — acquired by both SQS consumer and HTTP poll.
+_semaphore: Optional[threading.Semaphore] = None
+
+
+def _init_semaphore(max_concurrent: int) -> threading.Semaphore:
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = threading.Semaphore(max_concurrent)
+    return _semaphore
 
 
 def _acquire_slot(settings) -> bool:
-    global _global_active
-    with _global_lock:
-        if _global_active >= settings.drive_ocr_concurrency:
-            return False
-        _global_active += 1
-        return True
+    sem = _init_semaphore(settings.drive_ocr_concurrency)
+    return sem.acquire(blocking=False)
 
 
 def _release_slot() -> None:
-    global _global_active
-    with _global_lock:
-        _global_active = max(0, _global_active - 1)
+    if _semaphore is not None:
+        _semaphore.release()
 
 
 async def poll_and_process(api_client, ocr_engine=None) -> None:
@@ -45,6 +48,23 @@ async def poll_and_process(api_client, ocr_engine=None) -> None:
         logger.exception("ocr_poll_cycle_failed")
     finally:
         _release_slot()
+
+
+def _make_sqs_callback(api_client, settings, ocr_engine):
+    """Create the SQS message callback for OCR processing."""
+    from heimdex_worker_sdk.message_adapters import sqs_to_claimed_file
+    _process_single_ocr = importlib.import_module("src.tasks.ocr")._process_single_ocr
+
+    def callback(message):
+        claimed_file = sqs_to_claimed_file(message)
+        _process_single_ocr(
+            api_client=api_client,
+            settings=settings,
+            claimed_file=claimed_file,
+            ocr_engine=ocr_engine,
+        )
+
+    return callback
 
 
 def main() -> None:
@@ -73,6 +93,33 @@ def main() -> None:
     ocr_engine = create_ocr_engine(lang="korean", use_gpu=False)
     logger.info("ocr_engine_loaded_once")
 
+    # Initialize shared semaphore before starting any consumers
+    semaphore = _init_semaphore(settings.drive_ocr_concurrency)
+
+    # ── SQS Consumer (Phase 2) ──────────────────────────────────────
+    sqs_consumer = None
+    if settings.sqs_consumer_enabled and settings.sqs_ocr_queue_url:
+        from heimdex_worker_sdk.sqs_client import SQSJobClient
+        from heimdex_worker_sdk.sqs_consumer import SQSConsumerLoop
+
+        sqs_client = SQSJobClient(
+            queue_url=settings.sqs_ocr_queue_url,
+            region=settings.sqs_region,
+            endpoint_url=settings.sqs_endpoint_url or None,
+        )
+        sqs_consumer = SQSConsumerLoop(
+            sqs_client=sqs_client,
+            process_callback=_make_sqs_callback(api_client, settings, ocr_engine),
+            semaphore=semaphore,
+            visibility_timeout=60,
+            heartbeat_interval=40,
+            worker_name="ocr",
+        )
+        sqs_consumer.start()
+    elif settings.sqs_consumer_enabled:
+        logger.warning("sqs_consumer_enabled_but_no_queue_url", extra={"queue": "ocr"})
+
+    # ── Legacy HTTP Poll (always active during Phase 2) ─────────────
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         poll_and_process,
@@ -90,6 +137,8 @@ def main() -> None:
         def shutdown(*_: object) -> None:
             logger.info("shutdown_signal_received")
             scheduler.shutdown(wait=False)
+            if sqs_consumer is not None:
+                sqs_consumer.stop(timeout=30.0)
             stop_event.set()
 
         loop.add_signal_handler(signal.SIGTERM, shutdown)
@@ -102,6 +151,7 @@ def main() -> None:
                 "poll_interval": settings.drive_ocr_poll_interval_seconds,
                 "concurrency": settings.drive_ocr_concurrency,
                 "max_frames_per_video": settings.drive_ocr_max_frames_per_video,
+                "sqs_consumer_enabled": settings.sqs_consumer_enabled,
             },
         )
         await stop_event.wait()

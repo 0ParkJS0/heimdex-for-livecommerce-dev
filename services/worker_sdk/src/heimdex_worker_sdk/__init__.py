@@ -22,6 +22,15 @@ from heimdex_worker_sdk.internal_api import (
 )
 
 from heimdex_worker_sdk.sqs_client import SQSJobClient, SQSMessage
+from heimdex_worker_sdk.sqs_consumer import (
+    InvalidMessageError,
+    SQSConsumerLoop,
+    VisibilityHeartbeat,
+)
+from heimdex_worker_sdk.message_adapters import (
+    sqs_to_claimed_file,
+    sqs_to_claimed_processing_file,
+)
 
 __all__ = [
     "WorkerSettings",
@@ -35,6 +44,11 @@ __all__ = [
     "ClaimedProcessingFile",
     "SQSJobClient",
     "SQSMessage",
+    "InvalidMessageError",
+    "SQSConsumerLoop",
+    "VisibilityHeartbeat",
+    "sqs_to_claimed_file",
+    "sqs_to_claimed_processing_file",
     "audio_s3_key",
     "drive_video_id",
     "enrichment_keyframe_s3_key",

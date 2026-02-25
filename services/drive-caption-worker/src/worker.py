@@ -2,27 +2,30 @@ import asyncio
 import importlib
 import logging
 import signal
-from threading import Lock
+import threading
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_global_active = 0
-_global_lock = Lock()
+# Shared concurrency semaphore — acquired by both SQS consumer and HTTP poll.
+_semaphore: Optional[threading.Semaphore] = None
+
+
+def _init_semaphore(max_concurrent: int) -> threading.Semaphore:
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = threading.Semaphore(max_concurrent)
+    return _semaphore
 
 
 def _acquire_slot(settings) -> bool:
-    global _global_active
-    with _global_lock:
-        if _global_active >= settings.drive_caption_concurrency:
-            return False
-        _global_active += 1
-        return True
+    sem = _init_semaphore(settings.drive_caption_concurrency)
+    return sem.acquire(blocking=False)
 
 
 def _release_slot() -> None:
-    global _global_active
-    with _global_lock:
-        _global_active = max(0, _global_active - 1)
+    if _semaphore is not None:
+        _semaphore.release()
 
 
 async def poll_and_process(api_client, caption_engine=None) -> None:
@@ -45,6 +48,23 @@ async def poll_and_process(api_client, caption_engine=None) -> None:
         logger.exception("caption_poll_cycle_failed")
     finally:
         _release_slot()
+
+
+def _make_sqs_callback(api_client, settings, caption_engine):
+    """Create the SQS message callback for caption processing."""
+    from heimdex_worker_sdk.message_adapters import sqs_to_claimed_file
+    _process_single_caption = importlib.import_module("src.tasks.caption")._process_single_caption
+
+    def callback(message):
+        claimed_file = sqs_to_claimed_file(message)
+        _process_single_caption(
+            api_client=api_client,
+            settings=settings,
+            claimed_file=claimed_file,
+            caption_engine=caption_engine,
+        )
+
+    return callback
 
 
 def main() -> None:
@@ -84,6 +104,33 @@ def main() -> None:
         caption_engine = create_caption_engine(model=model_key, use_gpu=False)
     logger.info("caption_engine_loaded_once", extra={"model": settings.drive_caption_model})
 
+    # Initialize shared semaphore before starting any consumers
+    semaphore = _init_semaphore(settings.drive_caption_concurrency)
+
+    # ── SQS Consumer (Phase 2) ──────────────────────────────────────
+    sqs_consumer = None
+    if settings.sqs_consumer_enabled and settings.sqs_caption_queue_url:
+        from heimdex_worker_sdk.sqs_client import SQSJobClient
+        from heimdex_worker_sdk.sqs_consumer import SQSConsumerLoop
+
+        sqs_client = SQSJobClient(
+            queue_url=settings.sqs_caption_queue_url,
+            region=settings.sqs_region,
+            endpoint_url=settings.sqs_endpoint_url or None,
+        )
+        sqs_consumer = SQSConsumerLoop(
+            sqs_client=sqs_client,
+            process_callback=_make_sqs_callback(api_client, settings, caption_engine),
+            semaphore=semaphore,
+            visibility_timeout=60,
+            heartbeat_interval=40,
+            worker_name="caption",
+        )
+        sqs_consumer.start()
+    elif settings.sqs_consumer_enabled:
+        logger.warning("sqs_consumer_enabled_but_no_queue_url", extra={"queue": "caption"})
+
+    # ── Legacy HTTP Poll (always active during Phase 2) ─────────────
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         poll_and_process,
@@ -101,6 +148,8 @@ def main() -> None:
         def shutdown(*_: object) -> None:
             logger.info("shutdown_signal_received")
             scheduler.shutdown(wait=False)
+            if sqs_consumer is not None:
+                sqs_consumer.stop(timeout=30.0)
             stop_event.set()
 
         loop.add_signal_handler(signal.SIGTERM, shutdown)
@@ -112,6 +161,7 @@ def main() -> None:
             extra={
                 "poll_interval": settings.drive_caption_poll_interval_seconds,
                 "concurrency": settings.drive_caption_concurrency,
+                "sqs_consumer_enabled": settings.sqs_consumer_enabled,
             },
         )
         await stop_event.wait()

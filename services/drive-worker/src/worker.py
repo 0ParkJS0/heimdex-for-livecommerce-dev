@@ -2,9 +2,10 @@ import asyncio
 import logging
 import shutil
 import signal
+import threading
 from collections import defaultdict
 from pathlib import Path
-from threading import Lock
+from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from heimdex_worker_sdk.internal_api import InternalAPIClient
@@ -16,9 +17,17 @@ from src.tasks.process import process_pending_files
 logger = logging.getLogger(__name__)
 
 _org_slots: dict[str, int] = defaultdict(int)
-_org_lock = Lock()
-_global_active = 0
-_global_lock = Lock()
+_org_lock = threading.Lock()
+
+# Global concurrency semaphore — shared between HTTP poll and SQS consumer.
+_global_semaphore: Optional[threading.Semaphore] = None
+
+
+def _init_semaphore(max_concurrent: int) -> threading.Semaphore:
+    global _global_semaphore
+    if _global_semaphore is None:
+        _global_semaphore = threading.Semaphore(max_concurrent)
+    return _global_semaphore
 
 
 def _check_disk_budget(temp_dir: Path, budget_gb: float) -> bool:
@@ -30,22 +39,21 @@ def _check_disk_budget(temp_dir: Path, budget_gb: float) -> bool:
 
 
 def _acquire_slot(org_id: str, settings) -> bool:
-    global _global_active
-    with _global_lock:
-        if _global_active >= settings.drive_worker_global_concurrency:
+    sem = _init_semaphore(settings.drive_worker_global_concurrency)
+    acquired = sem.acquire(blocking=False)
+    if not acquired:
+        return False
+    with _org_lock:
+        if _org_slots[org_id] >= settings.drive_worker_per_org_concurrency:
+            sem.release()
             return False
-        with _org_lock:
-            if _org_slots[org_id] >= settings.drive_worker_per_org_concurrency:
-                return False
-            _global_active += 1
-            _org_slots[org_id] += 1
-            return True
+        _org_slots[org_id] += 1
+        return True
 
 
 def _release_slot(org_id: str) -> None:
-    global _global_active
-    with _global_lock:
-        _global_active = max(0, _global_active - 1)
+    if _global_semaphore is not None:
+        _global_semaphore.release()
     with _org_lock:
         _org_slots[org_id] = max(0, _org_slots[org_id] - 1)
 
@@ -76,6 +84,44 @@ async def poll_and_process(api_client: InternalAPIClient) -> None:
         logger.exception("poll_cycle_failed")
 
 
+def _make_sqs_callback(api_client, settings):
+    """Create the SQS message callback for processing.
+
+    The SQS path only handles processing claims — discovery stays HTTP-only.
+    The callback converts the SQS message to a ClaimedProcessingFile and
+    calls the same _process_single_file function used by HTTP poll.
+    """
+    from heimdex_worker_sdk.message_adapters import sqs_to_claimed_processing_file
+    from src.tasks.process import _process_single_file
+
+    def callback(message):
+        claimed_file = sqs_to_claimed_processing_file(message)
+        org_id_str = str(claimed_file.org_id)
+
+        # Per-org concurrency check (global semaphore already held by SQSConsumerLoop)
+        with _org_lock:
+            if _org_slots[org_id_str] >= settings.drive_worker_per_org_concurrency:
+                logger.info(
+                    "sqs_processing_per_org_limit",
+                    extra={"org_id": org_id_str, "file_id": str(claimed_file.id)},
+                )
+                # Raise to trigger SQS redelivery after visibility timeout
+                raise RuntimeError(f"Per-org concurrency limit reached for {org_id_str}")
+            _org_slots[org_id_str] += 1
+
+        try:
+            _process_single_file(
+                api_client=api_client,
+                settings=settings,
+                claimed_file=claimed_file,
+            )
+        finally:
+            with _org_lock:
+                _org_slots[org_id_str] = max(0, _org_slots[org_id_str] - 1)
+
+    return callback
+
+
 def main() -> None:
     settings = get_worker_settings()
 
@@ -97,6 +143,35 @@ def main() -> None:
     temp_dir = Path(settings.drive_temp_dir)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
+    # Initialize shared semaphore before starting any consumers
+    semaphore = _init_semaphore(settings.drive_worker_global_concurrency)
+
+    # ── SQS Consumer (Phase 2) ──────────────────────────────────────
+    # Only handles processing claims. Discovery stays HTTP-only.
+    sqs_consumer = None
+    if settings.sqs_consumer_enabled and settings.sqs_processing_queue_url:
+        from heimdex_worker_sdk.sqs_client import SQSJobClient
+        from heimdex_worker_sdk.sqs_consumer import SQSConsumerLoop
+
+        sqs_client = SQSJobClient(
+            queue_url=settings.sqs_processing_queue_url,
+            region=settings.sqs_region,
+            endpoint_url=settings.sqs_endpoint_url or None,
+        )
+        sqs_consumer = SQSConsumerLoop(
+            sqs_client=sqs_client,
+            process_callback=_make_sqs_callback(api_client, settings),
+            semaphore=semaphore,
+            visibility_timeout=120,
+            heartbeat_interval=80,
+            worker_name="processing",
+        )
+        sqs_consumer.start()
+    elif settings.sqs_consumer_enabled:
+        logger.warning("sqs_consumer_enabled_but_no_queue_url", extra={"queue": "processing"})
+
+    # ── Legacy HTTP Poll (always active during Phase 2) ─────────────
+    # Handles both discovery AND processing claims
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         poll_and_process,
@@ -114,6 +189,8 @@ def main() -> None:
         def shutdown(*_: object) -> None:
             logger.info("shutdown_signal_received")
             scheduler.shutdown(wait=False)
+            if sqs_consumer is not None:
+                sqs_consumer.stop(timeout=30.0)
             stop_event.set()
 
         loop.add_signal_handler(signal.SIGTERM, shutdown)
@@ -127,6 +204,7 @@ def main() -> None:
                 "global_concurrency": settings.drive_worker_global_concurrency,
                 "per_org_concurrency": settings.drive_worker_per_org_concurrency,
                 "disk_budget_gb": settings.drive_temp_disk_budget_gb,
+                "sqs_consumer_enabled": settings.sqs_consumer_enabled,
             },
         )
         await stop_event.wait()
