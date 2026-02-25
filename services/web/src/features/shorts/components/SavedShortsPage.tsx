@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { exportToPremiere } from "@/lib/agent-export";
-import { exportEdlCloud } from "@/lib/cloud-export";
+import { exportEdlCloud, downloadClipCloud } from "@/lib/cloud-export";
 import { checkAgentHealth, getAgentClipUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ExportDialog } from "@/features/videos/components/ExportDialog";
@@ -156,23 +156,40 @@ export function SavedShortsPage() {
     [items, selectedIds],
   );
 
-  const handleClipDownload = useCallback(() => {
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleClipDownload = useCallback(async () => {
     setShowExportMenu(false);
-    for (const short of selectedShorts) {
-      const startMs = short.start_ms ?? 0;
-      const endMs = short.end_ms ?? 0;
+    setIsDownloading(true);
+    setExportError(null);
+    try {
+      for (const short of selectedShorts) {
+        const startMs = short.start_ms ?? 0;
+        const endMs = short.end_ms ?? 0;
       const name = short.title ?? `shorts_${short.video_id}`;
-      const url = startMs < endMs
-        ? getAgentClipUrl(short.video_id, startMs, endMs, name)
-        : `http://127.0.0.1:8787/playback/file?file_id=${encodeURIComponent(short.video_id)}`;
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+        if (short.video_id.startsWith("gd_") && startMs < endMs) {
+          await downloadClipCloud(
+            { video_id: short.video_id, clip_name: name, start_ms: startMs, end_ms: endMs },
+            getAccessToken,
+          );
+        } else {
+          const url = startMs < endMs
+            ? getAgentClipUrl(short.video_id, startMs, endMs, name)
+            : `http://127.0.0.1:8787/playback/file?file_id=${encodeURIComponent(short.video_id)}`;
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+      }
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "클립 다운로드에 실패했습니다");
+    } finally {
+      setIsDownloading(false);
     }
-  }, [selectedShorts]);
+  }, [selectedShorts, getAccessToken]);
 
   const isCloudExport = useMemo(
     () => selectedShorts.length > 0 && selectedShorts.every((s) => s.video_id.startsWith("gd_")),
@@ -321,22 +338,22 @@ export function SavedShortsPage() {
           <div className="relative" ref={exportMenuRef}>
             <button
               type="button"
-              disabled={selectedIds.size === 0 || isExporting}
+              disabled={selectedIds.size === 0 || isExporting || isDownloading}
               onClick={() => setShowExportMenu((v) => !v)}
               className={cn(
                 "inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors",
-                selectedIds.size > 0 && !isExporting
+                selectedIds.size > 0 && !isExporting && !isDownloading
                   ? "bg-indigo-500 text-white hover:bg-indigo-600"
                   : "bg-gray-200 text-gray-400 cursor-not-allowed",
               )}
             >
-              {isExporting ? (
+              {isExporting || isDownloading ? (
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               ) : (
                 <DownloadIcon />
               )}
-              {isExporting ? "내보내는 중..." : "내보내기"}
-              {!isExporting && <ChevronDownIcon />}
+              {isDownloading ? "다운로드 중..." : isExporting ? "내보내는 중..." : "내보내기"}
+              {!isExporting && !isDownloading && <ChevronDownIcon />}
             </button>
             {showExportMenu && (
               <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">

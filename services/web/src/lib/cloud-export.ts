@@ -77,3 +77,63 @@ export async function exportEdlCloud(
     filename,
   };
 }
+
+
+export interface CloudClipRequest {
+  video_id: string;
+  clip_name: string;
+  start_ms: number;
+  end_ms: number;
+}
+
+/**
+ * Download a trimmed video clip from a cloud (gd_) video.
+ * The server extracts the clip segment using ffmpeg and returns an MP4.
+ */
+export async function downloadClipCloud(
+  request: CloudClipRequest,
+  getToken?: TokenGetter,
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (getToken) {
+    try {
+      const token = await getToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // proceed without auth
+    }
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/export/clip`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Clip download failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;\s]+)/i);
+  const plainMatch = disposition.match(/filename="?([^"]+)"?/);
+  const filename = utf8Match
+    ? decodeURIComponent(utf8Match[1])
+    : (plainMatch?.[1] ?? `${request.clip_name || "clip"}.mp4`);
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
