@@ -419,13 +419,10 @@ function SyncContent() {
   }, [getAccessToken, loadDriveConnections]);
 
   const handleFolderSelected = useCallback(async (folderId: string, folderName: string, folderPath: string) => {
-    const defaultLibraryId = driveConnections[0]?.library_id;
-    if (!defaultLibraryId) {
-      console.error("No library_id available for folder connection");
-      return;
-    }
+    // library_id is optional — API auto-selects the org's default library if not provided
+    const libraryId = driveConnections[0]?.library_id ?? null;
     try {
-      await createFolderConnection(defaultLibraryId, folderId, folderName, folderPath, getAccessToken);
+      await createFolderConnection(libraryId, folderId, folderName, folderPath, getAccessToken);
       setShowFolderBrowser(false);
       loadDriveConnections();
     } catch (err) {

@@ -12,7 +12,7 @@ class DriveConnectionCreate(BaseModel):
 
 
 class DriveFolderConnectionCreate(BaseModel):
-    library_id: UUID
+    library_id: Optional[UUID] = None
     folder_id: str = Field(..., min_length=1, max_length=256)
     folder_name: str = Field(..., min_length=1, max_length=500)
     folder_path: str = Field("", max_length=2000)

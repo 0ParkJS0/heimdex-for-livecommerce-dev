@@ -284,7 +284,7 @@ export async function browseDriveFolders(
 }
 
 export async function createFolderConnection(
-  libraryId: string,
+  libraryId: string | null,
   folderId: string,
   folderName: string,
   folderPath: string,
@@ -296,7 +296,7 @@ export async function createFolderConnection(
       method: "POST",
       headers,
       body: JSON.stringify({
-        library_id: libraryId,
+        ...(libraryId ? { library_id: libraryId } : {}),
         folder_id: folderId,
         folder_name: folderName,
         folder_path: folderPath,

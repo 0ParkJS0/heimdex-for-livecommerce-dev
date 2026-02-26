@@ -6,6 +6,7 @@ from uuid import UUID
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -341,11 +342,28 @@ async def create_folder_connection(
             detail="Google Drive is not connected. Please connect via OAuth first.",
         )
 
+    # Auto-select library if not provided
+    library_id = body.library_id
+    if library_id is None:
+        from app.modules.libraries.models import Library
+        result = await db.execute(
+            select(Library.id).where(Library.org_id == org_ctx.org_id).order_by(Library.created_at).limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            # Auto-create a default library for the org
+            lib = Library(org_id=org_ctx.org_id, name="Default")
+            db.add(lib)
+            await db.flush()
+            library_id = lib.id
+        else:
+            library_id = row
+
     from app.modules.drive.models import DriveConnection
 
     conn = DriveConnection(
         org_id=org_ctx.org_id,
-        library_id=body.library_id,
+        library_id=library_id,
         scope_type="folder",
         drive_id=None,
         drive_name=None,
