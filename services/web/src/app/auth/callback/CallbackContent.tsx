@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useRouter } from "next/navigation";
 import { isAuth0Enabled } from "@/lib/auth";
@@ -17,6 +17,8 @@ export default function CallbackContent() {
 
 function Auth0Callback({ router }: { router: ReturnType<typeof useRouter> }) {
   const { isLoading, error, isAuthenticated } = useAuth0();
+  const [callbackFailed, setCallbackFailed] = useState(false);
+  const hasRedirected = useRef(false);
 
   useEffect(() => {
     if (isLoading) return;
@@ -27,7 +29,24 @@ function Auth0Callback({ router }: { router: ReturnType<typeof useRouter> }) {
       return;
     }
 
-    router.replace("/");
+    // Successful authentication — redirect to app
+    if (isAuthenticated) {
+      if (!hasRedirected.current) {
+        hasRedirected.current = true;
+        router.replace("/");
+      }
+      return;
+    }
+
+    // Silent failure: SDK finished loading, no error, but not authenticated.
+    // This happens when the PKCE token exchange fails silently (e.g., corrupted
+    // sessionStorage transaction, stale authorization code, or rapid retry cycles).
+    // Instead of redirecting to / (which triggers a login loop), show an error.
+    console.warn(
+      "[Heimdex] Auth0 callback: SDK finished but user is not authenticated. " +
+      "Possible silent token exchange failure."
+    );
+    setCallbackFailed(true);
   }, [isLoading, error, isAuthenticated, router]);
 
   if (isLoading) {
@@ -35,17 +54,24 @@ function Auth0Callback({ router }: { router: ReturnType<typeof useRouter> }) {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4" />
-          <p className="text-gray-600">Completing login...</p>
+          <p className="text-gray-600">로그인 처리 중...</p>
         </div>
       </div>
     );
   }
 
   if (error) {
-    // Check if this is an email verification error from our Post-Login Action
+    // Check if this is an email verification error from our Post-Login Action.
+    // Auth0 may return different strings depending on the Action language/config:
+    //   - "email_not_verified" (custom action error code)
+    //   - "이메일 인증" (Korean custom message)
+    //   - "Please verify your email before continuing." (Auth0 default / action description)
+    //   - "verify your email" (partial match for safety)
+    const errorMsg = error.message?.toLowerCase() || "";
     const isEmailVerification =
-      error.message?.includes("email_not_verified") ||
-      error.message?.includes("이메일 인증");
+      errorMsg.includes("email_not_verified") ||
+      errorMsg.includes("이메일 인증") ||
+      errorMsg.includes("verify your email");
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -67,7 +93,7 @@ function Auth0Callback({ router }: { router: ReturnType<typeof useRouter> }) {
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold text-gray-900 mb-2">Login Error</h2>
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">로그인 오류</h2>
               <p className="text-gray-600 mb-6">{error.message}</p>
             </>
           )}
@@ -82,11 +108,36 @@ function Auth0Callback({ router }: { router: ReturnType<typeof useRouter> }) {
     );
   }
 
+  if (callbackFailed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center max-w-md mx-auto p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">로그인 처리에 실패했습니다</h2>
+          <p className="text-gray-600 mb-6">
+            브라우저 캐시 문제로 로그인이 완료되지 않았습니다.
+            아래 버튼을 눌러 다시 시도해 주세요.
+          </p>
+          <div className="space-y-3">
+            <button
+              onClick={() => router.replace("/login")}
+              className="w-full px-6 py-2.5 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors"
+            >
+              다시 로그인하기
+            </button>
+            <p className="text-xs text-gray-400">
+              문제가 계속되면 시크릿 모드(개인정보 보호 모드)에서 시도해 주세요.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4" />
-        <p className="text-gray-600">Redirecting...</p>
+        <p className="text-gray-600">리다이렉트 중...</p>
       </div>
     </div>
   );
