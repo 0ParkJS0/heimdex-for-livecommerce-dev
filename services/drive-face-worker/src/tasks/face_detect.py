@@ -126,12 +126,18 @@ def _process_single_face_detect(
             scene_cluster_map=scene_cluster_map,
         )
 
-        _upload_thumbnails(
-            settings=settings,
-            org_id=org_id,
-            cluster_id_by_index=cluster_id_by_index,
-            clusters=clusters,
-        )
+        try:
+            _upload_thumbnails(
+                settings=settings,
+                org_id=org_id,
+                cluster_id_by_index=cluster_id_by_index,
+                clusters=clusters,
+            )
+        except Exception as thumb_err:
+            logger.warning(
+                "face_thumbnail_upload_failed_non_fatal",
+                extra={"org_id": org_id, "video_id": video_id, "error": str(thumb_err)},
+            )
 
         api_client.update_job_status(
             file_id,
