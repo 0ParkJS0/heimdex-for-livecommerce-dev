@@ -38,7 +38,7 @@ async def list_videos(
     source_type: SourceType | None = Query(None, description="Filter by source type"),
     date_from: str | None = Query(None, description="Filter scenes ingested on or after this ISO-8601 date"),
     date_to: str | None = Query(None, description="Filter scenes ingested on or before this ISO-8601 date"),
-    sort: Literal["latest", "oldest"] = Query("latest", description="Sort order by ingest time"),
+    sort: Literal["latest", "alpha_asc", "alpha_desc"] = Query("latest", description="Sort order: latest (by date), alpha_asc/alpha_desc (by title)"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     after: str | None = Query(None, description="Cursor for next page"),
 ):

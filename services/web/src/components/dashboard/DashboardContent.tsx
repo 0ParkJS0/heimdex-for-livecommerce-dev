@@ -384,7 +384,7 @@ function DateRangeCalendar({
 // ---------------------------------------------------------------------------
 // SortDropdown
 // ---------------------------------------------------------------------------
-type SortOption = "latest" | "oldest";
+type SortOption = "latest" | "alpha_asc" | "alpha_desc";
 
 interface SortDropdownProps {
   value: SortOption;
@@ -393,7 +393,8 @@ interface SortDropdownProps {
 
 const SORT_LABELS: Record<SortOption, string> = {
   latest: "생성 일자순",
-  oldest: "총 비디오 수",
+  alpha_asc: "이름순 (ㄱ→ㅎ)",
+  alpha_desc: "이름순 (ㅎ→ㄱ)",
 };
 
 function SortDropdown({ value, onChange }: SortDropdownProps) {
@@ -421,7 +422,7 @@ function SortDropdown({ value, onChange }: SortDropdownProps) {
         <ChevronDownIcon className="h-4 w-4" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-36 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+        <div className="absolute right-0 top-full z-40 mt-1 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
           {(Object.keys(SORT_LABELS) as SortOption[]).map((opt) => (
             <button
               key={opt}

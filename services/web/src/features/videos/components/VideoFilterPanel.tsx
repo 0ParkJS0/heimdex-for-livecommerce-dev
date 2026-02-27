@@ -18,7 +18,7 @@ export function VideoFilterPanel({ facets, filters, onChange }: VideoFilterPanel
     onChange({ ...filters, source_type: sourceType });
   };
 
-  const handleSortChange = (sort: "latest" | "oldest") => {
+  const handleSortChange = (sort: "latest" | "alpha_asc" | "alpha_desc") => {
     onChange({ ...filters, sort });
   };
 
@@ -27,7 +27,7 @@ export function VideoFilterPanel({ facets, filters, onChange }: VideoFilterPanel
       <div>
         <h3 className="text-sm font-semibold text-gray-900 mb-2">Sort</h3>
         <div className="space-y-1">
-          {(["latest", "oldest"] as const).map((opt) => (
+          {(["latest", "alpha_asc", "alpha_desc"] as const).map((opt) => (
             <button
               key={opt}
               onClick={() => handleSortChange(opt)}
@@ -38,7 +38,7 @@ export function VideoFilterPanel({ facets, filters, onChange }: VideoFilterPanel
                   : "text-gray-700 hover:bg-gray-100",
               )}
             >
-              {opt === "latest" ? "Newest first" : "Oldest first"}
+              {opt === "latest" ? "Newest first" : opt === "alpha_asc" ? "A → Z" : "Z → A"}
             </button>
           ))}
         </div>

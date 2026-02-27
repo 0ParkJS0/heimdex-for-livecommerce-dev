@@ -84,7 +84,7 @@ export interface VideoFilters {
   source_type?: "gdrive" | "removable_disk" | "local";
   date_from?: string;
   date_to?: string;
-  sort?: "latest" | "oldest";
+  sort?: "latest" | "alpha_asc" | "alpha_desc";
   page_size?: number;
   after?: string;
 }

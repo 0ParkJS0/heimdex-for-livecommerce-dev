@@ -738,7 +738,7 @@ class SceneSearchClient:
 
         # Composite aggregation on video_id
         composite_sources: list[dict[str, Any]] = [
-            {"video_id": {"terms": {"field": "video_id", "order": "desc" if sort == "latest" else "asc"}}},
+            {"video_id": {"terms": {"field": "video_id", "order": "desc"}}},
         ]
 
         aggs: dict[str, Any] = {
@@ -816,8 +816,12 @@ class SceneSearchClient:
 
         if sort == "latest":
             videos.sort(key=lambda v: v["capture_time"] or v["latest_ingest_time"] or "", reverse=True)
+        elif sort == "alpha_asc":
+            videos.sort(key=lambda v: (v["video_title"] or "").lower())
+        elif sort == "alpha_desc":
+            videos.sort(key=lambda v: (v["video_title"] or "").lower(), reverse=True)
         else:
-            videos.sort(key=lambda v: v["capture_time"] or v["earliest_ingest_time"] or "")
+            videos.sort(key=lambda v: v["capture_time"] or v["latest_ingest_time"] or "", reverse=True)
 
         after_key_result = agg_result["videos"].get("after_key")
 

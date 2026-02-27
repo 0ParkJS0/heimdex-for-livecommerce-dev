@@ -260,8 +260,8 @@ describe("VideoFilterPanel", () => {
         onChange={onChange}
       />,
     );
-    await user.click(screen.getByText("Oldest first"));
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ sort: "oldest" }));
+    await user.click(screen.getByText("A → Z"));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ sort: "alpha_asc" }));
   });
 
   it("calls onChange when library selected", async () => {
