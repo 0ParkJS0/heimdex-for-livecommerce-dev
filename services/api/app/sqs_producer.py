@@ -32,6 +32,7 @@ _QUEUE_URL_ATTRS = {
     "stt": "sqs_stt_queue_url",
     "ocr": "sqs_ocr_queue_url",
     "transcode": "sqs_transcode_queue_url",
+    "face": "sqs_face_queue_url",
 }
 
 
@@ -159,7 +160,7 @@ def publish_enrichment_jobs(
 
     Called from ``update_processing_status`` when status transitions to 'indexed'.
 
-    * Caption + OCR published when ``keyframe_s3_prefix`` is set.
+    * Caption + OCR + Face published when ``keyframe_s3_prefix`` is set.
     * STT published when ``audio_s3_key`` is set.
     """
     now = datetime.now(timezone.utc)
@@ -167,7 +168,7 @@ def publish_enrichment_jobs(
     minute = now.strftime("%Y%m%dT%H%M")
 
     if keyframe_s3_prefix:
-        for job_type in ("caption", "ocr"):
+        for job_type in ("caption", "ocr", "face"):
             _publish(
                 job_type,
                 {
