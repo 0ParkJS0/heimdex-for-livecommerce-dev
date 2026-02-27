@@ -163,7 +163,7 @@ class InternalAPIClient:
         """Update enrichment status for a file.
         Args:
             file_id: Drive file UUID.
-            job_type: One of 'caption', 'stt', 'ocr'.
+            job_type: One of 'caption', 'stt', 'ocr', 'face'.
             status: One of 'done', 'failed'.
             error: Optional error description (max 2000 chars).
             lease_token: Lease token received from claim_jobs.

@@ -96,18 +96,21 @@ _STATUS_COLUMN_MAP = {
     "caption": "caption_status",
     "stt": "stt_status",
     "ocr": "ocr_status",
+    "face": "face_status",
 }
 
 _ERROR_COLUMN_MAP = {
     "caption": "caption_error",
     "stt": "enrichment_error",
     "ocr": "enrichment_error",
+    "face": "face_error",
 }
 
 _PREREQUISITE_MAP = {
     "caption": lambda: DriveFile.keyframe_s3_prefix.isnot(None),
     "stt": lambda: DriveFile.audio_s3_key.isnot(None),
     "ocr": lambda: DriveFile.keyframe_s3_prefix.isnot(None),
+    "face": lambda: DriveFile.keyframe_s3_prefix.isnot(None),
 }
 
 
@@ -272,13 +275,14 @@ async def update_job_status(
                 detail="lease_expired",
             )
 
-    # Build the three status values for enrichment_state computation.
+    # Build the four status values for enrichment_state computation.
     # The current request overrides the stored value for its job_type.
     stt = request.status if request.job_type == "stt" else drive_file.stt_status
     ocr = request.status if request.job_type == "ocr" else drive_file.ocr_status
     caption = request.status if request.job_type == "caption" else drive_file.caption_status
+    face = request.status if request.job_type == "face" else getattr(drive_file, "face_status", None)
 
-    new_state = _compute_enrichment_state(stt, ocr, caption)
+    new_state = _compute_enrichment_state(stt, ocr, caption, face)
     values: dict[str, object] = {
         status_col: request.status,
         "enrichment_state": new_state,
@@ -344,5 +348,6 @@ async def get_file_metadata(
         caption_status=drive_file.caption_status,
         stt_status=drive_file.stt_status,
         ocr_status=drive_file.ocr_status,
+        face_status=drive_file.face_status,
         enrichment_state=drive_file.enrichment_state,
     )

@@ -557,7 +557,7 @@ class DriveFileRepository:
             select(DriveFile).where(DriveFile.id == file_id)
         )
         df = result.scalar_one()
-        new_state = _compute_enrichment_state(df.stt_status, ocr_status, df.caption_status)
+        new_state = _compute_enrichment_state(df.stt_status, ocr_status, df.caption_status, getattr(df, 'face_status', None))
 
         values: dict[str, object] = {
             "ocr_status": ocr_status,
@@ -606,7 +606,7 @@ class DriveFileRepository:
             select(DriveFile).where(DriveFile.id == file_id)
         )
         df = result.scalar_one()
-        new_state = _compute_enrichment_state(df.stt_status, df.ocr_status, caption_status)
+        new_state = _compute_enrichment_state(df.stt_status, df.ocr_status, caption_status, getattr(df, 'face_status', None))
 
         values: dict[str, object] = {
             "caption_status": caption_status,
@@ -630,7 +630,7 @@ class DriveFileRepository:
             select(DriveFile).where(DriveFile.id == file_id)
         )
         df = result.scalar_one()
-        new_state = _compute_enrichment_state(stt_status, df.ocr_status, df.caption_status)
+        new_state = _compute_enrichment_state(stt_status, df.ocr_status, df.caption_status, getattr(df, 'face_status', None))
 
         values: dict[str, object] = {
             "stt_status": stt_status,
@@ -647,12 +647,13 @@ class DriveFileRepository:
 
 def _compute_enrichment_state(
     stt_status: Optional[str], ocr_status: Optional[str], caption_status: Optional[str] = None,
+    face_status: Optional[str] = None,
 ) -> str:
-    """Derive enrichment_state from stt_status + ocr_status.
+    """Derive enrichment_state from stt_status + ocr_status + caption_status + face_status.
 
     State priority: done > failed/failed_partial > running > pending.
     """
-    active = [s for s in (stt_status, ocr_status, caption_status) if s is not None]
+    active = [s for s in (stt_status, ocr_status, caption_status, face_status) if s is not None]
     if not active:
         return "pending"
     if all(s == "done" for s in active):

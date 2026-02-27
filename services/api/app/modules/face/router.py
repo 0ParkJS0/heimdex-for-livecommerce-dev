@@ -21,9 +21,10 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/internal/face", tags=["internal-face"])
 
 
-async def _verify_internal_api_key(
-    x_internal_api_key: str = Header(..., alias="X-Internal-Api-Key"),
+async def _verify_internal_token(
+    authorization: str = Header(..., alias="Authorization"),
 ) -> str:
+    """Validate internal Bearer token against DRIVE_INTERNAL_API_KEY."""
     settings = get_settings()
 
     if not settings.drive_internal_api_key:
@@ -33,21 +34,29 @@ async def _verify_internal_api_key(
             detail="Internal face API not configured",
         )
 
-    if not hmac.compare_digest(x_internal_api_key, settings.drive_internal_api_key):
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header",
+        )
+
+    token = parts[1]
+    if not hmac.compare_digest(token, settings.drive_internal_api_key):
         logger.warning("internal_face_invalid_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid internal API key",
         )
 
-    return x_internal_api_key
+    return token
 
 
 @router.post("/match", response_model=FaceMatchResponse)
 async def internal_face_match(
     request: FaceMatchRequest,
     x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
-    _token: str = Depends(_verify_internal_api_key),
+    _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
@@ -97,7 +106,7 @@ async def internal_face_match(
 async def internal_face_identities(
     request: FaceIdentityUpsertRequest,
     x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
-    _token: str = Depends(_verify_internal_api_key),
+    _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:

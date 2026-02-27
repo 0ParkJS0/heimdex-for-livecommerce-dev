@@ -167,6 +167,11 @@ class DriveFile(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # --- Face enrichment ---
+    face_status: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )  # pending | running | done | failed
+    face_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # --- Lease tracking (Internal API Hardening) ---
     lease_token: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
