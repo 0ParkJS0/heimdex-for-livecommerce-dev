@@ -32,7 +32,7 @@ class SceneSearchClient:
     """
 
     EMBEDDING_DIMENSION = 1024
-    INDEX_VERSION = "v1"
+    INDEX_VERSION = "v2"
 
     def __init__(self) -> None:
         self.settings = get_settings()

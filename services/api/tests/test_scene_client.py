@@ -51,7 +51,7 @@ class TestSceneSearchClient:
         """Index names follow {prefix}_scenes / {prefix}_scenes_{version} pattern."""
         client, _ = mock_scene_client
         assert client.alias_name == "test_scenes_scenes"
-        assert client.index_name == "test_scenes_scenes_v1"
+        assert client.index_name == "test_scenes_scenes_v2"
         assert client.EMBEDDING_DIMENSION == 1024
 
     # ------------------------------------------------------------------
