@@ -68,6 +68,7 @@ class UpsertResult:
     updated_count: int
     unchanged_count: int
     enqueued_jobs: dict[str, Any]
+    metadata_updates: list[dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,12 @@ class DeleteResult:
 
     deleted_count: int
     not_found_count: int
+
+
+@dataclass(frozen=True)
+class MetadataUpdateResult:
+    updated_scene_count: int
+    skipped_count: int
 
 
 @dataclass(frozen=True)
@@ -235,7 +242,31 @@ class InternalAPIClient:
             updated_count=data["updated_count"],
             unchanged_count=data["unchanged_count"],
             enqueued_jobs=data.get("enqueued_jobs", {}),
+            metadata_updates=data.get("metadata_updates", []),
         )
+
+    def update_metadata(
+        self,
+        connection_id: UUID,
+        *,
+        lease_token: str,
+        updates: list[dict[str, str]],
+    ) -> MetadataUpdateResult:
+        url = f"{self.base_url.rstrip('/')}/internal/drive/sync/connections/{connection_id}/update_metadata"
+        payload = {"lease_token": lease_token, "updates": updates}
+        data = self._request_with_retry("PATCH", url, json=payload)
+        return MetadataUpdateResult(
+            updated_scene_count=data.get("updated_scene_count", 0),
+            skipped_count=data.get("skipped_count", 0),
+        )
+
+    def list_connection_file_ids(
+        self,
+        connection_id: UUID,
+    ) -> set[str]:
+        url = f"{self.base_url.rstrip('/')}/internal/drive/sync/connections/{connection_id}/file_ids"
+        data = self._request_with_retry("GET", url)
+        return set(data.get("google_file_ids", []))
 
     def checkpoint(
         self,

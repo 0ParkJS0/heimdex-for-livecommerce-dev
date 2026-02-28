@@ -371,6 +371,26 @@ class TestUpsertFiles:
         assert result.updated_count == 0
         assert result.unchanged_count == 1
         assert result.enqueued_jobs == {"processing": 2}
+        assert result.metadata_updates == []
+
+    def test_upsert_files_includes_metadata_updates(self, client):
+        connection_id = uuid4()
+        resp_data = {
+            "created_count": 0,
+            "updated_count": 1,
+            "unchanged_count": 0,
+            "enqueued_jobs": {"processing": 1},
+            "metadata_updates": [{"video_id": "vid_1", "video_title": "renamed.mp4"}],
+        }
+
+        with patch.object(client._session, "request", return_value=_mock_response(200, resp_data)):
+            result = client.upsert_files(
+                connection_id,
+                lease_token="lease-123",
+                items=[{"provider_file_id": "abc"}],
+            )
+
+        assert result.metadata_updates == [{"video_id": "vid_1", "video_title": "renamed.mp4"}]
 
     def test_upsert_files_sends_correct_payload_and_url(self, client):
         connection_id = uuid4()
@@ -426,6 +446,41 @@ class TestCheckpoint:
             "last_full_sync_at": "2026-02-24T09:00:00+00:00",
             "error_message": "rate limited",
         }
+
+
+class TestMetadataSyncHelpers:
+    def test_update_metadata(self, client):
+        connection_id = uuid4()
+        resp_data = {"updated_scene_count": 12, "skipped_count": 2}
+        updates = [{"video_id": "vid_1", "video_title": "new_name.mp4"}]
+
+        with patch.object(client._session, "request", return_value=_mock_response(200, resp_data)) as mock_req:
+            result = client.update_metadata(
+                connection_id,
+                lease_token="lease-123",
+                updates=updates,
+            )
+
+        assert result.updated_scene_count == 12
+        assert result.skipped_count == 2
+        assert mock_req.call_args[0] == (
+            "PATCH",
+            f"http://api:8000/internal/drive/sync/connections/{connection_id}/update_metadata",
+        )
+        assert mock_req.call_args[1]["json"] == {"lease_token": "lease-123", "updates": updates}
+
+    def test_list_connection_file_ids(self, client):
+        connection_id = uuid4()
+        resp_data = {"google_file_ids": ["gf_1", "gf_2"], "total_count": 2}
+
+        with patch.object(client._session, "request", return_value=_mock_response(200, resp_data)) as mock_req:
+            result = client.list_connection_file_ids(connection_id)
+
+        assert result == {"gf_1", "gf_2"}
+        assert mock_req.call_args[0] == (
+            "GET",
+            f"http://api:8000/internal/drive/sync/connections/{connection_id}/file_ids",
+        )
 
 
 class TestGetDriveToken:
