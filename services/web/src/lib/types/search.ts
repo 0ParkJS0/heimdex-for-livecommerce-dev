@@ -76,6 +76,7 @@ export interface SegmentResult {
   thumbnail_url: string | null;
   keyframe_timestamp_ms: number;
   source_type: "gdrive" | "removable_disk" | "local";
+  web_view_link?: string | null;
   required_drive_nickname: string | null;
   capture_time: string | null;
   people_cluster_ids: string[];
@@ -96,6 +97,7 @@ export interface SceneResult {
   scene_caption?: string;
   thumbnail_url: string | null;
   source_type: "gdrive" | "removable_disk" | "local";
+  web_view_link?: string | null;
   required_drive_nickname: string | null;
   capture_time: string | null;
   people_cluster_ids: string[];
@@ -140,6 +142,7 @@ export interface VideoResult {
   library_id: string;
   library_name: string;
   source_type: "gdrive" | "removable_disk" | "local";
+  web_view_link?: string | null;
   matching_scene_count: number;
   best_scene: SceneResult;
   score: number;

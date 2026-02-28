@@ -92,6 +92,7 @@ class SegmentResult(BaseModel):
     snippet: str
     thumbnail_url: str | None
     source_type: SourceType
+    web_view_link: str | None = None
     required_drive_nickname: str | None = None
     capture_time: datetime | None = None
     people_cluster_ids: list[str] = Field(default_factory=list)
@@ -143,6 +144,7 @@ class SceneResult(BaseModel):
     scene_caption: str = ""
     thumbnail_url: str | None
     source_type: SourceType
+    web_view_link: str | None = None
     required_drive_nickname: str | None = None
     capture_time: datetime | None = None
     people_cluster_ids: list[str] = Field(default_factory=list)
@@ -172,6 +174,7 @@ class VideoResult(BaseModel):
     library_id: UUID
     library_name: str
     source_type: SourceType
+    web_view_link: str | None = None
     matching_scene_count: int
     best_scene: SceneResult
     score: float

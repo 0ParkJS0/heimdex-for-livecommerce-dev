@@ -93,6 +93,7 @@ class DriveDiscoveredFile(BaseModel):
     size: Optional[int] = Field(default=None, ge=0)
     md5_checksum: Optional[str] = Field(default=None, max_length=64)
     drive_path: Optional[str] = None
+    web_view_link: Optional[str] = Field(default=None, max_length=2000)
 
 
 class UpsertFilesRequest(BaseModel):

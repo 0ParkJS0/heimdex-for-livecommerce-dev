@@ -53,6 +53,7 @@ class DriveFileResponse(BaseModel):
     mime_type: str
     file_size_bytes: Optional[int] = None
     drive_path: Optional[str] = None
+    web_view_link: Optional[str] = None
     video_id: str
     processing_status: str
     proxy_s3_key: Optional[str] = None

@@ -33,6 +33,7 @@ class ClaimedProcessingFileInfo(BaseModel):
     md5_checksum: Optional[str] = None
     file_size_bytes: Optional[int] = None
     drive_path: Optional[str] = None
+    web_view_link: Optional[str] = None
     library_id: Optional[UUID] = None
     scope_type: Optional[str] = None
     drive_id: Optional[str] = None

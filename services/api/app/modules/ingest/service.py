@@ -148,6 +148,7 @@ class SceneIngestService:
                 "ocr_char_count": ocr_char_count,
                 "scene_caption": caption_norm,
                 "source_type": scene.source_type,
+                "web_view_link": getattr(scene, "web_view_link", None) or getattr(request, "web_view_link", None),
                 "required_drive_nickname": scene.required_drive_nickname,
                 "capture_time": scene.capture_time.isoformat() if scene.capture_time else None,
                 "ingest_time": now.isoformat(),

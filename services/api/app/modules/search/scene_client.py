@@ -240,6 +240,7 @@ class SceneSearchClient:
                 "thumbnail_url": {"type": "keyword", "index": False},
                 # Source metadata (denormalized for filtering)
                 "source_type": {"type": "keyword"},
+                "web_view_link": {"type": "keyword", "index": False},
                 "required_drive_nickname": {"type": "keyword"},
                 "source_path": {"type": "keyword"},
                 "capture_time": {"type": "date"},
@@ -758,6 +759,7 @@ class SceneSearchClient:
                     "video_title": {"terms": {"field": "video_title", "size": 1}},
                     "source_type": {"terms": {"field": "source_type", "size": 1}},
                     "required_drive_nickname": {"terms": {"field": "required_drive_nickname", "size": 1}},
+                    "web_view_link": {"terms": {"field": "web_view_link", "size": 1}},
                     "source_path": {"terms": {"field": "source_path", "size": 1}},
                     "keyword_tags": {"terms": {"field": "keyword_tags", "size": 10}},
                     "product_tags": {"terms": {"field": "product_tags", "size": 10}},
@@ -789,6 +791,7 @@ class SceneSearchClient:
             title_buckets = bucket["video_title"]["buckets"]
             src_buckets = bucket["source_type"]["buckets"]
             drive_buckets = bucket["required_drive_nickname"]["buckets"]
+            web_view_link_buckets = bucket.get("web_view_link", {}).get("buckets", [])
             sp_buckets = bucket.get("source_path", {}).get("buckets", [])
             kw_buckets = bucket["keyword_tags"]["buckets"]
             pt_buckets = bucket["product_tags"]["buckets"]
@@ -810,6 +813,7 @@ class SceneSearchClient:
                 "product_tags": [b["key"] for b in pt_buckets],
                 "people_count": int(bucket["people_count"]["value"]),
                 "required_drive_nickname": drive_buckets[0]["key"] if drive_buckets else None,
+                "web_view_link": web_view_link_buckets[0]["key"] if web_view_link_buckets else None,
                 "source_path": sp_buckets[0]["key"] if sp_buckets else None,
                 "capture_time": bucket.get("earliest_capture", {}).get("value_as_string") if bucket.get("earliest_capture", {}).get("value") else None,
             })
@@ -866,6 +870,7 @@ class SceneSearchClient:
                 "product_entities", "speech_segment_count",
                 "people_cluster_ids", "ingest_time", "keyframe_timestamp_ms",
                 "video_title", "source_type", "source_path", "capture_time",
+                "web_view_link",
                 "library_id",
             ],
         }
@@ -889,6 +894,7 @@ class SceneSearchClient:
                 "people_cluster_ids": src.get("people_cluster_ids", []),
                 "ingest_time": src.get("ingest_time"),
                 "keyframe_timestamp_ms": src.get("keyframe_timestamp_ms", 0),
+                "web_view_link": src.get("web_view_link"),
             })
 
         total = response["hits"]["total"]
@@ -901,6 +907,7 @@ class SceneSearchClient:
                 "video_title": first_src.get("video_title"),
                 "source_type": first_src.get("source_type"),
                 "source_path": first_src.get("source_path"),
+                "web_view_link": first_src.get("web_view_link"),
                 "capture_time": first_src.get("capture_time"),
                 "library_id": first_src.get("library_id"),
                 "earliest_ingest_time": first_src.get("ingest_time"),
@@ -1041,7 +1048,7 @@ class SceneSearchClient:
         response = await self.client.update_by_query(
             index=self.alias_name,
             body=body,
-            refresh=True,
+            params={"refresh": True},
         )
         updated = int(response.get("updated", 0))
         logger.info(

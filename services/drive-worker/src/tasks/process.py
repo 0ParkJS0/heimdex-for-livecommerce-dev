@@ -27,6 +27,10 @@ from heimdex_worker_sdk.internal_api import InternalAPIClient
 logger = logging.getLogger(__name__)
 
 
+def _build_drive_web_view_link(google_file_id: str) -> str:
+    return f"https://drive.google.com/file/d/{google_file_id}/view"
+
+
 def _build_drive_service(access_token: str):
     """Build a Google Drive API service from a pre-minted access token."""
     credentials = Credentials(token=access_token)
@@ -251,6 +255,7 @@ def _process_single_file(
             scene_result.scenes,
             source_type="gdrive",
             capture_time=None,
+            web_view_link=claimed_file.web_view_link,
         )
 
         if settings.drive_enrichment_enabled:
@@ -275,6 +280,10 @@ def _process_single_file(
             duration_ms=proxy_probe.duration_ms,
             scenes=scene_dicts,
             source_path=claimed_file.drive_path,
+            web_view_link=(
+                claimed_file.web_view_link
+                or _build_drive_web_view_link(claimed_file.google_file_id)
+            ),
         )
 
         # Report success
@@ -516,6 +525,7 @@ def _build_ingest_scene_dicts(
     scene_docs: List[Any],
     source_type: str = "gdrive",
     capture_time: Optional[str] = None,
+    web_view_link: Optional[str] = None,
 ) -> List[dict[str, Any]]:
     result: List[dict[str, Any]] = []
     for doc in scene_docs:
@@ -534,6 +544,7 @@ def _build_ingest_scene_dicts(
             "ocr_char_count": doc.ocr_char_count,
             "source_type": source_type,
             "capture_time": capture_time,
+            "web_view_link": web_view_link,
         })
     return result
 
@@ -547,6 +558,7 @@ def _post_scenes_to_api(
     duration_ms: int,
     scenes: List[dict[str, Any]],
     source_path: Optional[str] = None,
+    web_view_link: Optional[str] = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "video_id": video_id,
@@ -557,6 +569,8 @@ def _post_scenes_to_api(
     }
     if source_path is not None:
         payload["source_path"] = source_path
+    if web_view_link is not None:
+        payload["web_view_link"] = web_view_link
 
     api_base = settings.drive_api_base_url.rstrip("/")
     url = f"{api_base}/internal/ingest/scenes"

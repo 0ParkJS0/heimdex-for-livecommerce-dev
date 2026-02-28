@@ -325,10 +325,18 @@ async def get_connection_token(
 
     credentials.refresh(GoogleAuthRequest())
 
+    access_token = credentials.token
+    expires_at = credentials.expiry
+    if access_token is None or expires_at is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_502_BAD_GATEWAY,
+            detail="failed_to_refresh_google_access_token",
+        )
+
     return TokenResponse(
-        access_token=credentials.token,
+        access_token=access_token,
         token_type="Bearer",
-        expires_at=credentials.expiry,
+        expires_at=expires_at,
         scope_type=connection.scope_type,
     )
 
@@ -419,6 +427,7 @@ async def upsert_files(
             md5_checksum=item.md5_checksum,
             google_modified_time=item.modified_time,
             drive_path=item.drive_path,
+            web_view_link=item.web_view_link,
             video_id=video_id,
             processing_status="pending",
             enrichment_state="pending",

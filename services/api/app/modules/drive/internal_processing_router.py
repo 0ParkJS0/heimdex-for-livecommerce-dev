@@ -35,6 +35,10 @@ router = APIRouter(prefix="/internal/drive/processing", tags=["internal-drive-pr
 _TERMINAL_PROCESSING_STATUSES = frozenset({"indexed", "failed"})
 
 
+def _build_drive_web_view_link(google_file_id: str) -> str:
+    return f"https://drive.google.com/file/d/{google_file_id}/view"
+
+
 @router.post("/claim", response_model=ClaimProcessingResponse)
 async def claim_processing(
     request: ClaimProcessingRequest,
@@ -84,6 +88,7 @@ async def claim_processing(
                 md5_checksum=drive_file.md5_checksum,
                 file_size_bytes=drive_file.file_size_bytes,
                 drive_path=drive_file.drive_path,
+                web_view_link=drive_file.web_view_link or _build_drive_web_view_link(drive_file.google_file_id),
                 library_id=connection.library_id,
                 scope_type=connection.scope_type,
                 drive_id=connection.drive_id,

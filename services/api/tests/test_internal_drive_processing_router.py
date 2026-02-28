@@ -46,6 +46,7 @@ def _make_drive_file(
     f.md5_checksum = md5_checksum
     f.file_size_bytes = file_size_bytes
     f.drive_path = drive_path
+    f.web_view_link = None
     f.processing_status = processing_status
     f.is_deleted = is_deleted
     f.retry_count = retry_count

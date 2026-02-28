@@ -87,6 +87,34 @@ function sourceTypeBadgeClass(sourceType: string): string {
     : "bg-green-100 text-green-700";
 }
 
+function OpenInDriveButton({
+  sourceType,
+  webViewLink,
+}: {
+  sourceType: "gdrive" | "removable_disk" | "local";
+  webViewLink?: string | null;
+}) {
+  if (sourceType !== "gdrive" || !webViewLink) {
+    return null;
+  }
+
+  return (
+    <a
+      href={webViewLink}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Google 드라이브에서 열기"
+      aria-label="Google 드라이브에서 열기"
+      className="inline-flex items-center justify-center rounded-md border border-gray-200 p-1.5 text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+    >
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3h7m0 0v7m0-7L10 14" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5" />
+      </svg>
+    </a>
+  );
+}
+
 function Breadcrumb({ libraryName, sourceType }: { libraryName: string; sourceType: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -419,6 +447,11 @@ function VideoCard({
               Play
             </button>
 
+            <OpenInDriveButton
+              sourceType={best.source_type}
+              webViewLink={best.web_view_link}
+            />
+
             <span className="text-xs text-gray-400">
               Best: {formatDuration(best.start_ms, best.end_ms)}
             </span>
@@ -610,6 +643,11 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
                 +5s
               </button>
             </div>
+
+            <OpenInDriveButton
+              sourceType={result.source_type}
+              webViewLink={result.web_view_link}
+            />
 
             {isRemovable && result.required_drive_nickname && (
               <span className="text-xs text-orange-600 flex items-center gap-1">

@@ -71,7 +71,7 @@ class DriveClient:
                 includeItemsFromAllDrives=True,
                 supportsAllDrives=True,
                 q=query,
-                fields="nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents)",
+                fields="nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents,webViewLink)",
                 pageSize=page_size,
                 pageToken=page_token,
             )
@@ -91,7 +91,7 @@ class DriveClient:
                 driveId=drive_id,
                 includeItemsFromAllDrives=True,
                 supportsAllDrives=True,
-                fields="nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,size,md5Checksum,modifiedTime,trashed,parents))",
+                fields="nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,size,md5Checksum,modifiedTime,trashed,parents,webViewLink))",
                 spaces="drive",
             )
             .execute()
@@ -292,7 +292,7 @@ class DriveClient:
             self._service.files()
             .list(
                 q=query,
-                fields="nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents)",
+                fields="nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents,webViewLink)",
                 pageSize=page_size,
                 pageToken=page_token,
                 includeItemsFromAllDrives=True,

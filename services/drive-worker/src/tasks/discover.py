@@ -5,6 +5,7 @@ Claims connections from the API, lists files from Google Drive,
 and upserts discovered files back to the API for processing.
 No direct database access — all state managed via InternalAPIClient.
 """
+# pyright: reportMissingImports=false
 import logging
 from typing import Any
 
@@ -119,7 +120,7 @@ def _discover_drive_connection(
             "includeItemsFromAllDrives": True,
             "supportsAllDrives": True,
             "q": "mimeType contains 'video/' and trashed = false",
-            "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents)",
+            "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents,webViewLink)",
             "pageSize": 100,
         }
         if page_token:
@@ -198,7 +199,7 @@ def _discover_folder_connection(
         while True:
             kwargs: dict[str, Any] = {
                 "q": f"'{current_folder_id}' in parents and mimeType contains 'video/' and trashed = false",
-                "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents)",
+                "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents,webViewLink)",
                 "pageSize": 100,
             }
             if page_token:
@@ -243,6 +244,9 @@ def _file_to_upsert_item(file: dict[str, Any], drive_path: str | None = None) ->
     modified_time = file.get("modifiedTime")
     if modified_time:
         item["modified_time"] = modified_time
+    web_view_link = file.get("webViewLink")
+    if web_view_link:
+        item["web_view_link"] = web_view_link
     if drive_path:
         item["drive_path"] = drive_path
 
@@ -301,6 +305,8 @@ def _resolve_folder_paths(
     result: dict[str, str] = {}
     for f in files:
         fid = f.get("id")
+        if not fid:
+            continue
         fname = f.get("name", "")
         parents = f.get("parents", [])
         if parents and parents[0] in folder_names:

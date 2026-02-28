@@ -94,6 +94,7 @@ class ClaimedProcessingFile:
     md5_checksum: Optional[str] = None
     file_size_bytes: Optional[int] = None
     drive_path: Optional[str] = None
+    web_view_link: Optional[str] = None
     library_id: Optional[UUID] = None
     scope_type: Optional[str] = None
     drive_id: Optional[str] = None
@@ -289,6 +290,7 @@ class InternalAPIClient:
                 md5_checksum=f.get("md5_checksum"),
                 file_size_bytes=f.get("file_size_bytes"),
                 drive_path=f.get("drive_path"),
+                web_view_link=f.get("web_view_link"),
                 library_id=UUID(f["library_id"]) if f.get("library_id") else None,
                 scope_type=f.get("scope_type"),
                 drive_id=f.get("drive_id"),

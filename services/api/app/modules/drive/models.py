@@ -119,6 +119,7 @@ class DriveFile(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     drive_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    web_view_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     video_id: Mapped[str] = mapped_column(
         String(64), nullable=False, index=True
