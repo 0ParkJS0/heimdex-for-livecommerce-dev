@@ -7,8 +7,9 @@ import { getVideos, getVideoStats } from "@/lib/api/videos";
 import { searchScenes } from "@/lib/api/search";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { GroupByToggle } from "@/features/search/components/GroupByToggle";
+import { SearchModeToggle } from "@/features/search/components/SearchModeToggle";
 import type { GroupBy } from "@/features/search/hooks/useSearch";
-import type { VideoSummary, VideoStats, SceneResult, VideoResult, AnySearchResponse, SceneSearchResponse, SearchFilters } from "@/lib/types";
+import type { VideoSummary, VideoStats, SceneResult, VideoResult, AnySearchResponse, SceneSearchResponse, SearchFilters, SearchMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -23,6 +24,12 @@ const SOURCE_META: Record<SourceType, { label: string; color: string }> = {
   gdrive: { label: "Drive", color: "text-blue-600 focus:ring-blue-500" },
   removable_disk: { label: "Disk", color: "text-orange-500 focus:ring-orange-400" },
   local: { label: "Local", color: "text-green-600 focus:ring-green-500" },
+};
+
+const SEARCH_MODE_PLACEHOLDERS: Record<SearchMode, string> = {
+  metadata: "파일 이름으로 검색...",
+  lexical: "전체 아카이브에서 검색하고 싶은 영상을 찾아보세요",
+  semantic: "찾고 싶은 장면을 설명해보세요...",
 };
 
 // ---------------------------------------------------------------------------
@@ -717,6 +724,7 @@ export default function DashboardContent() {
   const [showCalendar, setShowCalendar] = useState(false);
 
   const [groupBy, setGroupBy] = useState<GroupBy>("scene");
+  const [searchMode, setSearchMode] = useState<SearchMode>("lexical");
   const [sourceFilters, setSourceFilters] = useState<Set<SourceType>>(
     () => new Set(ALL_SOURCES),
   );
@@ -823,7 +831,7 @@ export default function DashboardContent() {
             ? {}
             : { source_types: Array.from(sourceFilters) };
         const res = await searchScenes(
-          { q, alpha: 0.5, filters, group_by: groupBy },
+          { q, alpha: 0.5, filters, group_by: groupBy, search_mode: searchMode },
           tokenGetter,
         );
         setSearchResponse(res);
@@ -843,7 +851,7 @@ export default function DashboardContent() {
         setIsLoading(false);
       }
     },
-    [getAccessToken, groupBy, sourceFilters],
+    [getAccessToken, groupBy, searchMode, sourceFilters],
   );
 
   const handleSearch = useCallback(
@@ -861,7 +869,7 @@ export default function DashboardContent() {
       performSearch(activeQuery);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupBy, sourceFilters]);
+  }, [groupBy, searchMode, sourceFilters]);
 
   const handleClearSearch = useCallback(() => {
     setSearchResponse(null);
@@ -906,7 +914,7 @@ export default function DashboardContent() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="전체 아카이브에서 검색하고 싶은 영상을 찾아보세요"
+              placeholder={SEARCH_MODE_PLACEHOLDERS[searchMode]}
               className="w-full rounded-lg border border-gray-200 bg-gray-50 py-3 pl-12 pr-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
             />
           </div>
@@ -925,7 +933,10 @@ export default function DashboardContent() {
         </form>
 
         <div className="mt-3 flex items-center justify-between">
-          <GroupByToggle value={groupBy} onChange={setGroupBy} />
+          <div className="flex items-center gap-2">
+            <SearchModeToggle value={searchMode} onChange={setSearchMode} />
+            <GroupByToggle value={groupBy} onChange={setGroupBy} />
+          </div>
           <div className="flex items-center gap-3">
             {ALL_SOURCES.map((type) => (
               <label key={type} className="flex items-center gap-1.5 cursor-pointer select-none">

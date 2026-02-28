@@ -42,12 +42,15 @@ export function hasTagFilters(filters: SearchFilters): boolean {
   );
 }
 
+export type SearchMode = "metadata" | "lexical" | "semantic";
+
 export interface SearchRequest {
   q: string;
   alpha: number;
   filters: SearchFilters;
   include_ocr?: boolean;
   group_by?: "video" | "scene";
+  search_mode?: SearchMode;
 }
 
 export interface DebugInfo {
