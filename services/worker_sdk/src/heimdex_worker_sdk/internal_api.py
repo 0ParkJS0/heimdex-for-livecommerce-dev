@@ -378,8 +378,17 @@ class InternalAPIClient:
         scene_count: Optional[int] = None,
         audio_s3_key: Optional[str] = None,
         keyframe_s3_prefix: Optional[str] = None,
+        video_fps: Optional[float] = None,
+        video_width: Optional[int] = None,
+        video_height: Optional[int] = None,
     ) -> bool:
-        """Update processing status for a file."""
+        """Update processing status for a file.
+
+        Args:
+            video_fps: Original video frame rate from ffprobe (e.g. 29.97).
+            video_width: Original video width in pixels (e.g. 1920).
+            video_height: Original video height in pixels (e.g. 1080).
+        """
         url = f"{self.base_url.rstrip('/')}/internal/drive/processing/{file_id}/status"
         payload: dict[str, Any] = {"status": status}
         if lease_token is not None:
@@ -404,6 +413,12 @@ class InternalAPIClient:
             payload["audio_s3_key"] = audio_s3_key
         if keyframe_s3_prefix is not None:
             payload["keyframe_s3_prefix"] = keyframe_s3_prefix
+        if video_fps is not None:
+            payload["video_fps"] = video_fps
+        if video_width is not None:
+            payload["video_width"] = video_width
+        if video_height is not None:
+            payload["video_height"] = video_height
         data = self._request_with_retry("PATCH", url, json=payload)
         return data.get("ok", False)
 

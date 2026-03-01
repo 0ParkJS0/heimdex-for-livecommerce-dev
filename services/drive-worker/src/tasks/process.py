@@ -284,6 +284,9 @@ def _process_single_file(
                 claimed_file.web_view_link
                 or _build_drive_web_view_link(claimed_file.google_file_id)
             ),
+            video_fps=probe.frame_rate,
+            video_width=probe.width,
+            video_height=probe.height,
         )
 
         # Report success
@@ -298,6 +301,11 @@ def _process_single_file(
             thumbnail_s3_prefix=thumbnail_s3_prefix(org_id_str, claimed_file.video_id),
             audio_s3_key=enrichment_fields.get("audio_s3_key"),
             keyframe_s3_prefix=enrichment_fields.get("keyframe_s3_prefix"),
+            # Original video metadata from ffprobe (for FCPXML export).
+            # Use the original probe, not proxy_probe, to get true source dimensions.
+            video_fps=probe.frame_rate,
+            video_width=probe.width,
+            video_height=probe.height,
         )
 
         logger.info(
@@ -559,6 +567,9 @@ def _post_scenes_to_api(
     scenes: List[dict[str, Any]],
     source_path: Optional[str] = None,
     web_view_link: Optional[str] = None,
+    video_fps: Optional[float] = None,
+    video_width: Optional[int] = None,
+    video_height: Optional[int] = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "video_id": video_id,
@@ -571,7 +582,12 @@ def _post_scenes_to_api(
         payload["source_path"] = source_path
     if web_view_link is not None:
         payload["web_view_link"] = web_view_link
-
+    if video_fps is not None:
+        payload["video_fps"] = video_fps
+    if video_width is not None:
+        payload["video_width"] = video_width
+    if video_height is not None:
+        payload["video_height"] = video_height
     api_base = settings.drive_api_base_url.rstrip("/")
     url = f"{api_base}/internal/ingest/scenes"
 

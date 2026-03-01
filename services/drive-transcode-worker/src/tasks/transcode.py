@@ -63,6 +63,10 @@ def _process_single_transcode(
         original_path = temp_dir / f"original_{google_file_id}"
         s3.download_file(original_key, original_path)
 
+        # Probe original video BEFORE transcoding to capture true source metadata
+        # (fps, width, height). Transcoding changes resolution; fps is preserved.
+        original_probe = probe_video(original_path)
+
         api_client.update_processing_status(
             file_id,
             status="transcoding",
@@ -180,6 +184,9 @@ def _process_single_transcode(
             duration_ms=proxy_probe.duration_ms,
             scenes=scene_dicts,
             source_path=source_path,
+            video_fps=original_probe.frame_rate,
+            video_width=original_probe.width,
+            video_height=original_probe.height,
         )
         logger.info("transcode_ingest_complete", extra={"indexed_count": ingest_result.get("indexed_count")})
 
@@ -194,6 +201,10 @@ def _process_single_transcode(
             thumbnail_s3_prefix=thumbnail_s3_prefix(org_id_str, video_id),
             audio_s3_key=audio_key,
             keyframe_s3_prefix=enrichment_keyframe_s3_prefix(org_id_str, video_id),
+            # Original video metadata from ffprobe (for FCPXML export).
+            video_fps=original_probe.frame_rate,
+            video_width=original_probe.width,
+            video_height=original_probe.height,
         )
 
         try:
@@ -292,6 +303,9 @@ def _post_scenes_to_api(
     duration_ms: int,
     scenes: list[dict[str, Any]],
     source_path: str | None = None,
+    video_fps: float | None = None,
+    video_width: int | None = None,
+    video_height: int | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "video_id": video_id,
@@ -302,7 +316,12 @@ def _post_scenes_to_api(
     }
     if source_path is not None:
         payload["source_path"] = source_path
-
+    if video_fps is not None:
+        payload["video_fps"] = video_fps
+    if video_width is not None:
+        payload["video_width"] = video_width
+    if video_height is not None:
+        payload["video_height"] = video_height
     api_base = settings.drive_api_base_url.rstrip("/")
     url = f"{api_base}/internal/ingest/scenes"
 
