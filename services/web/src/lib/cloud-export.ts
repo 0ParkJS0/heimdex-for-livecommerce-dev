@@ -218,3 +218,79 @@ export async function exportPremiereCloud(
     filename,
   };
 }
+
+
+// --- Premiere Package Export (FCPXML 1.8 + ZIP) ---
+
+export interface PremierePackageClipInput {
+  scene_id: string;
+  video_id: string;
+  video_title: string;
+  start_ms: number;
+  end_ms: number;
+  label?: string;
+  keyword_tags?: string[];
+  transcript_raw?: string;
+}
+
+export interface PremierePackageRequest {
+  sequence_name: string;
+  drive_mount_path: string;
+  clips: PremierePackageClipInput[];
+  clip_gap_ms: number;
+  include_markers: boolean;
+  include_transcript_markers: boolean;
+}
+
+/**
+ * Export selected scenes as an FCPXML 1.8 package (ZIP) for Premiere Pro 2024.
+ * The ZIP contains .fcpxml timeline, manifest.json, README.txt, and scenes.csv.
+ * Clips reference original media via file:// URLs on the user's Google Drive mount.
+ */
+export async function exportPremierePackage(
+  request: PremierePackageRequest,
+  getToken?: TokenGetter,
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (getToken) {
+    try {
+      const token = await getToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // proceed without auth
+    }
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/export/premiere-package`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `Export failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;\s]+)/i);
+  const plainMatch = disposition.match(/filename="?([^"]+)"?/);
+  const filename = utf8Match
+    ? decodeURIComponent(utf8Match[1])
+    : (plainMatch?.[1] ?? `${request.sequence_name}_premiere.zip`);
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

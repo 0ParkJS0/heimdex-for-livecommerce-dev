@@ -13,6 +13,7 @@ import { getAgentPlaybackUrl, getCloudPlaybackUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { AddToBasketButton } from "@/features/basket/AddToBasketButton";
 
 function playbackUrl(videoId: string, sourceType: string, startMs?: number): string {
   return sourceType === "gdrive"
@@ -452,6 +453,8 @@ function VideoCard({
               webViewLink={best.web_view_link}
             />
 
+            <AddToBasketButton scene={best} />
+
             <span className="text-xs text-gray-400">
               Best: {formatDuration(best.start_ms, best.end_ms)}
             </span>
@@ -648,6 +651,8 @@ function SceneCard({ result, rank, showDebug, agentAvailable }: SceneCardProps) 
               sourceType={result.source_type}
               webViewLink={result.web_view_link}
             />
+
+            <AddToBasketButton scene={result} />
 
             {isRemovable && result.required_drive_nickname && (
               <span className="text-xs text-orange-600 flex items-center gap-1">
