@@ -203,7 +203,7 @@ class VideoService:
         *,
         target_count: int = 15,
         min_duration_ms: int = 30_000,
-        max_duration_ms: int = 60_000,
+        max_duration_ms: int = 45_000,
         weights: dict[str, float] | None = None,
     ) -> ShortsPlanResponse:
         all_scenes_raw: list[_ScenePayload] = []

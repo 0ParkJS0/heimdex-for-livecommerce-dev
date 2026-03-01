@@ -112,7 +112,7 @@ class ShortsPlanRequest(BaseModel):
         description="Minimum scene duration in ms",
     )
     max_duration_ms: int = Field(
-        default=60_000,
+        default=45_000,
         le=120_000,
         description="Maximum scene duration in ms",
     )

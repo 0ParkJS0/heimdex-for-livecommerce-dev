@@ -72,7 +72,7 @@ def test_generate_shorts_plan_returns_scored_candidates():
                 _scene(
                     "vid-1_scene_001",
                     start_ms=45_000,
-                    end_ms=95_000,
+                    end_ms=90_000,
                     transcript_raw="price drop now",
                     transcript_char_count=110,
                     keyword_tags=["price"],
