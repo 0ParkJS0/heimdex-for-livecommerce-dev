@@ -129,10 +129,8 @@ async def claim_jobs(
 
     status_col = _STATUS_COLUMN_MAP.get(request.job_type)
     if status_col is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported job_type: {request.job_type}",
-        )
+        # visual_embed has no DB status column — return empty claim
+        return ClaimJobsResponse(files=[])
 
     prerequisite = _PREREQUISITE_MAP.get(request.job_type)
     now = datetime.now(timezone.utc)
@@ -216,10 +214,14 @@ async def update_job_status(
 
     status_col = _STATUS_COLUMN_MAP.get(request.job_type)
     if status_col is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported job_type: {request.job_type}",
+        # visual_embed has no DB status column — accept the call as a no-op
+        logger.info(
+            "internal_drive_job_status_noop",
+            file_id=str(file_id),
+            job_type=request.job_type,
+            status=request.status,
         )
+        return UpdateJobStatusResponse(ok=True)
 
     error_col = _ERROR_COLUMN_MAP.get(request.job_type)
     result = await db.execute(

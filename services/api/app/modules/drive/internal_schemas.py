@@ -1,6 +1,6 @@
 """
 Pydantic schemas for internal drive endpoints.
-Used by drive workers (caption, STT, OCR, face) to claim jobs and update status
+Used by drive workers (caption, STT, OCR, face, visual_embed) to claim jobs and update status
 via HTTP instead of direct database access.
 """
 from datetime import datetime
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 # ── Claim Jobs ────────────────────────────────────────────────────────
 
-JobType = Literal["caption", "stt", "ocr", "face"]
+JobType = Literal["caption", "stt", "ocr", "face", "visual_embed"]
 
 
 class ClaimJobsRequest(BaseModel):
