@@ -11,7 +11,8 @@ logger = get_logger(__name__)
 # Quality signal thresholds
 MIN_TRANSCRIPT_CHARS = 20   # Very short transcripts get penalized
 GOOD_TRANSCRIPT_CHARS = 100  # Full quality above this threshold
-QUALITY_FLOOR = 0.7         # Minimum quality multiplier (never filter completely)
+QUALITY_FLOOR = 0.85         # Minimum quality multiplier (raised from 0.7 to reduce
+                             # penalty on scenes with strong captions but short transcripts)
 
 
 @dataclass
@@ -39,15 +40,19 @@ def rrf_score(rank: int | None, k: int = 60) -> float:
 
 def compute_quality_factor(source: dict[str, Any]) -> float:
     """
-    Compute quality factor based on transcript character count.
+    Compute quality factor based on combined text content character count.
     
-    Fallback chain:
+    Considers transcript, OCR, AND scene_caption text. This ensures scenes
+    with strong AI captions but short transcripts are not unfairly penalized
+    in semantic search mode.
+    
+    Fallback chain for transcript:
     1. transcript_char_count_normalized (pre-computed normalized)
     2. transcript_char_count (legacy, raw count)
     3. Compute from transcript text using get_normalized_char_count()
     
     Returns:
-        Quality factor between QUALITY_FLOOR (0.7) and 1.0
+        Quality factor between QUALITY_FLOOR (0.85) and 1.0
     """
     raw_char_count = source.get("transcript_char_count_normalized", 0)
     char_count = raw_char_count if isinstance(raw_char_count, int) else 0
@@ -76,7 +81,14 @@ def compute_quality_factor(source: dict[str, Any]) -> float:
         if ocr_text:
             ocr_char_count = get_normalized_char_count(ocr_text)
 
-    char_count = char_count + ocr_char_count
+    # Include scene_caption in quality signal so that scenes with strong
+    # AI captions (but minimal speech/OCR) are not penalized.
+    caption_text = source.get("scene_caption", "")
+    caption_char_count = 0
+    if isinstance(caption_text, str) and caption_text:
+        caption_char_count = get_normalized_char_count(caption_text)
+
+    char_count = char_count + ocr_char_count + caption_char_count
     
     if char_count >= GOOD_TRANSCRIPT_CHARS:
         return 1.0

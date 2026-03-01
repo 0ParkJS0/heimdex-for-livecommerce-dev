@@ -133,7 +133,7 @@ class SceneSearchClient:
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
                 "knn": True,
-                "knn.algo_param.ef_search": 100,
+                "knn.algo_param.ef_search": 256,
             },
             "analysis": {
                 "tokenizer": {

@@ -215,6 +215,31 @@ class TestQualityFactor:
         source = {"transcript_char_count": 15, "ocr_char_count": 10}
         assert compute_quality_factor(source) > QUALITY_FLOOR
 
+    def test_caption_only_gets_full_score(self):
+        """Scene with strong caption but no transcript/OCR should not be penalized."""
+        source = {"scene_caption": "a" * GOOD_TRANSCRIPT_CHARS}
+        assert compute_quality_factor(source) == 1.0
+
+    def test_caption_supplements_low_transcript(self):
+        """Caption chars should count toward quality, rescuing short-transcript scenes."""
+        source = {"transcript_raw": "a" * 10, "scene_caption": "a" * 50}
+        factor = compute_quality_factor(source)
+        assert factor > QUALITY_FLOOR
+
+    def test_caption_plus_transcript_plus_ocr(self):
+        """All three fields contribute to quality factor."""
+        source = {"transcript_char_count": 30, "ocr_char_count": 30, "scene_caption": "a" * 50}
+        assert compute_quality_factor(source) == 1.0
+
+    def test_empty_caption_no_effect(self):
+        """Empty caption string should not affect quality calculation."""
+        source = {"transcript_raw": "a" * 10, "scene_caption": ""}
+        assert compute_quality_factor(source) == QUALITY_FLOOR
+
+    def test_non_string_caption_ignored(self):
+        """Non-string caption values should be safely ignored."""
+        source = {"transcript_raw": "a" * 10, "scene_caption": 12345}
+        assert compute_quality_factor(source) == QUALITY_FLOOR
 
 class TestRRFContributions:
     def test_contributions_tracked(self):
