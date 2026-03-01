@@ -17,8 +17,20 @@ from app.db.base import get_db_session
 from app.modules.drive.repository import DriveFileRepository
 from app.modules.export.edl import EdlClip, generate_edl
 from app.modules.export.fcp_xml import FcpClip, generate_fcp_xml
-from app.modules.drive.models import DriveConnection
-from app.modules.export.schemas import ExportClipRequest, ExportEdlRequest, ExportEdlResponse, ExportPremiereRequest
+from app.modules.export.fcpxml_writer import (
+    ClipMarker,
+    FCPXMLClip,
+    FCPXMLWriteOptions,
+    TranscriptMarker,
+    generate_fcpxml as generate_fcpxml_18,
+)
+from app.modules.export.packager import (
+    ExportClipMetadata,
+    PackageOptions,
+    package_premiere_export,
+)
+from app.modules.drive.models import DriveConnection, DriveFile
+from app.modules.export.schemas import ExportClipRequest, ExportEdlRequest, ExportEdlResponse, ExportPremierePackageRequest, ExportPremiereRequest
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
 from app.config import get_settings
@@ -372,3 +384,217 @@ async def export_premiere(
             else "",
         },
     )
+
+
+# --- Premiere Package Export (FCPXML 1.8 + ZIP) ---
+
+
+_DEFAULT_FPS = 29.97
+_DEFAULT_WIDTH = 1920
+_DEFAULT_HEIGHT = 1080
+
+
+@router.post("/premiere-package")
+async def export_premiere_package(
+    body: ExportPremierePackageRequest,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+):
+    """Generate a Premiere Pro export package (ZIP) with FCPXML 1.8 timeline.
+
+    The package contains:
+    - {sequence_name}.fcpxml — FCPXML 1.8 timeline referencing Google Drive media
+    - manifest.json — canonical mapping with export metadata
+    - README.txt — import instructions (Korean + English)
+    - scenes.csv — spreadsheet for editors
+
+    Clips reference original media via file:// URLs resolved from the user's
+    Google Drive mount path + DriveConnection metadata. No agent required.
+    """
+
+    file_repo = DriveFileRepository(db)
+
+    # Normalize mount path
+    mount = body.drive_mount_path.rstrip("/").rstrip("\\")
+
+    # Collect unique video_ids and fetch DriveFile records
+    video_ids = list({clip.video_id for clip in body.clips})
+    drive_files_by_video_id: dict[str, DriveFile] = {}
+    connections_by_id: dict[object, DriveConnection] = {}
+
+    for vid in video_ids:
+        if not vid.startswith("gd_"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"video_id must start with 'gd_': {vid}",
+            )
+        df = await file_repo.get_by_video_id(org_ctx.org_id, vid)
+        if df is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Video not found: {vid}",
+            )
+        drive_files_by_video_id[vid] = df
+        if df.connection_id not in connections_by_id:
+            conn = await db.get(DriveConnection, df.connection_id)
+            if conn:
+                connections_by_id[df.connection_id] = conn
+
+    # Build FCPXML clips and export metadata
+    fcpxml_clips: list[FCPXMLClip] = []
+    export_clip_metas: list[ExportClipMetadata] = []
+
+    for clip_input in body.clips:
+        df = drive_files_by_video_id[clip_input.video_id]
+
+        # Validate in/out
+        if clip_input.start_ms >= clip_input.end_ms:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"start_ms ({clip_input.start_ms}) must be less than "
+                    f"end_ms ({clip_input.end_ms}) for scene {clip_input.scene_id}"
+                ),
+            )
+
+        # Resolve local Google Drive path
+        conn = connections_by_id.get(df.connection_id)
+        local_path = _resolve_drive_path(mount, conn, df)
+
+        # Get video metadata (fallback for pre-backfill videos)
+        fps = df.video_fps or _DEFAULT_FPS
+        width = df.video_width or _DEFAULT_WIDTH
+        height = df.video_height or _DEFAULT_HEIGHT
+
+
+        # Build markers
+        clip_markers: tuple[ClipMarker, ...] = ()
+        transcript_markers: tuple[TranscriptMarker, ...] = ()
+
+        if body.include_markers:
+            note_parts: list[str] = []
+            if clip_input.label:
+                note_parts.append(clip_input.label)
+            elif clip_input.video_title:
+                note_parts.append(clip_input.video_title)
+            if clip_input.keyword_tags:
+                note_parts.append("Tags: " + ", ".join(clip_input.keyword_tags))
+            if note_parts:
+                clip_markers = (
+                    ClipMarker(
+                        start_ms=clip_input.start_ms,
+                        end_ms=clip_input.end_ms,
+                        note=" | ".join(note_parts),
+                    ),
+                )
+
+        if body.include_transcript_markers and clip_input.transcript_raw:
+            transcript_markers = (
+                TranscriptMarker(
+                    start_ms=clip_input.start_ms,
+                    end_ms=clip_input.end_ms,
+                    text=clip_input.transcript_raw[:200],
+                ),
+            )
+
+        fcpxml_clips.append(FCPXMLClip(
+            clip_name=clip_input.label or clip_input.video_title or df.file_name,
+            file_path=local_path,
+            start_ms=clip_input.start_ms,
+            end_ms=clip_input.end_ms,
+            fps=fps,
+            width=width,
+            height=height,
+            markers=clip_markers,
+            transcript_markers=transcript_markers,
+        ))
+
+        # Build export metadata for manifest/CSV
+        relative_path = _relative_drive_path(conn, df)
+        export_clip_metas.append(ExportClipMetadata(
+            scene_id=clip_input.scene_id,
+            video_id=clip_input.video_id,
+            video_title=clip_input.video_title or df.file_name,
+            source_file=df.file_name,
+            source_path=relative_path,
+            google_drive_link=df.web_view_link or "",
+            edit_in_ms=clip_input.start_ms,
+            edit_out_ms=clip_input.end_ms,
+            fps=fps,
+            width=width,
+            height=height,
+            keyword_tags=clip_input.keyword_tags,
+            transcript_raw=clip_input.transcript_raw,
+            label=clip_input.label,
+        ))
+
+    # Generate FCPXML
+    fcpxml_options = FCPXMLWriteOptions(
+        gap_ms=body.clip_gap_ms,
+        include_markers=body.include_markers,
+        include_transcript_markers=body.include_transcript_markers,
+    )
+    fcpxml_content = generate_fcpxml_18(fcpxml_clips, body.sequence_name, fcpxml_options)
+
+    # Package into ZIP
+    pkg_options = PackageOptions(
+        sequence_name=body.sequence_name,
+        drive_mount_path=mount,
+        clip_gap_ms=body.clip_gap_ms,
+        include_markers=body.include_markers,
+        include_transcript_markers=body.include_transcript_markers,
+    )
+    zip_bytes = package_premiere_export(fcpxml_content, export_clip_metas, pkg_options)
+
+    safe_name = _sanitize_filename(body.sequence_name)
+    filename = f"{safe_name}_premiere.zip"
+
+    logger.info(
+        "premiere_package_exported",
+        extra={
+            "org_id": str(org_ctx.org_id),
+            "sequence_name": body.sequence_name,
+            "clip_count": len(body.clips),
+            "zip_size_bytes": len(zip_bytes),
+            "format": "fcpxml_1.8",
+        },
+    )
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": _content_disposition(filename),
+            "X-Clip-Count": str(len(body.clips)),
+        },
+    )
+
+
+def _resolve_drive_path(mount: str, conn: DriveConnection | None, df: DriveFile) -> str:
+    """Resolve a DriveFile to an absolute local path under the Google Drive mount.
+
+    Reuses the same logic as the existing /premiere endpoint (lines 312-330)
+    but decoupled into a standalone function.
+    """
+    if conn is None:
+        return f"{mount}/{df.drive_path or df.file_name}"
+
+    if conn.scope_type == "drive" and conn.drive_name:
+        return f"{mount}/Shared drives/{conn.drive_name}/{df.drive_path}"
+    elif conn.scope_type == "folder" and conn.folder_path:
+        return f"{mount}/{conn.folder_path}/{df.drive_path}"
+    else:
+        return f"{mount}/{df.drive_path or df.file_name}"
+
+
+def _relative_drive_path(conn: DriveConnection | None, df: DriveFile) -> str:
+    """Build the relative path within Google Drive (for manifest.json)."""
+    if conn is None:
+        return df.drive_path or df.file_name
+
+    if conn.scope_type == "drive" and conn.drive_name:
+        return f"Shared drives/{conn.drive_name}/{df.drive_path}"
+    elif conn.scope_type == "folder" and conn.folder_path:
+        return f"{conn.folder_path}/{df.drive_path}"
+    else:
+        return df.drive_path or df.file_name
