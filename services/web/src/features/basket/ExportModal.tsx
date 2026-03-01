@@ -8,7 +8,7 @@ import {
   pollProxyPackStatus,
   type ProxyPackStatusResponse,
 } from "@/lib/cloud-export";
-import { useSceneBasket } from "./useSceneBasket";
+import { useSceneBasket, type BasketItem } from "./useSceneBasket";
 
 const STORAGE_KEY = "heimdex_drive_mount_path";
 const CUSTOM_OPTION = "__custom__";
@@ -25,10 +25,13 @@ const fmtBytes = (b: number): string => {
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** When provided, export these items instead of the scene basket. */
+  overrideItems?: BasketItem[];
 }
 
-export function ExportModal({ isOpen, onClose }: ExportModalProps) {
-  const { items } = useSceneBasket();
+export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps) {
+  const basket = useSceneBasket();
+  const items = overrideItems ?? basket.items;
   const { getAccessToken } = useAuth();
 
   // --- Shared state ---

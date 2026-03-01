@@ -4,12 +4,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
-import { exportToPremiere } from "@/lib/agent-export";
-import { exportEdlCloud, exportPremiereCloud, downloadClipCloud } from "@/lib/cloud-export";
-import { checkAgentHealth, getAgentClipUrl } from "@/lib/agent";
+import { downloadClipCloud } from "@/lib/cloud-export";
+import { getAgentClipUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
-import { ExportDialog } from "@/features/videos/components/ExportDialog";
-import type { ExportClipInput } from "@/lib/types";
+import { ExportModal } from "@/features/basket/ExportModal";
+import type { BasketItem } from "@/features/basket/useSceneBasket";
 
 interface SavedShort {
   id: string;
@@ -106,11 +105,6 @@ export function SavedShortsPage() {
   const [showSort, setShowSort] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [exportNotice, setExportNotice] = useState<string | null>(null);
-  const [exportResult, setExportResult] = useState<{ output_path: string; clip_count: number } | null>(null);
-  const [agentAvailable, setAgentAvailable] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -136,9 +130,7 @@ export function SavedShortsPage() {
     return () => { cancelled = true; };
   }, [getAccessToken]);
 
-  useEffect(() => {
-    checkAgentHealth().then((h) => setAgentAvailable(h !== null));
-  }, []);
+
 
   useEffect(() => {
     if (!showExportMenu) return;
@@ -161,12 +153,11 @@ export function SavedShortsPage() {
   const handleClipDownload = useCallback(async () => {
     setShowExportMenu(false);
     setIsDownloading(true);
-    setExportError(null);
     try {
       for (const short of selectedShorts) {
         const startMs = short.start_ms ?? 0;
         const endMs = short.end_ms ?? 0;
-      const name = short.title ?? `shorts_${short.video_id}`;
+        const name = short.title ?? `shorts_${short.video_id}`;
         if (short.video_id.startsWith("gd_") && startMs < endMs) {
           await downloadClipCloud(
             { video_id: short.video_id, clip_name: name, start_ms: startMs, end_ms: endMs },
@@ -184,141 +175,25 @@ export function SavedShortsPage() {
           document.body.removeChild(a);
         }
       }
-    } catch (err) {
-      setExportError(err instanceof Error ? err.message : "클립 다운로드에 실패했습니다");
+    } catch {
+      // download errors handled silently
     } finally {
       setIsDownloading(false);
     }
   }, [selectedShorts, getAccessToken]);
 
-  const isCloudExport = useMemo(
-    () => selectedShorts.length > 0 && selectedShorts.every((s) => s.video_id.startsWith("gd_")),
+  // Map selected shorts to BasketItem[] for the ExportModal
+  const exportItems: BasketItem[] = useMemo(
+    () =>
+      selectedShorts.map((s) => ({
+        scene_id: s.scene_ids[0] ?? s.video_id,
+        video_id: s.video_id,
+        video_title: s.title ?? s.video_id,
+        start_ms: s.start_ms ?? 0,
+        end_ms: s.end_ms ?? 0,
+        label: s.title ?? undefined,
+      })),
     [selectedShorts],
-  );
-
-  const handlePremiereExport = useCallback(
-    async (config: { projectName: string; outputDir: string; frameRate: number; driveMountPath?: string }) => {
-      setShowExportDialog(false);
-      setIsExporting(true);
-      setExportError(null);
-      setExportNotice(null);
-      setExportResult(null);
-      try {
-        const clips: ExportClipInput[] = selectedShorts.map((s) => ({
-          video_id: s.video_id,
-          scene_id: s.scene_ids[0] ?? s.video_id,
-          clip_name: s.title ?? `shorts_${s.scene_ids.length}_scenes`,
-          start_ms: s.start_ms ?? 0,
-          end_ms: s.end_ms ?? 0,
-        }));
-
-        const allCloud = selectedShorts.every((s) => s.video_id.startsWith("gd_"));
-        const allLocal = selectedShorts.every((s) => !s.video_id.startsWith("gd_"));
-        const localShorts = selectedShorts.filter((s) => !s.video_id.startsWith("gd_"));
-        const cloudClips = clips.filter((clip) => clip.video_id.startsWith("gd_"));
-        const localClips = clips.filter((clip) => !clip.video_id.startsWith("gd_"));
-
-        if (allCloud) {
-          if (config.driveMountPath) {
-            const result = await exportPremiereCloud(
-              {
-                project_name: config.projectName,
-                frame_rate: config.frameRate,
-                drive_mount_path: config.driveMountPath,
-                clips: cloudClips,
-              },
-              getAccessToken,
-            );
-            setExportResult({ output_path: result.filename, clip_count: result.clip_count });
-          } else {
-            const result = await exportEdlCloud(
-              {
-                project_name: config.projectName,
-                frame_rate: config.frameRate,
-                clips: cloudClips,
-              },
-              getAccessToken,
-            );
-            setExportResult({ output_path: result.filename, clip_count: result.clip_count });
-          }
-        } else if (allLocal) {
-          const result = await exportToPremiere({
-            project_name: config.projectName,
-            format: "edl",
-            frame_rate: config.frameRate,
-            output_dir: config.outputDir,
-            clips: localClips,
-          });
-          setExportResult({ output_path: result.output_path, clip_count: result.clip_count });
-        } else {
-          if (config.driveMountPath) {
-            const cloudResult = await exportPremiereCloud(
-              {
-                project_name: config.projectName,
-                frame_rate: config.frameRate,
-                drive_mount_path: config.driveMountPath,
-                clips: cloudClips,
-              },
-              getAccessToken,
-            );
-
-            if (agentAvailable) {
-              const localResult = await exportToPremiere({
-                project_name: config.projectName,
-                format: "edl",
-                frame_rate: config.frameRate,
-                output_dir: config.outputDir,
-                clips: localClips,
-              });
-              setExportResult({
-                output_path: localResult.output_path,
-                clip_count: cloudResult.clip_count + localResult.clip_count,
-              });
-            } else {
-              const skippedLocalNames = localShorts
-                .map((short, index) => short.title ?? `Local Clip ${index + 1}`)
-                .join(", ");
-              setExportNotice(`에이전트가 오프라인 상태여서 로컬 클립을 건너뛰었습니다: ${skippedLocalNames}`);
-              setExportResult({ output_path: cloudResult.filename, clip_count: cloudResult.clip_count });
-            }
-          } else {
-            const cloudResult = await exportEdlCloud(
-              {
-                project_name: config.projectName,
-                frame_rate: config.frameRate,
-                clips: cloudClips,
-              },
-              getAccessToken,
-            );
-
-            if (agentAvailable) {
-              const localResult = await exportToPremiere({
-                project_name: config.projectName,
-                format: "edl",
-                frame_rate: config.frameRate,
-                output_dir: config.outputDir,
-                clips: localClips,
-              });
-              setExportResult({
-                output_path: localResult.output_path,
-                clip_count: cloudResult.clip_count + localResult.clip_count,
-              });
-            } else {
-              const skippedLocalNames = localShorts
-                .map((short, index) => short.title ?? `Local Clip ${index + 1}`)
-                .join(", ");
-              setExportNotice(`에이전트가 오프라인 상태여서 로컬 클립을 건너뛰었습니다: ${skippedLocalNames}`);
-              setExportResult({ output_path: cloudResult.filename, clip_count: cloudResult.clip_count });
-            }
-          }
-        }
-      } catch (err) {
-        setExportError(err instanceof Error ? err.message : "내보내기에 실패했습니다");
-      } finally {
-        setIsExporting(false);
-      }
-    },
-    [selectedShorts, getAccessToken, agentAvailable],
   );
 
   const sorted = useMemo(() => {
@@ -383,22 +258,22 @@ export function SavedShortsPage() {
           <div className="relative" ref={exportMenuRef}>
             <button
               type="button"
-              disabled={selectedIds.size === 0 || isExporting || isDownloading}
+              disabled={selectedIds.size === 0 || isDownloading}
               onClick={() => setShowExportMenu((v) => !v)}
               className={cn(
                 "inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors",
-                selectedIds.size > 0 && !isExporting && !isDownloading
+                selectedIds.size > 0 && !isDownloading
                   ? "bg-indigo-500 text-white hover:bg-indigo-600"
                   : "bg-gray-200 text-gray-400 cursor-not-allowed",
               )}
             >
-              {isExporting || isDownloading ? (
+              {isDownloading ? (
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               ) : (
                 <DownloadIcon />
               )}
-              {isDownloading ? "다운로드 중..." : isExporting ? "내보내는 중..." : "내보내기"}
-              {!isExporting && !isDownloading && <ChevronDownIcon />}
+              {isDownloading ? "다운로드 중..." : "내보내기"}
+              {!isDownloading && <ChevronDownIcon />}
             </button>
             {showExportMenu && (
               <div className="absolute right-0 top-full z-20 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
@@ -490,43 +365,11 @@ export function SavedShortsPage() {
           </div>
         )}
 
-        {showExportDialog && (
-          <ExportDialog
-            isOpen={showExportDialog}
-            onClose={() => setShowExportDialog(false)}
-            onExport={(config) => void handlePremiereExport(config)}
-            selectedCount={selectedIds.size}
-            isExporting={isExporting}
-            defaultProjectName={selectedShorts[0]?.title ?? "Heimdex Export"}
-            agentAvailable={agentAvailable}
-            isCloudExport={isCloudExport}
-            getAccessToken={getAccessToken}
-          />
-        )}
-
-        {exportResult && (
-          <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-lg border border-green-200 bg-green-50 p-4 shadow-lg">
-            <p className="text-sm font-medium text-green-800">내보내기 완료</p>
-            <p className="mt-1 truncate text-xs text-green-600">{exportResult.output_path} ({exportResult.clip_count}개 클립)</p>
-            <button type="button" onClick={() => setExportResult(null)} className="mt-2 text-xs text-green-700 underline">닫기</button>
-          </div>
-        )}
-
-        {exportError && (
-          <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-lg border border-red-200 bg-red-50 p-4 shadow-lg">
-            <p className="text-sm font-medium text-red-800">내보내기 실패</p>
-            <p className="mt-1 text-xs text-red-600">{exportError}</p>
-            <button type="button" onClick={() => setExportError(null)} className="mt-2 text-xs text-red-700 underline">닫기</button>
-          </div>
-        )}
-
-        {exportNotice && (
-          <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-lg">
-            <p className="text-sm font-medium text-amber-800">일부 클립만 내보냄</p>
-            <p className="mt-1 text-xs text-amber-700">{exportNotice}</p>
-            <button type="button" onClick={() => setExportNotice(null)} className="mt-2 text-xs text-amber-700 underline">닫기</button>
-          </div>
-        )}
+        <ExportModal
+          isOpen={showExportDialog}
+          onClose={() => setShowExportDialog(false)}
+          overrideItems={exportItems}
+        />
 
         <nav className="mt-8 flex items-center justify-center gap-1">
           <button type="button" disabled={currentPage === 1} onClick={() => setCurrentPage(1)} className={cn(btnBase, currentPage === 1 ? "cursor-not-allowed text-gray-300" : "text-gray-500 hover:bg-gray-100")}>&laquo;</button>
