@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.logging_config import get_logger
 from app.modules.libraries.repository import LibraryRepository
+from app.modules.drive.repository import DriveFileRepository
 from app.modules.people.repository import (
     PeopleClusterLabelRepository,
     PeopleExcludePreferenceRepository,
@@ -177,6 +178,7 @@ class SceneSearchService:
 
         results = self._build_scene_results(diversified, ctx.library_map)
         facets = self._build_facets(ctx.facet_data, ctx.library_map, ctx.people_label_map)
+        await self._backfill_web_view_links(results, ctx.org_id)
 
         # Metadata mode always returns video-grouped results
         return self._group_by_video(
@@ -223,6 +225,7 @@ class SceneSearchService:
 
         results = self._build_scene_results(diversified, ctx.library_map)
         facets = self._build_facets(ctx.facet_data, ctx.library_map, ctx.people_label_map)
+        await self._backfill_web_view_links(results, ctx.org_id)
 
         return self._maybe_group_by_video(
             results=results,
@@ -363,6 +366,7 @@ class SceneSearchService:
 
         results = self._build_scene_results(diversified, ctx.library_map)
         facets = self._build_facets(ctx.facet_data, ctx.library_map, ctx.people_label_map)
+        await self._backfill_web_view_links(results, ctx.org_id)
 
         return self._maybe_group_by_video(
             results=results,
@@ -467,6 +471,26 @@ class SceneSearchService:
             include_ocr=include_ocr,
             group_by=group_by,
         )
+
+    async def _backfill_web_view_links(
+        self, results: list[SceneResult], org_id: UUID,
+    ) -> None:
+        """Backfill web_view_link from Postgres for Drive scenes missing it in OpenSearch.
+
+        Mutates the results list in-place. Only queries Postgres when there are
+        Drive video IDs (prefix 'gd_') with missing web_view_link.
+        """
+        missing_ids = list({
+            r.video_id for r in results
+            if not r.web_view_link and r.video_id.startswith("gd_")
+        })
+        if not missing_ids:
+            return
+        drive_repo = DriveFileRepository(self.session)
+        link_map = await drive_repo.get_web_view_links(org_id, missing_ids)
+        for r in results:
+            if not r.web_view_link and r.video_id in link_map:
+                r.web_view_link = link_map[r.video_id]
 
     @staticmethod
     def _build_scene_results(

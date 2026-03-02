@@ -123,6 +123,35 @@ class DriveFileRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_web_view_links(self, org_id: UUID, video_ids: list[str]) -> dict[str, str]:
+        """Batch lookup web_view_link for Drive videos by video_id.
+
+        Returns {video_id: web_view_link} for files that have a web_view_link.
+        Only queries Drive files (video_id prefix 'gd_').
+        """
+        if not video_ids:
+            return {}
+        # Filter to only Drive video IDs
+        drive_video_ids = [vid for vid in video_ids if vid.startswith("gd_")]
+        if not drive_video_ids:
+            return {}
+        result = await self.session.execute(
+            select(DriveFile.video_id, DriveFile.web_view_link, DriveFile.google_file_id).where(
+                DriveFile.org_id == org_id,
+                DriveFile.video_id.in_(drive_video_ids),
+                DriveFile.is_deleted.is_(False),
+            )
+        )
+        links: dict[str, str] = {}
+        for row in result.all():
+            vid, link, google_fid = row
+            if link:
+                links[vid] = link
+            elif google_fid:
+                # Construct URL from google_file_id as fallback
+                links[vid] = f"https://drive.google.com/file/d/{google_fid}/view"
+        return links
+
     async def list_by_connection(
         self,
         connection_id: UUID,

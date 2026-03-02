@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.logging_config import get_logger
 from app.modules.libraries.repository import LibraryRepository
 from app.modules.search.scene_client import SceneSearchClient
+from app.modules.drive.repository import DriveFileRepository
 from app.modules.videos.schemas import (
     ShortsCandidateResponse,
     ShortsPlanResponse,
@@ -114,6 +115,15 @@ class VideoService:
               for v in result["videos"]
           ]
 
+        # Backfill web_view_link from Postgres for Drive videos missing it in OpenSearch
+        missing_link_ids = [v.video_id for v in videos if not v.web_view_link and v.video_id.startswith("gd_")]
+        if missing_link_ids:
+            drive_repo = DriveFileRepository(self.session)
+            link_map = await drive_repo.get_web_view_links(org_id, missing_link_ids)
+            for v in videos:
+                if not v.web_view_link and v.video_id in link_map:
+                    v.web_view_link = link_map[v.video_id]
+
         # Encode next cursor
         next_cursor = None
         if result["next_cursor"]:
@@ -180,6 +190,13 @@ class VideoService:
             library_map = {str(lib.id): lib.name for lib in libraries}
             library_name = library_map.get(lib_id)
 
+        # Backfill web_view_link from Postgres if missing in OpenSearch
+        web_view_link = result.get("web_view_link")
+        if not web_view_link and video_id.startswith("gd_"):
+            drive_repo = DriveFileRepository(self.session)
+            link_map = await drive_repo.get_web_view_links(org_id, [video_id])
+            web_view_link = link_map.get(video_id)
+
         return VideoScenesResponse(
             video_id=video_id,
             video_title=result.get("video_title"),
@@ -188,7 +205,7 @@ class VideoService:
             library_name=library_name,
             capture_time=result.get("capture_time"),
             earliest_ingest_time=result.get("earliest_ingest_time"),
-            web_view_link=result.get("web_view_link"),
+            web_view_link=web_view_link,
             scenes=scenes,
             total=result["total"],
         )
