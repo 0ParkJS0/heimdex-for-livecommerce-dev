@@ -5,6 +5,7 @@ import type { VideoSummary, VideoScene } from "@/lib/types";
 import { formatTimestamp } from "@/lib/api/utils";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ShortsPlanPanel } from "./ShortsPlanPanel";
+import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 
 interface VideoDetailDrawerProps {
   video: VideoSummary | null;
@@ -46,13 +47,19 @@ export function VideoDetailDrawer({
 
       <div className="relative w-full max-w-lg bg-white shadow-xl overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-gray-900 truncate" title={video.video_title || video.video_id}>
-              {video.video_title || video.video_id}
-            </h2>
-            <p className="text-xs text-gray-500">
-              {video.library_name || "Unknown library"}
-            </p>
+          <div className="min-w-0 flex items-center gap-2">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-gray-900 truncate" title={video.video_title || video.video_id}>
+                {video.video_title || video.video_id}
+              </h2>
+              <p className="text-xs text-gray-500">
+                {video.library_name || "Unknown library"}
+              </p>
+            </div>
+            <OpenInDriveButton
+              sourceType={video.source_type ?? "local"}
+              webViewLink={video.web_view_link}
+            />
           </div>
           <button
             onClick={onClose}

@@ -14,6 +14,7 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { AddToBasketButton } from "@/features/basket/AddToBasketButton";
+import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 
 function playbackUrl(videoId: string, sourceType: string, startMs?: number): string {
   return sourceType === "gdrive"
@@ -88,33 +89,7 @@ function sourceTypeBadgeClass(sourceType: string): string {
     : "bg-green-100 text-green-700";
 }
 
-function OpenInDriveButton({
-  sourceType,
-  webViewLink,
-}: {
-  sourceType: "gdrive" | "removable_disk" | "local";
-  webViewLink?: string | null;
-}) {
-  if (sourceType !== "gdrive" || !webViewLink) {
-    return null;
-  }
-
-  return (
-    <a
-      href={webViewLink}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Google 드라이브에서 열기"
-      aria-label="Google 드라이브에서 열기"
-      className="inline-flex items-center justify-center rounded-md border border-gray-200 p-1.5 text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
-    >
-      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3h7m0 0v7m0-7L10 14" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5" />
-      </svg>
-    </a>
-  );
-}
+// OpenInDriveButton extracted to @/components/OpenInDriveButton.tsx
 
 function Breadcrumb({ libraryName, sourceType }: { libraryName: string; sourceType: string }) {
   const [open, setOpen] = useState(false);

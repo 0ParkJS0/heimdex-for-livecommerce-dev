@@ -20,6 +20,7 @@ export interface VideoSummary {
   required_drive_nickname: string | null;
   source_path: string | null;
   first_scene_keyframe_ms: number;
+  web_view_link?: string | null;
 }
 
 export interface VideoFacetItem {
@@ -64,6 +65,7 @@ export interface VideoScenesResponse {
   library_name: string | null;
   capture_time: string | null;
   earliest_ingest_time: string | null;
+  web_view_link?: string | null;
   scenes: VideoScene[];
   total: number;
 }

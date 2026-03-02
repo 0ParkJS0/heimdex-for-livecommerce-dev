@@ -4,6 +4,7 @@ import type { VideoSummary } from "@/lib/types";
 import { formatTimestamp } from "@/lib/api/utils";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { cn } from "@/lib/utils";
+import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 
 interface VideoCardProps {
   video: VideoSummary;
@@ -65,18 +66,24 @@ export function VideoCard({ video, onSelect, agentAvailable }: VideoCardProps) {
                 </p>
               )}
             </div>
-            <span className={cn(
-              "inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full flex-shrink-0",
-              video.source_type === "gdrive"
-                ? "bg-blue-100 text-blue-700"
-                : video.source_type === "removable_disk"
-                ? "bg-orange-100 text-orange-700"
-                : video.source_type === "local"
-                ? "bg-green-100 text-green-700"
-                : "bg-gray-100 text-gray-700"
-            )}>
-              {video.source_type === "gdrive" ? "Drive" : video.source_type === "removable_disk" ? "Disk" : video.source_type === "local" ? "Local" : "Unknown"}
-            </span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <OpenInDriveButton
+                sourceType={video.source_type ?? "local"}
+                webViewLink={video.web_view_link}
+              />
+              <span className={cn(
+                "inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full",
+                video.source_type === "gdrive"
+                  ? "bg-blue-100 text-blue-700"
+                  : video.source_type === "removable_disk"
+                  ? "bg-orange-100 text-orange-700"
+                  : video.source_type === "local"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-gray-100 text-gray-700"
+              )}>
+                {video.source_type === "gdrive" ? "Drive" : video.source_type === "removable_disk" ? "Disk" : video.source_type === "local" ? "Local" : "Unknown"}
+              </span>
+            </div>
           </div>
 
           <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">

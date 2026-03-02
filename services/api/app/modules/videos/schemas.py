@@ -31,6 +31,7 @@ class VideoSummary(BaseModel):
     people_count: int = 0
     required_drive_nickname: str | None = None
     source_path: str | None = None
+    web_view_link: str | None = None
 
 
 class VideoFacetItem(BaseModel):
@@ -80,6 +81,7 @@ class VideoScenesResponse(BaseModel):
     library_name: str | None = None
     capture_time: str | None = None
     earliest_ingest_time: str | None = None
+    web_view_link: str | None = None
     scenes: list[VideoScene]
     total: int
 

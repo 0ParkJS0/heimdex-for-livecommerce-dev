@@ -109,6 +109,7 @@ class VideoService:
                   people_count=v["people_count"],
                   required_drive_nickname=v["required_drive_nickname"],
                   source_path=v.get("source_path"),
+                 web_view_link=v.get("web_view_link"),
               )
               for v in result["videos"]
           ]
@@ -187,6 +188,7 @@ class VideoService:
             library_name=library_name,
             capture_time=result.get("capture_time"),
             earliest_ingest_time=result.get("earliest_ingest_time"),
+            web_view_link=result.get("web_view_link"),
             scenes=scenes,
             total=result["total"],
         )

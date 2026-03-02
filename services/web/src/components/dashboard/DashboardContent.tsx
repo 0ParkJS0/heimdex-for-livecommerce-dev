@@ -11,6 +11,7 @@ import { SearchModeToggle } from "@/features/search/components/SearchModeToggle"
 import type { GroupBy } from "@/features/search/hooks/useSearch";
 import type { VideoSummary, VideoStats, SceneResult, VideoResult, AnySearchResponse, SceneSearchResponse, SearchFilters, SearchMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -611,9 +612,16 @@ function VideoCard({ video }: { video: VideoSummary }) {
         className="aspect-video w-full rounded-lg"
         sourceType={video.source_type}
       />
-      <p className="mt-2 truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
-        {title}
-      </p>
+      <div className="mt-2 flex items-center gap-1.5">
+        <p className="truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
+          {title}
+        </p>
+        <OpenInDriveButton
+          sourceType={video.source_type ?? "local"}
+          webViewLink={video.web_view_link}
+          className="flex-shrink-0 inline-flex items-center justify-center rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+        />
+      </div>
     </Link>
   );
 }
@@ -639,9 +647,16 @@ function SceneCard({ scene }: { scene: SceneResult }) {
           {timestamp}
         </span>
       </div>
-      <p className="mt-2 truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
-        {title}
-      </p>
+      <div className="mt-2 flex items-center gap-1.5">
+        <p className="truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
+          {title}
+        </p>
+        <OpenInDriveButton
+          sourceType={scene.source_type}
+          webViewLink={scene.web_view_link}
+          className="flex-shrink-0 inline-flex items-center justify-center rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+        />
+      </div>
       {scene.snippet && (
         <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">
           {scene.snippet}
@@ -668,9 +683,16 @@ function SearchVideoCard({ video }: { video: VideoResult }) {
           {video.matching_scene_count}개 장면
         </span>
       </div>
-      <p className="mt-2 truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
-        {title}
-      </p>
+      <div className="mt-2 flex items-center gap-1.5">
+        <p className="truncate text-sm font-medium text-gray-800 group-hover:text-indigo-600">
+          {title}
+        </p>
+        <OpenInDriveButton
+          sourceType={video.source_type}
+          webViewLink={video.web_view_link}
+          className="flex-shrink-0 inline-flex items-center justify-center rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+        />
+      </div>
       {best.snippet && (
         <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">
           {best.snippet}

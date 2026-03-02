@@ -11,6 +11,7 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { formatTimestamp } from "@/lib/api/utils";
 import type { VideoScene, VideoScenesResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 
 type ViewMode = "overview" | "scenes";
 
@@ -225,7 +226,13 @@ function VideoInfoPanel({
         />
       </div>
 
-      <h2 className="mt-6 text-xl font-bold text-gray-900">{title}</h2>
+      <div className="mt-6 flex items-center gap-2">
+        <h2 className="text-xl font-bold text-gray-900">{title}</h2>
+        <OpenInDriveButton
+          sourceType={meta?.source_type ?? "local"}
+          webViewLink={meta?.web_view_link}
+        />
+      </div>
 
       <dl className="mt-4 space-y-3">
         {rows.map(([label, value]) => (
