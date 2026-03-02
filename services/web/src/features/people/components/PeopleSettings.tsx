@@ -236,11 +236,14 @@ function SelectedPersonCard({
   onRename,
   isRenaming,
   getToken,
+  refreshTrigger,
 }: {
   person: PersonResponse;
   onRename: (id: string, label: string | null) => Promise<void>;
   isRenaming: boolean;
   getToken: () => Promise<string | null>;
+  /** Monotonic counter — increment to force video list re-fetch. */
+  refreshTrigger: number;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(person.label ?? "");
@@ -283,7 +286,7 @@ function SelectedPersonCard({
     return () => {
       cancelled = true;
     };
-  }, [person.person_cluster_id, getToken]);
+  }, [person.person_cluster_id, getToken, refreshTrigger]);
 
   const toggleVideo = useCallback((videoId: string) => {
     setCheckedVideos((prev) => {
@@ -428,6 +431,9 @@ export function PeopleSettings() {
   const [activeDragPerson, setActiveDragPerson] = useState<PersonResponse | null>(null);
   const [mergeSource, setMergeSource] = useState<PersonResponse | null>(null);
   const [mergeTarget, setMergeTarget] = useState<PersonResponse | null>(null);
+  // Incremented after each successful merge to force SelectedPersonCard
+  // to refetch its video list (the person_cluster_id dep alone won't change).
+  const [videoRefreshKey, setVideoRefreshKey] = useState(0);
 
   // Require 8px movement before drag starts (prevents accidental drags on click)
   const sensors = useSensors(
@@ -495,6 +501,9 @@ export function PeopleSettings() {
       });
       setMergeSource(null);
       setMergeTarget(null);
+      // Bump refresh key so SelectedPersonCard re-fetches video list
+      // for the surviving target cluster (now includes merged scenes).
+      setVideoRefreshKey((k) => k + 1);
     },
     [mergeSource, mergeTarget, mergePeople],
   );
@@ -545,6 +554,7 @@ export function PeopleSettings() {
                       onRename={renamePerson}
                       isRenaming={isRenaming}
                       getToken={getAccessToken}
+                      refreshTrigger={videoRefreshKey}
                     />
                   ))}
                 </div>

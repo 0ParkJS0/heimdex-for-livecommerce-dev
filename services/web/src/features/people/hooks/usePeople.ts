@@ -160,19 +160,22 @@ export function usePeople(): UsePeopleReturn {
       setError(null);
       try {
         const response = await mergePeopleApi(request, getAccessToken);
-        // Remove merged source clusters from local state
+        // Optimistic: remove source clusters and update target label immediately
         const sourceIds = new Set(response.merged_source_ids);
         setPeople((prev) => {
           const updated = prev.filter(
             (p) => !sourceIds.has(p.person_cluster_id),
           );
-          // Update the target cluster's label if returned
           return updated.map((p) =>
             p.person_cluster_id === response.target_cluster_id
               ? { ...p, label: response.label }
               : p,
           );
         });
+        // Refetch full people list to get updated face_count,
+        // representative scenes, and other server-computed fields
+        // that the merge response doesn't include.
+        fetchPeopleList().catch(() => {});
         return response;
       } catch (err) {
         const msg =
@@ -183,7 +186,7 @@ export function usePeople(): UsePeopleReturn {
         setIsMerging(false);
       }
     },
-    [getAccessToken],
+    [getAccessToken, fetchPeopleList],
   );
 
   useEffect(() => {
