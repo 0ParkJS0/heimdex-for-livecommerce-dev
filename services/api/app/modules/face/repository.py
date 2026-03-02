@@ -2,6 +2,7 @@ from typing import TypedDict, cast
 from uuid import UUID
 
 import numpy as np
+from sqlalchemy import select, text, update
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -134,6 +135,81 @@ class FaceRepository:
         self.session.add(exemplar)
         await self.session.flush()
 
+    async def merge_identities(
+        self,
+        org_id: UUID,
+        source_cluster_id: str,
+        target_cluster_id: str,
+    ) -> bool:
+        """Merge source face identity into target.
+
+        Steps:
+        1. Reassign all source exemplars to target identity
+        2. Recompute target centroid as weighted average of both centroids
+        3. Update target exemplar_count and best_quality
+        4. Delete source identity row
+
+        Returns True if merge happened, False if source identity not found.
+        """
+        # Fetch both identities
+        source_result = await self.session.execute(
+            select(FaceIdentity).where(
+                FaceIdentity.org_id == org_id,
+                FaceIdentity.cluster_id == source_cluster_id,
+            )
+        )
+        source = source_result.scalar_one_or_none()
+        if source is None:
+            return False
+
+        target_result = await self.session.execute(
+            select(FaceIdentity).where(
+                FaceIdentity.org_id == org_id,
+                FaceIdentity.cluster_id == target_cluster_id,
+            )
+        )
+        target = target_result.scalar_one_or_none()
+
+        if target is not None:
+            # Recompute target centroid as weighted average
+            src_centroid = np.array(source.centroid_embedding, dtype=np.float32)
+            tgt_centroid = np.array(target.centroid_embedding, dtype=np.float32)
+            src_weight = float(source.exemplar_count)
+            tgt_weight = float(target.exemplar_count)
+            total_weight = src_weight + tgt_weight
+
+            if total_weight > 0.0:
+                merged_centroid = (tgt_centroid * tgt_weight + src_centroid * src_weight) / total_weight
+            else:
+                merged_centroid = tgt_centroid
+
+            centroid_norm = float(np.linalg.norm(merged_centroid))
+            if centroid_norm > 0.0:
+                merged_centroid = merged_centroid / centroid_norm
+
+            target.centroid_embedding = merged_centroid.tolist()
+            target.exemplar_count += source.exemplar_count
+
+            if source.best_quality > target.best_quality:
+                target.best_quality = source.best_quality
+                target.best_thumbnail_video_id = source.best_thumbnail_video_id
+
+            # Reassign all source exemplars to target identity
+            await self.session.execute(
+                update(FaceExemplar)
+                .where(FaceExemplar.identity_id == source.id)
+                .values(identity_id=target.id)
+            )
+        else:
+            # Target has no face identity — just rename the source
+            source.cluster_id = target_cluster_id
+            await self.session.flush()
+            return True
+
+        # Delete source identity
+        await self.session.delete(source)
+        await self.session.flush()
+        return True
 
 class FaceMatchRow(TypedDict):
     cluster_id: str

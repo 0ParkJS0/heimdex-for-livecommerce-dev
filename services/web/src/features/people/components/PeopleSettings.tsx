@@ -2,6 +2,16 @@
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { usePeople } from "../hooks/usePeople";
 import { useAuth } from "@/lib/auth";
 import { useAgent } from "@/features/search/hooks/useAgent";
@@ -10,6 +20,7 @@ import { getCloudThumbnailUrl, getFaceThumbnailUrl } from "@/lib/agent";
 import type { PersonResponse, PersonVideoItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { DeletePersonDialog } from "./DeletePersonDialog";
+import { MergeConfirmDialog } from "./MergeConfirmDialog";
 
 function PersonIcon({ className }: { className?: string }) {
   return (
@@ -81,18 +92,15 @@ function TrashIcon() {
   );
 }
 
-function PersonAvatar({
+/** Thumbnail content shared between PersonAvatar and DragOverlay */
+function AvatarThumbnail({
   person,
-  isSelected,
-  onToggle,
-  onDelete,
   agentAvailable,
+  className,
 }: {
   person: PersonResponse;
-  isSelected: boolean;
-  onToggle: (id: string) => void;
-  onDelete: (id: string) => void;
   agentAvailable: boolean;
+  className?: string;
 }) {
   const [imgError, setImgError] = useState(false);
   const faceThumbnailUrl = getFaceThumbnailUrl(person.person_cluster_id);
@@ -104,42 +112,104 @@ function PersonAvatar({
   const thumbnailUrl = !useFallback ? faceThumbnailUrl : sceneThumbnailUrl;
 
   return (
-    <div className="group relative flex flex-col items-center gap-1">
-      <button
-        type="button"
-        onClick={() => onToggle(person.person_cluster_id)}
-        className="flex flex-col items-center"
-      >
-        <div
-          className={cn(
-            "flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-gray-100 transition-all",
-            isSelected ? "ring-2 ring-indigo-500 ring-offset-2" : "hover:bg-gray-200",
-          )}
-        >
-          {thumbnailUrl && !imgError ? (
-            <img
-              src={thumbnailUrl}
-              alt={person.label ?? "인물"}
-              className="h-full w-full object-cover"
-              onError={() => {
-                if (!useFallback && sceneThumbnailUrl) {
-                  setUseFallback(true);
-                } else {
-                  setImgError(true);
-                }
-              }}
-            />
-          ) : (
-            <div className="relative flex h-full w-full items-center justify-center">
-              <PersonIcon className="h-10 w-10 text-gray-400" />
-              {!agentAvailable && (
-                <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-gray-500/80 px-1.5 py-0.5 text-[8px] font-medium leading-tight text-white">
-                  오프라인
-                </span>
-              )}
-            </div>
+    <div
+      className={cn(
+        "flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-gray-100 transition-all",
+        className,
+      )}
+    >
+      {thumbnailUrl && !imgError ? (
+        <img
+          src={thumbnailUrl}
+          alt={person.label ?? "인물"}
+          className="h-full w-full object-cover"
+          onError={() => {
+            if (!useFallback && sceneThumbnailUrl) {
+              setUseFallback(true);
+            } else {
+              setImgError(true);
+            }
+          }}
+        />
+      ) : (
+        <div className="relative flex h-full w-full items-center justify-center">
+          <PersonIcon className="h-10 w-10 text-gray-400" />
+          {!agentAvailable && (
+            <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-gray-500/80 px-1.5 py-0.5 text-[8px] font-medium leading-tight text-white">
+              오프라인
+            </span>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function PersonAvatar({
+  person,
+  isSelected,
+  onToggle,
+  onDelete,
+  agentAvailable,
+  isDragActive,
+}: {
+  person: PersonResponse;
+  isSelected: boolean;
+  onToggle: (id: string) => void;
+  onDelete: (id: string) => void;
+  agentAvailable: boolean;
+  isDragActive: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `person-${person.person_cluster_id}`,
+    data: { person },
+  });
+
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `person-${person.person_cluster_id}`,
+    data: { person },
+  });
+
+  // Combine drag and drop refs
+  const setNodeRef = useCallback(
+    (node: HTMLElement | null) => {
+      setDragRef(node);
+      setDropRef(node);
+    },
+    [setDragRef, setDropRef],
+  );
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "group relative flex flex-col items-center gap-1",
+        isDragging && "opacity-30",
+      )}
+      {...attributes}
+      {...listeners}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          if (!isDragActive) onToggle(person.person_cluster_id);
+        }}
+        className="flex flex-col items-center"
+      >
+        <AvatarThumbnail
+          person={person}
+          agentAvailable={agentAvailable}
+          className={cn(
+            isSelected && "ring-2 ring-indigo-500 ring-offset-2",
+            !isSelected && !isOver && "hover:bg-gray-200",
+            isOver && "ring-2 ring-indigo-500 scale-105 bg-indigo-50",
+          )}
+        />
       </button>
       <button
         type="button"
@@ -346,11 +416,25 @@ export function PeopleSettings() {
     isSavingExcludes,
     deletePerson,
     isDeleting,
+    mergePeople,
+    isMerging,
   } = usePeople();
   const { getAccessToken } = useAuth();
   const { isAvailable: agentAvailable } = useAgent();
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+
+  // DnD merge state
+  const [activeDragPerson, setActiveDragPerson] = useState<PersonResponse | null>(null);
+  const [mergeSource, setMergeSource] = useState<PersonResponse | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<PersonResponse | null>(null);
+
+  // Require 8px movement before drag starts (prevents accidental drags on click)
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
 
   const filteredPeople = useMemo(() => {
     if (!searchQuery.trim()) return people;
@@ -368,6 +452,57 @@ export function PeopleSettings() {
   );
 
   const hasPeople = people.length > 0;
+
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const person = event.active.data.current?.person as PersonResponse | undefined;
+      if (person) {
+        setActiveDragPerson(person);
+      }
+    },
+    [],
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveDragPerson(null);
+
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const sourcePerson = active.data.current?.person as PersonResponse | undefined;
+      const targetPerson = over.data.current?.person as PersonResponse | undefined;
+
+      if (sourcePerson && targetPerson) {
+        setMergeSource(sourcePerson);
+        setMergeTarget(targetPerson);
+      }
+    },
+    [],
+  );
+
+  const handleDragCancel = useCallback(() => {
+    setActiveDragPerson(null);
+  }, []);
+
+  const handleMergeConfirm = useCallback(
+    async (keepLabel?: string | null) => {
+      if (!mergeSource || !mergeTarget) return;
+      await mergePeople({
+        source_cluster_ids: [mergeSource.person_cluster_id],
+        target_cluster_id: mergeTarget.person_cluster_id,
+        keep_label: keepLabel,
+      });
+      setMergeSource(null);
+      setMergeTarget(null);
+    },
+    [mergeSource, mergeTarget, mergePeople],
+  );
+
+  const handleMergeCancel = useCallback(() => {
+    setMergeSource(null);
+    setMergeTarget(null);
+  }, []);
 
   return (
     <div>
@@ -481,18 +616,42 @@ export function PeopleSettings() {
                   </Link>
                 </div>
               ) : (
-                <div className="grid grid-cols-5 gap-4">
-                  {filteredPeople.map((person) => (
-                    <PersonAvatar
-                      key={person.person_cluster_id}
-                      person={person}
-                      isSelected={excludedIds.has(person.person_cluster_id)}
-                      onToggle={toggleExclude}
-                      onDelete={setDeleteTargetId}
-                      agentAvailable={agentAvailable}
-                    />
-                  ))}
-                </div>
+                <DndContext
+                  sensors={sensors}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDragCancel={handleDragCancel}
+                >
+                  <div className="grid grid-cols-5 gap-4">
+                    {filteredPeople.map((person) => (
+                      <PersonAvatar
+                        key={person.person_cluster_id}
+                        person={person}
+                        isSelected={excludedIds.has(person.person_cluster_id)}
+                        onToggle={toggleExclude}
+                        onDelete={setDeleteTargetId}
+                        agentAvailable={agentAvailable}
+                        isDragActive={activeDragPerson !== null}
+                      />
+                    ))}
+                  </div>
+                  <DragOverlay dropAnimation={null}>
+                    {activeDragPerson ? (
+                      <div className="flex flex-col items-center gap-1 opacity-80">
+                        <AvatarThumbnail
+                          person={activeDragPerson}
+                          agentAvailable={agentAvailable}
+                          className="ring-2 ring-indigo-400 shadow-lg"
+                        />
+                        {activeDragPerson.label && (
+                          <span className="max-w-[80px] truncate text-xs text-gray-600">
+                            {activeDragPerson.label}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
+                  </DragOverlay>
+                </DndContext>
               )}
             </div>
           </div>
@@ -512,6 +671,15 @@ export function PeopleSettings() {
           }
         }}
       />
+      {mergeSource && mergeTarget && (
+        <MergeConfirmDialog
+          source={mergeSource}
+          target={mergeTarget}
+          isMerging={isMerging}
+          onCancel={handleMergeCancel}
+          onConfirm={handleMergeConfirm}
+        />
+      )}
     </div>
   );
 }

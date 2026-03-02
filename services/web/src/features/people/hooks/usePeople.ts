@@ -6,10 +6,11 @@ import {
   getPeople,
   renamePerson as renamePersionApi,
   deletePerson as deletePersonApi,
+  mergePeople as mergePeopleApi,
   getExcludePreferences,
   saveExcludePreferences,
 } from "@/lib/api/people";
-import type { PersonResponse } from "@/lib/types";
+import type { PersonResponse, MergePersonRequest, MergePersonResponse } from "@/lib/types";
 import { ApiError } from "@/lib/types";
 
 export interface UsePeopleReturn {
@@ -24,6 +25,8 @@ export interface UsePeopleReturn {
   isSavingExcludes: boolean;
   deletePerson: (personClusterId: string) => Promise<void>;
   isDeleting: boolean;
+  mergePeople: (request: MergePersonRequest) => Promise<MergePersonResponse | null>;
+  isMerging: boolean;
 }
 
 export function usePeople(): UsePeopleReturn {
@@ -36,6 +39,7 @@ export function usePeople(): UsePeopleReturn {
   const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set());
   const [isSavingExcludes, setIsSavingExcludes] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestExcludedRef = useRef<Set<string>>(new Set());
 
@@ -150,6 +154,38 @@ export function usePeople(): UsePeopleReturn {
     [getAccessToken],
   );
 
+  const merge = useCallback(
+    async (request: MergePersonRequest): Promise<MergePersonResponse | null> => {
+      setIsMerging(true);
+      setError(null);
+      try {
+        const response = await mergePeopleApi(request, getAccessToken);
+        // Remove merged source clusters from local state
+        const sourceIds = new Set(response.merged_source_ids);
+        setPeople((prev) => {
+          const updated = prev.filter(
+            (p) => !sourceIds.has(p.person_cluster_id),
+          );
+          // Update the target cluster's label if returned
+          return updated.map((p) =>
+            p.person_cluster_id === response.target_cluster_id
+              ? { ...p, label: response.label }
+              : p,
+          );
+        });
+        return response;
+      } catch (err) {
+        const msg =
+          err instanceof ApiError ? err.detail : "인물 병합에 실패했습니다.";
+        setError(msg);
+        return null;
+      } finally {
+        setIsMerging(false);
+      }
+    },
+    [getAccessToken],
+  );
+
   useEffect(() => {
     fetchPeopleList();
     return () => {
@@ -171,5 +207,7 @@ export function usePeople(): UsePeopleReturn {
     isSavingExcludes,
     deletePerson: remove,
     isDeleting,
+    mergePeople: merge,
+    isMerging,
   };
 }

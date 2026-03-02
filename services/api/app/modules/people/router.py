@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.dependencies import (
     get_db_session,
+    get_face_repository,
     get_people_cluster_label_repository,
     get_people_exclude_preference_repository,
     get_scene_opensearch_client,
@@ -17,8 +18,11 @@ from app.modules.people.repository import (
     PeopleClusterLabelRepository,
     PeopleExcludePreferenceRepository,
 )
+from app.modules.face.repository import FaceRepository
 from app.modules.people.schemas import (
     ExcludePreferencesResponse,
+    MergePersonRequest,
+    MergePersonResponse,
     PeopleListResponse,
     PersonResponse,
     PersonVideoItem,
@@ -137,6 +141,132 @@ async def rename_person(
         label=updated.label,
     )
 
+
+@router.post("/merge", response_model=MergePersonResponse)
+async def merge_people(
+    request: MergePersonRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    people_repo: PeopleClusterLabelRepository = Depends(get_people_cluster_label_repository),
+    exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
+    face_repo: FaceRepository = Depends(get_face_repository),
+    scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Merge one or more person clusters into a target cluster.
+
+    The target cluster survives. Source clusters are absorbed:
+    - Their scenes are reassigned to the target in OpenSearch
+    - Their face identities/exemplars are merged in Postgres
+    - Their labels and exclude preferences are transferred
+    - Their face thumbnails are cleaned up
+    """
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    org_id_str = str(org_ctx.org_id)
+    target_id = request.target_cluster_id
+    source_ids = request.source_cluster_ids
+
+    # Guard: target must not be in source list
+    if target_id in source_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="target_cluster_id must not appear in source_cluster_ids",
+        )
+
+    logger.info(
+        "merge_people_request",
+        user_id=str(user.id),
+        org_id=org_id_str,
+        target_cluster_id=target_id,
+        source_cluster_ids=source_ids,
+        keep_label=request.keep_label,
+    )
+
+    total_scenes_updated = 0
+
+    for source_id in source_ids:
+        # 1. Replace source_id with target_id in OpenSearch scene documents
+        try:
+            scenes_updated = await scene_opensearch.replace_person_cluster_id(
+                org_id_str, source_id, target_id,
+            )
+            total_scenes_updated += scenes_updated
+        except Exception:
+            logger.exception(
+                "merge_people_opensearch_failed",
+                org_id=org_id_str,
+                source_cluster_id=source_id,
+                target_cluster_id=target_id,
+            )
+
+        # 2. Merge face identities (centroid recomputation + exemplar reassignment)
+        try:
+            await face_repo.merge_identities(
+                org_ctx.org_id, source_id, target_id,
+            )
+        except Exception:
+            logger.exception(
+                "merge_people_face_identity_failed",
+                org_id=org_id_str,
+                source_cluster_id=source_id,
+                target_cluster_id=target_id,
+            )
+
+        # 3. Merge cluster labels
+        await people_repo.merge_labels(
+            org_ctx.org_id, source_id, target_id, request.keep_label,
+        )
+
+        # 4. Transfer exclude preferences
+        await exclude_repo.transfer_exclusions(
+            org_ctx.org_id, source_id, target_id,
+        )
+
+        # 5. Clean up source face thumbnail
+        try:
+            thumbnail_dir = FilePath(settings.thumbnail_storage_dir)
+            source_face = thumbnail_dir / org_id_str / "faces" / f"{source_id}.jpg"
+            if source_face.exists():
+                # If target has no thumbnail, promote source thumbnail
+                target_face = thumbnail_dir / org_id_str / "faces" / f"{target_id}.jpg"
+                if not target_face.exists():
+                    source_face.rename(target_face)
+                else:
+                    source_face.unlink()
+        except Exception:
+            logger.exception(
+                "merge_people_thumbnail_cleanup_failed",
+                org_id=org_id_str,
+                source_cluster_id=source_id,
+            )
+
+    await db.commit()
+
+    # Resolve final label for response
+    final_label_row = await people_repo.get_by_cluster_id(org_ctx.org_id, target_id)
+    final_label = final_label_row.label if final_label_row else None
+
+    logger.info(
+        "merge_people_complete",
+        org_id=org_id_str,
+        target_cluster_id=target_id,
+        source_cluster_ids=source_ids,
+        scenes_updated=total_scenes_updated,
+        final_label=final_label,
+    )
+
+    return MergePersonResponse(
+        target_cluster_id=target_id,
+        merged_source_ids=source_ids,
+        scenes_updated=total_scenes_updated,
+        label=final_label,
+    )
 
 @router.delete("/{person_cluster_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_person(

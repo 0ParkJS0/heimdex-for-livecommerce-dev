@@ -1,6 +1,8 @@
 import {
   ApiError,
   ExcludePreferencesResponse,
+  MergePersonRequest,
+  MergePersonResponse,
   PeopleListResponse,
   PersonVideosResponse,
   RenamePersonResponse,
@@ -145,5 +147,17 @@ export async function saveExcludePreferences(
     "PUT",
     getToken,
     { person_cluster_ids: personClusterIds },
+  );
+}
+
+export async function mergePeople(
+  request: MergePersonRequest,
+  getToken?: TokenGetter,
+): Promise<MergePersonResponse> {
+  return apiRequest<MergePersonResponse>(
+    "/api/people/merge",
+    "POST",
+    getToken,
+    request,
   );
 }

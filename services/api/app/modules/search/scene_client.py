@@ -1246,6 +1246,64 @@ class SceneSearchClient:
         )
         return updated
 
+    async def replace_person_cluster_id(
+        self,
+        org_id: str,
+        source_cluster_id: str,
+        target_cluster_id: str,
+    ) -> int:
+        """Replace source_cluster_id with target_cluster_id in all scene documents.
+
+        Uses update_by_query with a painless script to atomically:
+        1. Remove source_cluster_id from people_cluster_ids
+        2. Add target_cluster_id if not already present (deduplication)
+
+        This is the core OpenSearch operation for person cluster merging.
+
+        Returns the number of documents updated.
+        """
+        body: dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"org_id": org_id}},
+                        {"term": {"people_cluster_ids": source_cluster_id}},
+                    ],
+                }
+            },
+            "script": {
+                "source": (
+                    "if (ctx._source.people_cluster_ids != null) {"
+                    "  ctx._source.people_cluster_ids.removeIf("
+                    "    id -> id.equals(params.source_id)"
+                    "  );"
+                    "  if (!ctx._source.people_cluster_ids.contains(params.target_id)) {"
+                    "    ctx._source.people_cluster_ids.add(params.target_id);"
+                    "  }"
+                    "}"
+                ),
+                "lang": "painless",
+                "params": {
+                    "source_id": source_cluster_id,
+                    "target_id": target_cluster_id,
+                },
+            },
+        }
+
+        response = await self.client.update_by_query(
+            index=self.alias_name,
+            body=body,
+            params={"refresh": True},
+        )
+        updated = int(response.get("updated", 0))
+        logger.info(
+            "replace_person_cluster_id_complete",
+            org_id=org_id,
+            source_cluster_id=source_cluster_id,
+            target_cluster_id=target_cluster_id,
+            scenes_updated=updated,
+        )
+        return updated
     async def get_video_stats(
         self,
         org_id: str,

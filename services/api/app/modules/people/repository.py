@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.people.models import (
@@ -109,6 +109,44 @@ class PeopleClusterLabelRepository:
         await self.session.flush()
         return True
 
+    async def merge_labels(
+        self,
+        org_id: UUID,
+        source_cluster_id: str,
+        target_cluster_id: str,
+        keep_label: str | None = None,
+    ) -> None:
+        """Merge source cluster label into target.
+
+        If keep_label is provided, it overrides the target label.
+        Otherwise the target keeps its existing label (or inherits source label
+        if target has no label).
+        Deletes the source cluster label row.
+        """
+        source = await self.get_by_cluster_id(org_id, source_cluster_id)
+        target = await self.get_by_cluster_id(org_id, target_cluster_id)
+
+        # Determine the label to use
+        if keep_label is not None:
+            resolved_label = keep_label if keep_label else None
+        elif target and target.label:
+            resolved_label = target.label
+        elif source and source.label:
+            resolved_label = source.label
+        else:
+            resolved_label = None
+
+        # Ensure target row exists with the resolved label
+        if target is None:
+            await self.set_label(org_id, target_cluster_id, resolved_label)
+        elif target.label != resolved_label:
+            target.label = resolved_label
+            await self.session.flush()
+
+        # Delete source row
+        if source is not None:
+            await self.session.delete(source)
+            await self.session.flush()
 
 class PeopleExcludePreferenceRepository:
     def __init__(self, session: AsyncSession):
@@ -156,3 +194,51 @@ class PeopleExcludePreferenceRepository:
         )
         await self.session.flush()
         return result.rowcount  # type: ignore[return-value]
+
+    async def transfer_exclusions(
+        self,
+        org_id: UUID,
+        source_cluster_id: str,
+        target_cluster_id: str,
+    ) -> int:
+        """Transfer exclude preferences from source cluster to target.
+
+        For each user who had the source cluster excluded:
+        - If they don't already exclude the target, update the row in-place
+        - If they already exclude the target, delete the duplicate source row
+
+        Returns the number of rows affected.
+        """
+        # Find all users who exclude the source
+        source_prefs = await self.session.execute(
+            select(PeopleExcludePreference).where(
+                PeopleExcludePreference.org_id == org_id,
+                PeopleExcludePreference.person_cluster_id == source_cluster_id,
+            )
+        )
+        source_rows = list(source_prefs.scalars().all())
+
+        if not source_rows:
+            return 0
+
+        # Find which users already exclude the target
+        target_prefs = await self.session.execute(
+            select(PeopleExcludePreference.user_id).where(
+                PeopleExcludePreference.org_id == org_id,
+                PeopleExcludePreference.person_cluster_id == target_cluster_id,
+            )
+        )
+        users_with_target = set(target_prefs.scalars().all())
+
+        affected = 0
+        for row in source_rows:
+            if row.user_id in users_with_target:
+                # User already excludes target — just delete the source row
+                await self.session.delete(row)
+            else:
+                # Transfer: update source row to point to target
+                row.person_cluster_id = target_cluster_id
+            affected += 1
+
+        await self.session.flush()
+        return affected
