@@ -1,18 +1,22 @@
 """
-Internal scene ingestion router for drive-worker.
+Internal ingestion router for drive-workers.
 
-POST /internal/ingest/scenes — accepts scene data from the drive-worker
-over Docker network and delegates to SceneIngestService.
+POST /internal/ingest/scenes — scene data from drive-worker
+POST /internal/ingest/enrich — enrichment merge from GPU workers
+POST /internal/ingest/thumbnails/face/{id} — face thumbnails from face-worker
 
 Auth: Pre-shared internal API key (Bearer token).
 Tenancy: org_id passed explicitly via X-Heimdex-Org-Id header (no Host-based
-         resolution — the drive-worker is an internal service, not a tenant).
+         resolution — workers are internal services, not tenants).
 Feature-gated: only registered when DRIVE_CONNECTOR_ENABLED=true.
 """
 import hmac
+import re
+from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, status
 from heimdex_media_contracts.ingest import IngestScenesRequest
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -180,3 +184,60 @@ async def internal_enrich_scenes(
     )
 
     return EnrichScenesResponse(**result)
+
+
+@router.post("/thumbnails/face/{person_cluster_id}")
+async def internal_upload_face_thumbnail(
+    person_cluster_id: str,
+    file: Annotated[UploadFile, File(...)],
+    x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
+    _token: str = Depends(_verify_internal_token),
+):
+    """Upload face thumbnail from face-worker. Auth: internal API key."""
+    _UNSAFE_PATH_RE = re.compile(r"[/\\\x00]")
+    if not person_cluster_id or _UNSAFE_PATH_RE.search(person_cluster_id) or ".." in person_cluster_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid person_cluster_id",
+        )
+
+    try:
+        org_id = UUID(x_heimdex_org_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
+        )
+
+    content_type = (file.content_type or "").lower()
+    if content_type not in {"image/jpeg", "image/jpg"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="file must be image/jpeg",
+        )
+
+    settings = get_settings()
+    root = Path(settings.thumbnail_storage_dir)
+    target_dir = root / str(org_id) / "faces"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"{person_cluster_id}.jpg"
+
+    # Validate no path traversal
+    resolved = target_path.resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid path",
+        )
+
+    data = await file.read()
+    target_path.write_bytes(data)
+
+    logger.info(
+        "internal_face_thumbnail_uploaded",
+        org_id=str(org_id),
+        person_cluster_id=person_cluster_id,
+        size_bytes=len(data),
+    )
+
+    return {"stored": True, "path": f"faces/{person_cluster_id}"}

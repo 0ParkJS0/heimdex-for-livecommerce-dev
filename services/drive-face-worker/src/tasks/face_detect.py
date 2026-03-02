@@ -426,7 +426,7 @@ def _upload_thumbnails(
         ok, encoded = cv2.imencode(".jpg", crop)
         if not ok:
             continue
-        url = f"{settings.drive_api_base_url.rstrip('/')}/ingest/thumbnails/face/{cluster_id}"
+        url = f"{settings.drive_api_base_url.rstrip('/')}/internal/ingest/thumbnails/face/{cluster_id}"
         resp = requests.post(
             url,
             headers={
