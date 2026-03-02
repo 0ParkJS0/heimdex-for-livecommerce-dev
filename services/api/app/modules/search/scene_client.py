@@ -463,7 +463,7 @@ class SceneSearchClient:
         response = await self.client.delete_by_query(
             index=self.alias_name,
             body=body,
-            params={"refresh": True},
+            params={"refresh": "true"},
         )
         return int(response.get("deleted", 0))
 
@@ -1235,7 +1235,7 @@ class SceneSearchClient:
         response = await self.client.update_by_query(
             index=self.alias_name,
             body=body,
-            params={"refresh": True},
+            params={"refresh": "true"},
         )
         updated = int(response.get("updated", 0))
         logger.info(
@@ -1293,7 +1293,7 @@ class SceneSearchClient:
         response = await self.client.update_by_query(
             index=self.alias_name,
             body=body,
-            params={"refresh": True},
+            params={"refresh": "true"},
         )
         updated = int(response.get("updated", 0))
         logger.info(
