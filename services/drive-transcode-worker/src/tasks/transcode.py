@@ -175,20 +175,34 @@ def _process_single_transcode(
             temp_dir=temp_dir,
         )
 
-        ingest_result = _post_scenes_to_api(
-            settings=settings,
-            org_id=org_id,
-            video_id=video_id,
-            video_title=file_name,
-            library_id=library_id,
-            duration_ms=proxy_probe.duration_ms,
-            scenes=scene_dicts,
-            source_path=source_path,
-            video_fps=original_probe.frame_rate,
-            video_width=original_probe.width,
-            video_height=original_probe.height,
-        )
-        logger.info("transcode_ingest_complete", extra={"indexed_count": ingest_result.get("indexed_count")})
+        INGEST_BATCH_SIZE = 200
+        total_indexed = 0
+        for batch_start in range(0, len(scene_dicts), INGEST_BATCH_SIZE):
+            batch = scene_dicts[batch_start : batch_start + INGEST_BATCH_SIZE]
+            ingest_result = _post_scenes_to_api(
+                settings=settings,
+                org_id=org_id,
+                video_id=video_id,
+                video_title=file_name,
+                library_id=library_id,
+                duration_ms=proxy_probe.duration_ms,
+                scenes=batch,
+                source_path=source_path,
+                video_fps=original_probe.frame_rate,
+                video_width=original_probe.width,
+                video_height=original_probe.height,
+            )
+            total_indexed += ingest_result.get("indexed_count", 0)
+            logger.info(
+                "ingest_batch_complete",
+                extra={
+                    "batch_start": batch_start,
+                    "batch_size": len(batch),
+                    "total_scenes": len(scene_dicts),
+                    "batch_indexed": ingest_result.get("indexed_count", 0),
+                },
+            )
+        logger.info("transcode_ingest_complete", extra={"indexed_count": total_indexed, "total_scenes": len(scene_dicts)})
 
         api_client.update_processing_status(
             file_id,
