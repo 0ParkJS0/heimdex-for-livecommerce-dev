@@ -35,6 +35,7 @@ def _process_single_stt(
     settings: Any,
     claimed_file: Any,
     stt_processor: Any = None,
+    diarizer: Any = None,
 ) -> None:
     drive_keys = importlib.import_module("heimdex_worker_sdk.drive_keys")
     scene_manifest_s3_key = drive_keys.scene_manifest_s3_key
@@ -117,11 +118,19 @@ def _process_single_stt(
         transcript_segments = stt_processor.transcribe(audio_path)
         stt_duration_ms = int((time.monotonic() - stt_started) * 1000)
 
+        diarization_duration_ms = 0
+        if diarizer is not None and transcript_segments:
+            diar_mod = importlib.import_module("heimdex_media_pipelines.speech.diarization")
+            diar_started = time.monotonic()
+            speaker_turns = diarizer.diarize(audio_path)
+            diar_mod.assign_speakers_to_segments(transcript_segments, speaker_turns)
+            diarization_duration_ms = int((time.monotonic() - diar_started) * 1000)
+
         if not transcript_segments:
             updated_scenes = _build_scenes_no_speech(scenes)
         else:
             speech_segments = convert_to_speech_segments(transcript_segments)
-            updated_scenes = _align_segments_to_scenes(scenes, speech_segments)
+            updated_scenes = _align_segments_to_scenes(scenes, speech_segments, diarized=diarizer is not None)
 
         try:
             ingest_result = _post_enrich_to_api(
@@ -155,6 +164,8 @@ def _process_single_stt(
                 "model": settings.drive_stt_model,
                 "backend": settings.drive_stt_backend,
                 "stt_duration_ms": stt_duration_ms,
+                "diarization_duration_ms": diarization_duration_ms,
+                "diarization_enabled": diarizer is not None,
                 "scene_count": len(scenes),
                 "segment_count": total_segment_count,
                 "transcript_chars": total_transcript_chars,
@@ -178,16 +189,12 @@ def _process_single_stt(
 def _align_segments_to_scenes(
     scenes: list[dict[str, Any]],
     speech_segments: list[Any],
+    diarized: bool = False,
 ) -> list[dict[str, Any]]:
+    merge_mod = importlib.import_module("heimdex_media_contracts.scenes.merge")
     SceneBoundary = importlib.import_module(
         "heimdex_media_contracts.scenes.schemas"
     ).SceneBoundary
-    assign_segments_to_scenes = importlib.import_module(
-        "heimdex_media_contracts.scenes.merge"
-    ).assign_segments_to_scenes
-    aggregate_transcript = importlib.import_module(
-        "heimdex_media_contracts.scenes.merge"
-    ).aggregate_transcript
 
     boundaries = [
         SceneBoundary(
@@ -200,16 +207,20 @@ def _align_segments_to_scenes(
         for s in scenes
     ]
 
-    assignment = assign_segments_to_scenes(boundaries, speech_segments)
+    assignment = merge_mod.assign_segments_to_scenes(boundaries, speech_segments)
 
     updated: list[dict[str, Any]] = []
     for scene_dict in scenes:
         scene_copy = dict(scene_dict)
         scene_id = scene_dict["scene_id"]
         assigned = assignment.get(scene_id, [])
-        transcript_raw = aggregate_transcript(assigned)
-        scene_copy["transcript_raw"] = transcript_raw
+        scene_copy["transcript_raw"] = merge_mod.aggregate_transcript(assigned)
         scene_copy["speech_segment_count"] = len(assigned)
+
+        if diarized:
+            scene_copy["speaker_transcript"] = merge_mod.aggregate_speaker_transcript(assigned)
+            scene_copy["speaker_count"] = merge_mod.count_distinct_speakers(assigned)
+
         updated.append(scene_copy)
 
     return updated
@@ -237,13 +248,15 @@ def _post_enrich_to_api(
 
     enrich_scenes = []
     for scene in scenes:
-        enrich_scenes.append(
-            {
-                "scene_id": scene["scene_id"],
-                "transcript_raw": scene.get("transcript_raw", ""),
-                "speech_segment_count": scene.get("speech_segment_count", 0),
-            }
-        )
+        entry: dict[str, Any] = {
+            "scene_id": scene["scene_id"],
+            "transcript_raw": scene.get("transcript_raw", ""),
+            "speech_segment_count": scene.get("speech_segment_count", 0),
+        }
+        if "speaker_transcript" in scene:
+            entry["speaker_transcript"] = scene["speaker_transcript"]
+            entry["speaker_count"] = scene.get("speaker_count", 0)
+        enrich_scenes.append(entry)
 
     payload = {
         "video_id": video_id,

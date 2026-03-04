@@ -246,6 +246,13 @@ class SceneSearchClient:
                 "keyword_tags": {"type": "keyword"},
                 "product_tags": {"type": "keyword"},
                 "product_entities": {"type": "keyword"},
+                # Speaker diarization
+                "speaker_transcript": {
+                    "type": "text",
+                    "analyzer": transcript_analyzer,
+                    "search_analyzer": transcript_analyzer,
+                },
+                "speaker_count": {"type": "integer"},
                 # Scene metadata
                 "speech_segment_count": {"type": "integer"},
                 "keyframe_timestamp_ms": {"type": "integer"},

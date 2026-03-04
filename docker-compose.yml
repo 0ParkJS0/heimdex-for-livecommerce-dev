@@ -500,6 +500,11 @@ services:
       - SQS_ENDPOINT_URL=${SQS_ENDPOINT_URL:-}
       - SQS_REGION=${SQS_REGION:-ap-northeast-2}
       - SQS_STT_QUEUE_URL=${SQS_STT_QUEUE_URL:-}
+      - DRIVE_STT_DIARIZATION_ENABLED=${DRIVE_STT_DIARIZATION_ENABLED:-false}
+      - DRIVE_STT_DIARIZATION_MODEL=${DRIVE_STT_DIARIZATION_MODEL:-pyannote/speaker-diarization-3.1}
+      - DRIVE_STT_MIN_SPEAKERS=${DRIVE_STT_MIN_SPEAKERS:-1}
+      - DRIVE_STT_MAX_SPEAKERS=${DRIVE_STT_MAX_SPEAKERS:-4}
+      - HF_ACCESS_TOKEN=${HF_ACCESS_TOKEN:-}
     volumes:
       - ./services/drive-stt-worker:/app
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro

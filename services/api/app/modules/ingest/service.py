@@ -292,6 +292,9 @@ class SceneIngestService:
                 partial["transcript_char_count"] = len(transcript_norm)
                 partial["speech_segment_count"] = enrichment.speech_segment_count or 0
                 needs_embedding_update = True
+            if enrichment.speaker_transcript is not None:
+                partial["speaker_transcript"] = enrichment.speaker_transcript
+                partial["speaker_count"] = enrichment.speaker_count or 0
             if enrichment.ocr_text_raw is not None:
                 ocr_norm = normalize_transcript(enrichment.ocr_text_raw) if enrichment.ocr_text_raw else ""
                 partial["ocr_text_raw"] = enrichment.ocr_text_raw

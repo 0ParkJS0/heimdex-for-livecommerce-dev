@@ -69,6 +69,13 @@ class WorkerSettings(BaseSettings):
     drive_stt_concurrency: int = 1
     drive_stt_max_audio_seconds: int = 21600  # 6 hours; faster-whisper handles long audio natively
 
+    # --- Speaker diarization (pyannote.audio, runs inside STT worker) ---
+    drive_stt_diarization_enabled: bool = False
+    drive_stt_diarization_model: str = "pyannote/speaker-diarization-3.1"
+    drive_stt_min_speakers: int = 1
+    drive_stt_max_speakers: int = 4
+    hf_access_token: str = ""
+
     # --- OCR enrichment ---
     drive_ocr_enabled: bool = False
     drive_ocr_concurrency: int = 1

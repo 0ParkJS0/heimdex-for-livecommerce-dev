@@ -31,14 +31,16 @@ class EnrichSceneUpdate(BaseModel):
     each other's data.
     """
 
-    scene_id: str = Field(..., description="Scene ID to update")
+    scene_id: str = Field(...)
     transcript_raw: str | None = Field(default=None)
     speech_segment_count: int | None = Field(default=None)
+    speaker_transcript: str | None = Field(default=None)
+    speaker_count: int | None = Field(default=None)
     ocr_text_raw: str | None = Field(default=None)
     ocr_char_count: int | None = Field(default=None)
     scene_caption: str | None = Field(default=None)
     people_cluster_ids: list[str] | None = Field(default=None)
-    visual_embedding: list[float] | None = Field(default=None, description="SigLIP2 768-dim visual embedding vector")
+    visual_embedding: list[float] | None = Field(default=None)
 
 
 class EnrichScenesRequest(BaseModel):

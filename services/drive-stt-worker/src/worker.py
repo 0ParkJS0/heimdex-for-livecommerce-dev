@@ -19,8 +19,7 @@ def _init_semaphore(max_concurrent: int) -> threading.Semaphore:
     return _semaphore
 
 
-def _make_sqs_callback(api_client, settings, stt_processor):
-    """Create the SQS message callback for STT processing."""
+def _make_sqs_callback(api_client, settings, stt_processor, diarizer=None):
     from heimdex_worker_sdk.message_adapters import sqs_to_claimed_file
     _process_single_stt = importlib.import_module("src.tasks.stt")._process_single_stt
 
@@ -31,6 +30,7 @@ def _make_sqs_callback(api_client, settings, stt_processor):
             settings=settings,
             claimed_file=claimed_file,
             stt_processor=stt_processor,
+            diarizer=diarizer,
         )
 
     return callback
@@ -69,7 +69,26 @@ def main() -> None:
     )
     logger.info("stt_processor_loaded_once", extra={"model": settings.drive_stt_model})
 
-    # Initialize shared semaphore before starting any consumers
+    diarizer = None
+    if settings.drive_stt_diarization_enabled:
+        diarization_mod = importlib.import_module("heimdex_media_pipelines.speech.diarization")
+        diarizer = diarization_mod.SpeakerDiarizer(
+            model_name=settings.drive_stt_diarization_model,
+            hf_token=settings.hf_access_token or None,
+            device=settings.stt_device,
+            min_speakers=settings.drive_stt_min_speakers,
+            max_speakers=settings.drive_stt_max_speakers,
+        )
+        diarizer.load()
+        logger.info(
+            "diarizer_loaded_once",
+            extra={
+                "model": settings.drive_stt_diarization_model,
+                "min_speakers": settings.drive_stt_min_speakers,
+                "max_speakers": settings.drive_stt_max_speakers,
+            },
+        )
+
     semaphore = _init_semaphore(settings.drive_stt_concurrency)
 
     # ── SQS Consumer (primary job source) ──────────────────────────────────────
@@ -87,7 +106,7 @@ def main() -> None:
     )
     sqs_consumer = SQSConsumerLoop(
         sqs_client=sqs_client,
-        process_callback=_make_sqs_callback(api_client, settings, stt_processor),
+        process_callback=_make_sqs_callback(api_client, settings, stt_processor, diarizer),
         semaphore=semaphore,
         visibility_timeout=60,
         heartbeat_interval=40,
