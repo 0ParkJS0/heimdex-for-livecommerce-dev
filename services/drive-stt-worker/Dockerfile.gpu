@@ -94,6 +94,7 @@ print('pyannote models pre-downloaded')"; \
 COPY dev-heimdex-for-livecommerce/services/drive-stt-worker/src/ src/
 
 RUN useradd -m -u 1000 appuser \
+    && mkdir -p /home/appuser/.cache/torch/hub \
     && chown -R appuser:appuser /app /models /home/appuser
 USER appuser
 
