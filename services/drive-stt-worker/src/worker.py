@@ -79,7 +79,14 @@ def main() -> None:
             min_speakers=settings.drive_stt_min_speakers,
             max_speakers=settings.drive_stt_max_speakers,
         )
-        diarizer.load()
+        try:
+            diarizer.load()
+        except Exception as exc:
+            logger.error(
+                "diarizer_load_failed",
+                extra={"error": str(exc), "error_type": type(exc).__name__},
+            )
+            raise
         logger.info(
             "diarizer_loaded_once",
             extra={
