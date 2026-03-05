@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: 'Workers to build (comma-separated: caption,stt,ocr,transcode,face,visual-embed or "all")' 
+        description: 'Workers to build (comma-separated: caption,stt,ocr,transcode,face,visual-embed or "all")'
         required: false
         default: 'all'
   push:
@@ -24,50 +24,109 @@ env:
   IMAGE_PREFIX: ${{ github.repository_owner }}/heimdex
 
 jobs:
+  # ── Step 1: Detect which workers actually changed ─────────────────────────
+  detect-changes:
+    name: Detect changed workers
+    runs-on: ubuntu-latest
+    outputs:
+      workers: ${{ steps.resolve.outputs.workers }}
+    steps:
+      - name: Checkout SaaS repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # Need parent commit for diff
+
+      - name: Resolve workers to build
+        id: resolve
+        run: |
+          ALL_WORKERS='["caption","stt","ocr","transcode","face","visual-embed"]'
+
+          # ── Manual trigger: use input directly ──
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            INPUT="${{ github.event.inputs.workers }}"
+            if [ "$INPUT" = "all" ] || [ -z "$INPUT" ]; then
+              echo "workers=$ALL_WORKERS" >> "$GITHUB_OUTPUT"
+              echo "Manual trigger: building ALL workers"
+            else
+              # Convert comma-separated input to JSON array
+              JSON=$(echo "$INPUT" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -sc .)
+              echo "workers=$JSON" >> "$GITHUB_OUTPUT"
+              echo "Manual trigger: building $INPUT"
+            fi
+            exit 0
+          fi
+
+          # ── Push trigger: detect changed paths via git diff ──
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+          if [ -z "$CHANGED" ]; then
+            echo "workers=$ALL_WORKERS" >> "$GITHUB_OUTPUT"
+            echo "No parent commit (first push?): building ALL workers"
+            exit 0
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED"
+          echo ""
+
+          WORKERS=()
+
+          # worker_sdk is a shared dependency — rebuild all workers
+          if echo "$CHANGED" | grep -q '^services/worker_sdk/'; then
+            echo "worker_sdk changed: building ALL workers"
+            echo "workers=$ALL_WORKERS" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Check each worker directory
+          echo "$CHANGED" | grep -q '^services/drive-caption-worker/'      && WORKERS+=("caption")
+          echo "$CHANGED" | grep -q '^services/drive-stt-worker/'          && WORKERS+=("stt")
+          echo "$CHANGED" | grep -q '^services/drive-ocr-worker/'          && WORKERS+=("ocr")
+          echo "$CHANGED" | grep -q '^services/drive-transcode-worker/'    && WORKERS+=("transcode")
+          echo "$CHANGED" | grep -q '^services/drive-face-worker/'         && WORKERS+=("face")
+          echo "$CHANGED" | grep -q '^services/drive-visual-embed-worker/' && WORKERS+=("visual-embed")
+
+          if [ ${#WORKERS[@]} -eq 0 ]; then
+            echo "workers=[]" >> "$GITHUB_OUTPUT"
+            echo "No worker directories changed — skipping all builds"
+          else
+            JSON=$(printf '%s\n' "${WORKERS[@]}" | jq -R . | jq -sc .)
+            echo "workers=$JSON" >> "$GITHUB_OUTPUT"
+            echo "Building: ${WORKERS[*]}"
+          fi
+
+  # ── Step 2: Build only the workers that changed ───────────────────────────
   build-and-push:
     name: Build ${{ matrix.worker }} GPU image
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.workers != '[]' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
       matrix:
-        worker: [caption, stt, ocr, transcode, face, visual-embed]
+        worker: ${{ fromJSON(needs.detect-changes.outputs.workers) }}
       fail-fast: false
     steps:
-      - name: Check if worker should build
-        id: check
-        run: |
-          WORKERS="${{ github.event.inputs.workers || 'all' }}"
-          if [[ "$WORKERS" == "all" ]] || echo "$WORKERS" | grep -q "${{ matrix.worker }}"; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_build=false" >> $GITHUB_OUTPUT
-          fi
-
       # Checkout ALL repos (SaaS + contracts + pipelines) into correct layout
       - name: Checkout SaaS repo
-        if: steps.check.outputs.should_build == 'true'
         uses: actions/checkout@v4
         with:
           path: dev-heimdex-for-livecommerce
 
       - name: Checkout media-contracts
-        if: steps.check.outputs.should_build == 'true'
         uses: actions/checkout@v4
         with:
           repository: jlee-heimdex/heimdex-media-contracts
           path: heimdex-media-contracts
 
       - name: Checkout media-pipelines
-        if: steps.check.outputs.should_build == 'true'
         uses: actions/checkout@v4
         with:
           repository: jlee-heimdex/heimdex-media-pipelines
           path: heimdex-media-pipelines
 
       - name: Log in to GHCR
-        if: steps.check.outputs.should_build == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -75,11 +134,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: steps.check.outputs.should_build == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push ${{ matrix.worker }} GPU image
-        if: steps.check.outputs.should_build == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -94,7 +151,6 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.worker }},mode=max
 
       - name: Verify image
-        if: steps.check.outputs.should_build == 'true'
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.worker }}-worker-gpu:${{ github.sha }}
           echo "✅ ${{ matrix.worker }}-worker-gpu image verified"
