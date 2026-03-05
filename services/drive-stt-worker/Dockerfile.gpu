@@ -20,7 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gnupg \
+    git \
     libsndfile1 \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
     ffmpeg \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update \
@@ -55,8 +59,11 @@ RUN pip install --no-cache-dir \
       "torch==2.4.1" "torchaudio==2.4.1" \
       "huggingface_hub<0.24" \
       "pyannote-audio==3.3.2" \
+      "matplotlib" "Pillow>=9.0" \
       "boto3>=1.34" "pydantic-settings>=2.0" \
       "structlog>=23.0" "requests>=2.31"
+
+RUN python -c "from pyannote.audio import Pipeline; print('pyannote import OK')"
 
 RUN mkdir -p "${WHISPER_CACHE_DIR}" "${HF_HOME}" "${TORCH_HOME}" \
     && python -c "from faster_whisper import WhisperModel; WhisperModel('turbo', device='cpu', compute_type='int8')"
