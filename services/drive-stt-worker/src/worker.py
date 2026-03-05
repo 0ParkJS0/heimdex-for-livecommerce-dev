@@ -1,10 +1,14 @@
 import asyncio
 import importlib
 import logging
+import os
 import signal
 import sys
 import threading
 from typing import Optional
+
+os.environ.setdefault("TORCH_HOME", "/models/torch")
+os.environ.setdefault("HF_HOME", "/models/huggingface")
 
 logger = logging.getLogger(__name__)
 
