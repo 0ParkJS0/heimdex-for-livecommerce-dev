@@ -105,6 +105,8 @@ export interface SceneResult {
   capture_time: string | null;
   people_cluster_ids: string[];
   speech_segment_count: number;
+  speaker_transcript?: string;
+  speaker_count?: number;
   keyframe_timestamp_ms: number;
   debug: DebugInfo;
 }

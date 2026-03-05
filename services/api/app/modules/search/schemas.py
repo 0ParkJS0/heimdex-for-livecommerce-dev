@@ -161,6 +161,8 @@ class SceneResult(BaseModel):
     people_cluster_ids: list[str] = Field(default_factory=list)
     speech_segment_count: int = 0
     ocr_char_count: int = 0
+    speaker_transcript: str = ""
+    speaker_count: int = 0
     keyframe_timestamp_ms: int = 0
     debug: DebugInfo
 

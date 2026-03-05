@@ -706,6 +706,31 @@ class SceneSearchClient:
                 ]
             )
 
+            # Speaker transcript (below base transcript to avoid double-counting)
+            should_clauses.extend(
+                [
+                    {
+                        "match": {
+                            "speaker_transcript": {
+                                "query": query,
+                                "operator": "or",
+                                "minimum_should_match": "50%",
+                                "boost": 0.9,
+                            }
+                        }
+                    },
+                    {
+                        "match_phrase": {
+                            "speaker_transcript": {
+                                "query": query,
+                                "boost": 1.8,
+                                "slop": 1,
+                            }
+                        }
+                    },
+                ]
+            )
+
             if person_should:
                 should_clauses.append(person_should)
 
@@ -752,6 +777,20 @@ class SceneSearchClient:
                             "operator": "or",
                             "minimum_should_match": "50%",
                             "boost": 1.0,
+                        }
+                    }
+                }
+            )
+
+            # Speaker transcript (below base transcript to avoid double-counting)
+            optional_should.append(
+                {
+                    "match": {
+                        "speaker_transcript": {
+                            "query": query,
+                            "operator": "or",
+                            "minimum_should_match": "50%",
+                            "boost": 0.9,
                         }
                     }
                 }
@@ -1063,6 +1102,7 @@ class SceneSearchClient:
                 "transcript_char_count", "scene_caption", "keyword_tags", "product_tags",
                 "product_entities", "speech_segment_count",
                 "people_cluster_ids", "ingest_time", "keyframe_timestamp_ms",
+                "speaker_transcript", "speaker_count",
                 "video_title", "source_type", "source_path", "capture_time",
                 "web_view_link",
                 "library_id",
@@ -1088,6 +1128,8 @@ class SceneSearchClient:
                 "people_cluster_ids": src.get("people_cluster_ids", []),
                 "ingest_time": src.get("ingest_time"),
                 "keyframe_timestamp_ms": src.get("keyframe_timestamp_ms", 0),
+                "speaker_transcript": src.get("speaker_transcript", ""),
+                "speaker_count": src.get("speaker_count", 0),
                 "web_view_link": src.get("web_view_link"),
             })
 

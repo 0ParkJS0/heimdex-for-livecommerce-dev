@@ -523,6 +523,8 @@ class SceneSearchService:
                     people_cluster_ids=src.get("people_cluster_ids", []),
                     speech_segment_count=src.get("speech_segment_count", 0),
                     ocr_char_count=src.get("ocr_char_count", 0),
+                    speaker_transcript=src.get("speaker_transcript", "")[:500],
+                    speaker_count=src.get("speaker_count", 0),
                     keyframe_timestamp_ms=src.get("keyframe_timestamp_ms", 0),
                     debug=DebugInfo(
                         lexical_rank=item.lexical_rank,
