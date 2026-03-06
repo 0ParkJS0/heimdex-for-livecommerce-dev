@@ -4,6 +4,7 @@ Auth0 OIDC token validation service.
 Validates JWT access tokens issued by Auth0 using JWKS (RS256).
 Caches JWKS keys to avoid repeated HTTP calls.
 """
+import threading
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -19,6 +20,8 @@ logger = get_logger(__name__)
 
 JWKS_CACHE_TTL_SECONDS = 3600
 USERINFO_CACHE_TTL_SECONDS = 300
+
+_cache_lock = threading.Lock()
 
 
 @dataclass
@@ -59,31 +62,32 @@ def _get_jwks_uri() -> str:
 
 def _fetch_jwks() -> dict[str, Any]:
     global _jwks_cache
-    
-    now = time.time()
-    if _jwks_cache and (now - _jwks_cache.fetched_at) < JWKS_CACHE_TTL_SECONDS:
-        return _jwks_cache.keys
-    
-    jwks_uri = _get_jwks_uri()
-    logger.info("fetching_jwks", uri=jwks_uri)
-    
-    try:
-        client = _get_http_client()
-        response = client.get(jwks_uri)
-        response.raise_for_status()
-        jwks = response.json()
-    except httpx.HTTPError as e:
-        logger.error("jwks_fetch_failed", error=str(e))
-        if _jwks_cache:
-            logger.warning("using_stale_jwks_cache")
+
+    with _cache_lock:
+        now = time.time()
+        if _jwks_cache and (now - _jwks_cache.fetched_at) < JWKS_CACHE_TTL_SECONDS:
             return _jwks_cache.keys
-        raise
-    
-    keys_by_kid = {key["kid"]: key for key in jwks.get("keys", [])}
-    _jwks_cache = JWKSCache(keys=keys_by_kid, fetched_at=now)
-    
-    logger.info("jwks_cached", key_count=len(keys_by_kid))
-    return keys_by_kid
+
+        jwks_uri = _get_jwks_uri()
+        logger.info("fetching_jwks", uri=jwks_uri)
+
+        try:
+            client = _get_http_client()
+            response = client.get(jwks_uri)
+            response.raise_for_status()
+            jwks = response.json()
+        except httpx.HTTPError as e:
+            logger.error("jwks_fetch_failed", error=str(e))
+            if _jwks_cache:
+                logger.warning("using_stale_jwks_cache")
+                return _jwks_cache.keys
+            raise
+
+        keys_by_kid = {key["kid"]: key for key in jwks.get("keys", [])}
+        _jwks_cache = JWKSCache(keys=keys_by_kid, fetched_at=now)
+
+        logger.info("jwks_cached", key_count=len(keys_by_kid))
+        return keys_by_kid
 
 
 def _get_signing_key(token: str) -> dict[str, Any]:
@@ -99,7 +103,8 @@ def _get_signing_key(token: str) -> dict[str, Any]:
     jwks = _fetch_jwks()
     if kid not in jwks:
         global _jwks_cache
-        _jwks_cache = None
+        with _cache_lock:
+            _jwks_cache = None
         jwks = _fetch_jwks()
         
         if kid not in jwks:
@@ -172,10 +177,11 @@ def fetch_userinfo(token: str) -> dict[str, Any]:
         sub = ""
 
     now = time.time()
-    if sub and sub in _userinfo_cache:
-        entry = _userinfo_cache[sub]
-        if (now - entry.fetched_at) < USERINFO_CACHE_TTL_SECONDS:
-            return entry.data
+    with _cache_lock:
+        if sub and sub in _userinfo_cache:
+            entry = _userinfo_cache[sub]
+            if (now - entry.fetched_at) < USERINFO_CACHE_TTL_SECONDS:
+                return entry.data
 
     settings = get_settings()
     userinfo_url = f"https://{settings.auth0_domain}/userinfo"
@@ -189,16 +195,19 @@ def fetch_userinfo(token: str) -> dict[str, Any]:
         response.raise_for_status()
         data = response.json()
         if sub:
-            _userinfo_cache[sub] = _UserinfoEntry(data=data, fetched_at=now)
+            with _cache_lock:
+                _userinfo_cache[sub] = _UserinfoEntry(data=data, fetched_at=now)
         return data
     except httpx.HTTPError as e:
         logger.warning("userinfo_fetch_failed", error=str(e))
-        if sub and sub in _userinfo_cache:
-            return _userinfo_cache[sub].data
+        with _cache_lock:
+            if sub and sub in _userinfo_cache:
+                return _userinfo_cache[sub].data
         return {}
 
 
 def clear_jwks_cache() -> None:
     global _jwks_cache
-    _jwks_cache = None
+    with _cache_lock:
+        _jwks_cache = None
     logger.info("jwks_cache_cleared")

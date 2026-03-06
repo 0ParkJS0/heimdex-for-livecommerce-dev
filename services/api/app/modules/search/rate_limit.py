@@ -32,7 +32,7 @@ def check_search_rate_limit(org_id: str) -> None:
         _buckets[org_id].append(now)
 
 
-async def require_search_rate_limit(
+def require_search_rate_limit(
     org_ctx: OrgContext = Depends(get_current_org),
 ) -> None:
     check_search_rate_limit(str(org_ctx.org_id))

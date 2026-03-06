@@ -55,11 +55,18 @@ async def upload_face_thumbnail(
     settings = get_settings()
     root = Path(settings.thumbnail_storage_dir)
     target_dir = root / str(org_ctx.org_id) / "faces"
-    target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / f"{person_cluster_id}.jpg"
     _validate_resolved_path(target_path, root)
     data = await file.read()
-    target_path.write_bytes(data)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(data)
+    except OSError as e:
+        logger.error("face_thumbnail_write_failed", path=str(target_path), error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to store face thumbnail",
+        )
 
     return {"stored": True, "path": f"faces/{person_cluster_id}"}
 
@@ -92,11 +99,18 @@ async def ingest_thumbnail(
     settings = get_settings()
     root = Path(settings.thumbnail_storage_dir)
     target_dir = root / str(org_ctx.org_id) / video_id
-    target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / f"{scene_id}.jpg"
     _validate_resolved_path(target_path, root)
     data = await file.read()
-    target_path.write_bytes(data)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(data)
+    except OSError as e:
+        logger.error("scene_thumbnail_write_failed", path=str(target_path), error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to store scene thumbnail",
+        )
 
     return {"stored": True, "path": f"{video_id}/{scene_id}"}
 

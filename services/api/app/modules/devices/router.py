@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.base import get_db_session
+from app.dependencies import get_device_repository
 from app.logging_config import get_logger
 from app.modules.auth.dependencies import require_role
 from app.modules.auth.service import get_current_user
@@ -79,11 +80,10 @@ async def _verify_org_api_key(
 async def _verify_device_secret(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     org_ctx: OrgContext = Depends(get_current_org),
-    db: AsyncSession = Depends(get_db_session),
+    repo: DeviceRepository = Depends(get_device_repository),
     x_heimdex_device_id: str = Header(..., alias="X-Heimdex-Device-Id"),
 ) -> OrgContext:
     settings = get_settings()
-    repo = DeviceRepository(db)
 
     device = await repo.get_by_org_and_public_id(org_ctx.org_id, x_heimdex_device_id)
     if device is None:

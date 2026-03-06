@@ -2,9 +2,8 @@ from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.base import get_db_session
+from app.dependencies import get_basket_repository
 from app.modules.auth.service import get_current_user
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
@@ -54,9 +53,8 @@ async def create_basket(
     body: BasketCreate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     basket = await repo.create_basket(
         org_id=org_ctx.org_id,
         user_id=cast(UUID, user.id),
@@ -69,9 +67,8 @@ async def create_basket(
 async def list_baskets(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     user_id = cast(UUID, user.id)
     baskets = await repo.list_baskets(org_ctx.org_id, user_id)
 
@@ -88,9 +85,8 @@ async def get_basket(
     basket_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     basket = await repo.get_basket(basket_id, org_ctx.org_id)
     if basket is None or basket.user_id != cast(UUID, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Basket not found")
@@ -105,9 +101,8 @@ async def add_basket_items(
     body: list[BasketItemCreate],
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     basket = await repo.get_basket(basket_id, org_ctx.org_id)
     if basket is None or basket.user_id != cast(UUID, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Basket not found")
@@ -127,9 +122,8 @@ async def remove_basket_item(
     item_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     basket = await repo.get_basket(basket_id, org_ctx.org_id)
     if basket is None or basket.user_id != cast(UUID, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Basket not found")
@@ -147,9 +141,8 @@ async def reorder_basket_items(
     body: ReorderRequest,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     basket = await repo.get_basket(basket_id, org_ctx.org_id)
     if basket is None or basket.user_id != cast(UUID, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Basket not found")
@@ -171,9 +164,8 @@ async def delete_basket(
     basket_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
+    repo: Annotated[SceneBasketRepository, Depends(get_basket_repository)],
 ):
-    repo = SceneBasketRepository(db)
     basket = await repo.get_basket(basket_id, org_ctx.org_id)
     if basket is None or basket.user_id != cast(UUID, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Basket not found")

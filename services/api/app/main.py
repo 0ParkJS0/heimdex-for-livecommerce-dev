@@ -234,10 +234,20 @@ app.add_middleware(TenancyMiddleware)
 _settings = get_settings()
 _extra = [o.strip() for o in _settings.cors_extra_origins.split(",") if o.strip()]
 
+# Environment-aware CORS: development allows http://, localhost, *.heimdex.local;
+# staging/production restricts to HTTPS-only on known production domains.
+if _settings.environment == "development":
+    _cors_origin_regex = _settings.cors_allow_origin_regex
+else:
+    _cors_origin_regex = (
+        r"^https://"
+        r"[a-z0-9][a-z0-9-]{0,}[a-z0-9]\.app\.(?:heimdex\.co|heimdexdemo\.dev)$"
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_extra or [],
-    allow_origin_regex=_settings.cors_allow_origin_regex,
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=[
@@ -260,6 +270,13 @@ async def add_request_context(request: Request, call_next):
     
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if _settings.environment != "development":
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
     return response
 
 

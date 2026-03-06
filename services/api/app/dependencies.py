@@ -85,6 +85,13 @@ def get_face_repository(db: AsyncSession = Depends(get_db_session)):
     from app.modules.face.repository import FaceRepository
     return FaceRepository(db)
 
+
+def get_basket_repository(db: AsyncSession = Depends(get_db_session)):
+    """Scene basket repository factory."""
+    from app.modules.basket.repository import SceneBasketRepository
+    return SceneBasketRepository(db)
+
+
 async def get_search_service(
     db: AsyncSession = Depends(get_db_session),
     opensearch=Depends(get_opensearch_client),

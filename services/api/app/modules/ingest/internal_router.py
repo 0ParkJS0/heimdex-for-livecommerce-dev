@@ -219,7 +219,6 @@ async def internal_upload_face_thumbnail(
     settings = get_settings()
     root = Path(settings.thumbnail_storage_dir)
     target_dir = root / str(org_id) / "faces"
-    target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / f"{person_cluster_id}.jpg"
 
     # Validate no path traversal
@@ -231,7 +230,19 @@ async def internal_upload_face_thumbnail(
         )
 
     data = await file.read()
-    target_path.write_bytes(data)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(data)
+    except OSError as e:
+        logger.error(
+            "internal_face_thumbnail_write_failed",
+            path=str(target_path),
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to store face thumbnail",
+        )
 
     logger.info(
         "internal_face_thumbnail_uploaded",

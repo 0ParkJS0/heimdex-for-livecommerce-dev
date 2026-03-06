@@ -30,7 +30,7 @@ def check_pairing_rate_limit(ip: str) -> None:
         _buckets[ip].append(now)
 
 
-async def require_pairing_rate_limit(request: Request) -> None:
+def require_pairing_rate_limit(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"
     check_pairing_rate_limit(ip)
 

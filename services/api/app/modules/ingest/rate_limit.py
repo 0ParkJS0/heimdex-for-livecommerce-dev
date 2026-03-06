@@ -30,7 +30,7 @@ def check_ingest_rate_limit(client_ip: str) -> None:
         _buckets[client_ip].append(now)
 
 
-async def require_ingest_rate_limit(request: Request) -> None:
+def require_ingest_rate_limit(request: Request) -> None:
     client_ip = request.client.host if request.client else "unknown"
     check_ingest_rate_limit(client_ip)
 

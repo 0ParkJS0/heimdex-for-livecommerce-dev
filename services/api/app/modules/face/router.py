@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.dependencies import get_db_session
+from app.dependencies import get_db_session, get_face_repository
 from app.logging_config import get_logger
 from app.modules.face.repository import FaceRepository
 from app.modules.face.schemas import (
@@ -57,7 +57,7 @@ async def internal_face_match(
     request: FaceMatchRequest,
     x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
-    db: AsyncSession = Depends(get_db_session),
+    repository: FaceRepository = Depends(get_face_repository),
 ):
     try:
         org_id = UUID(x_heimdex_org_id)
@@ -73,7 +73,6 @@ async def internal_face_match(
             detail="Request org_id does not match X-Heimdex-Org-Id",
         )
 
-    repository = FaceRepository(db)
     matches = await repository.match_embeddings(
         org_id=org_id,
         embeddings=request.embeddings,
@@ -107,7 +106,7 @@ async def internal_face_identities(
     request: FaceIdentityUpsertRequest,
     x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
-    db: AsyncSession = Depends(get_db_session),
+    repository: FaceRepository = Depends(get_face_repository),
 ):
     try:
         org_id = UUID(x_heimdex_org_id)
@@ -122,8 +121,6 @@ async def internal_face_identities(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Request org_id does not match X-Heimdex-Org-Id",
         )
-
-    repository = FaceRepository(db)
     created = 0
     updated = 0
 

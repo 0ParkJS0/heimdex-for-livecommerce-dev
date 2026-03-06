@@ -3,7 +3,6 @@ from uuid import UUID
 
 import numpy as np
 from sqlalchemy import select, text, update
-from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.face.models import FaceExemplar, FaceIdentity
@@ -19,39 +18,44 @@ class FaceRepository:
     async def match_embeddings(
         self, org_id: UUID, embeddings: list[list[float]], threshold: float
     ) -> list["FaceMatchRow | None"]:
-        matches: list[FaceMatchRow | None] = []
+        if not embeddings:
+            return []
 
-        query = text(
-            """
-            SELECT cluster_id, 1 - (centroid_embedding <=> CAST(:embedding AS vector)) AS similarity
-            FROM face_identities
-            WHERE org_id = :org_id
-            ORDER BY centroid_embedding <=> CAST(:embedding AS vector)
-            LIMIT 1
-            """
+        result = await self.session.execute(
+            text(
+                "SELECT cluster_id, centroid_embedding "
+                "FROM face_identities WHERE org_id = :org_id"
+            ),
+            {"org_id": str(org_id)},
         )
+        rows = result.mappings().all()
 
-        for embedding in embeddings:
-            result = await self.session.execute(
-                query,
-                {"org_id": str(org_id), "embedding": str(embedding)},
-            )
-            row = result.mappings().first()
-            if row is None:
+        if not rows:
+            return [None] * len(embeddings)
+
+        cluster_ids = [str(r["cluster_id"]) for r in rows]
+        centroids = np.array([list(r["centroid_embedding"]) for r in rows], dtype=np.float32)
+
+        input_arr = np.array(embeddings, dtype=np.float32)
+
+        c_norms = np.linalg.norm(centroids, axis=1, keepdims=True)
+        i_norms = np.linalg.norm(input_arr, axis=1, keepdims=True)
+        c_norms = np.where(c_norms > 0, c_norms, 1.0)
+        i_norms = np.where(i_norms > 0, i_norms, 1.0)
+
+        similarity_matrix = (input_arr / i_norms) @ (centroids / c_norms).T
+
+        matches: list[FaceMatchRow | None] = []
+        for i in range(len(embeddings)):
+            best_j = int(np.argmax(similarity_matrix[i]))
+            best_sim = float(similarity_matrix[i, best_j])
+
+            if best_sim < threshold:
                 matches.append(None)
-                continue
-
-            similarity = float(row["similarity"])
-            if similarity < threshold:
-                matches.append(None)
-                continue
-
-            matches.append(
-                {
-                    "cluster_id": str(row["cluster_id"]),
-                    "similarity": similarity,
-                }
-            )
+            else:
+                matches.append(
+                    {"cluster_id": cluster_ids[best_j], "similarity": best_sim}
+                )
 
         return matches
 
@@ -210,7 +214,3 @@ class FaceRepository:
         await self.session.delete(source)
         await self.session.flush()
         return True
-
-class FaceMatchRow(TypedDict):
-    cluster_id: str
-    similarity: float

@@ -464,11 +464,11 @@ class SceneSearchService:
 
         org_id_str = str(org_id)
 
-        # Facets + library lookup can run concurrently with each other
-        # (facets go to OpenSearch, libraries go to Postgres).
-        # BUT AsyncSession doesn't support concurrent ops, so we do them sequentially.
         library_repo = LibraryRepository(self.session)
-        libraries = await library_repo.list_by_org(org_id)
+        libraries, facet_data = await asyncio.gather(
+            library_repo.list_by_org(org_id),
+            self.scene_opensearch.get_facets(org_id_str, filter_dict),
+        )
         library_map = {str(lib.id): lib.name for lib in libraries}
 
         if filters.library_ids:
@@ -479,8 +479,6 @@ class SceneSearchService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Unknown library_ids: {sorted(unknown)}",
                 )
-
-        facet_data = await self.scene_opensearch.get_facets(org_id_str, filter_dict)
 
         return _SearchContext(
             query=query,
