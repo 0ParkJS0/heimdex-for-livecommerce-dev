@@ -260,7 +260,6 @@ function SelectedPersonCard({
   const [loadingVideos, setLoadingVideos] = useState(true);
   const [headerImgError, setHeaderImgError] = useState(false);
   const [headerUseFallback, setHeaderUseFallback] = useState(false);
-  const [checkedVideos, setCheckedVideos] = useState<Set<string>>(new Set());
   const [excludedVideoIds, setExcludedVideoIds] = useState<Set<string>>(new Set());
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -289,11 +288,7 @@ function SelectedPersonCard({
       .then(([videosRes, exclusionsRes]) => {
         if (cancelled) return;
         setVideoFiles(videosRes.videos);
-        const excl = new Set(exclusionsRes.excluded_video_ids);
-        setExcludedVideoIds(excl);
-        setCheckedVideos(
-          new Set(videosRes.videos.map((v) => v.video_id).filter((id) => !excl.has(id))),
-        );
+        setExcludedVideoIds(new Set(exclusionsRes.excluded_video_ids));
       })
       .catch(() => {
         if (!cancelled) setVideoFiles([]);
@@ -309,19 +304,11 @@ function SelectedPersonCard({
 
   const toggleVideo = useCallback(
     (videoId: string) => {
-      setCheckedVideos((prev) => {
-        const next = new Set(prev);
-        if (next.has(videoId)) next.delete(videoId);
-        else next.add(videoId);
-        return next;
-      });
-
       setExcludedVideoIds((prev) => {
         const next = new Set(prev);
         if (next.has(videoId)) next.delete(videoId);
         else next.add(videoId);
 
-        // Debounced save
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => {
           saveVideoExclusions(
@@ -424,7 +411,7 @@ function SelectedPersonCard({
           <p className="py-2 text-xs text-gray-400">연관된 영상이 없습니다.</p>
         ) : (
           videoFiles.slice(0, 7).map((video) => {
-            const isChecked = checkedVideos.has(video.video_id);
+            const isChecked = excludedVideoIds.has(video.video_id);
             return (
               <button
                 key={video.video_id}
