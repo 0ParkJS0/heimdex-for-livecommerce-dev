@@ -1,3 +1,5 @@
+from app.config import get_settings  # noqa: F401 — re-exported for test patching
+from app.modules.search.client import get_opensearch_client  # noqa: F401 — re-exported for test patching
 from app.modules.search.scene_facets import SceneFacetsMixin
 from app.modules.search.scene_index import SceneIndexMixin
 from app.modules.search.scene_ingest import SceneIngestMixin
