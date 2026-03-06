@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md ./
 RUN sed -i '/"heimdex-media-contracts"/d' pyproject.toml && \
-    pip install --no-cache-dir -e ".[dev]"
+    pip install --no-cache-dir -e ".[dev,analytics]"
 
 COPY . .
 

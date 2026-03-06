@@ -133,6 +133,7 @@ def main() -> None:
     import asyncio
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
     from app.db.base import get_async_engine
+    import app.db.models  # noqa: F401 — register all models for relationship resolution
     from app.modules.search.search_event_repository import SearchEventRepository
 
     async def _fetch_events() -> list[dict[str, Any]]:
