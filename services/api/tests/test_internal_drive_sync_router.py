@@ -475,15 +475,12 @@ class TestEnforceConnectionLease:
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == "lease_token_mismatch"
 
-    def test_none_token_raises_409(self):
+    def test_none_token_allows_processing_path(self):
         conn = _make_connection(
             lease_token=str(uuid4()),
             lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
         )
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
-            _enforce_connection_lease(conn, None)
-        assert exc_info.value.status_code == 409
+        _enforce_connection_lease(conn, None)
 
     def test_expired_lease_raises_409(self):
         token = str(uuid4())

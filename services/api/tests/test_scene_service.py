@@ -158,9 +158,12 @@ class TestSceneSearchService:
         mock_scene_opensearch_client.search_vector.return_value = [
             _make_scene_hit("vec_scene", "v2", score=0.95),
         ]
+        mock_scene_opensearch_client.search_visual_vector = AsyncMock(return_value=[])
 
-        with patch("app.modules.search.scene_service.get_query_embedding", new_callable=AsyncMock) as mock_embed:
+        with patch("app.modules.search.scene_service.get_query_embedding", new_callable=AsyncMock) as mock_embed, \
+             patch("app.modules.search.scene_service.get_visual_query_embedding", new_callable=AsyncMock) as mock_vis_embed:
             mock_embed.return_value = [0.1] * 1024
+            mock_vis_embed.return_value = [0.1] * 768
             response = await scene_search_service.search(
                 query="test", org_id=org_id, alpha=1.0, filters=SearchFilters(),
                 search_mode="semantic",

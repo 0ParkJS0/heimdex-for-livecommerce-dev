@@ -8,13 +8,13 @@ from app.modules.search.schemas import DebugInfo, SceneResult
 
 class TestCaptionConfig:
     def test_caption_defaults(self):
-        settings = Settings()
+        settings = Settings(_env_file="")
         assert settings.scene_caption_enabled is False
         assert settings.drive_caption_concurrency == 1
-        assert settings.drive_caption_model == "OpenGVLab/InternVL2-1B"
+        assert settings.drive_caption_model == "Qwen/Qwen2-VL-2B-Instruct"
 
     def test_caption_can_be_enabled(self):
-        settings = Settings(scene_caption_enabled=True)
+        settings = Settings(_env_file="", scene_caption_enabled=True)
         assert settings.scene_caption_enabled is True
 
 

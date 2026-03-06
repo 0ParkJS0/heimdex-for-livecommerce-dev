@@ -77,6 +77,7 @@ def _make_drive_file(
     caption_status="pending",
     stt_status=None,
     ocr_status=None,
+    face_status=None,
     enrichment_state=None,
     keyframe_s3_prefix="orgs/org1/files/vid1/keyframes/",
     audio_s3_key="orgs/org1/files/vid1/audio.wav",
@@ -92,6 +93,7 @@ def _make_drive_file(
     f.caption_status = caption_status
     f.stt_status = stt_status
     f.ocr_status = ocr_status
+    f.face_status = face_status
     f.enrichment_state = enrichment_state
     f.keyframe_s3_prefix = keyframe_s3_prefix
     f.audio_s3_key = audio_s3_key

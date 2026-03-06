@@ -11,7 +11,7 @@ _SAFE_PEPPER = "a-real-production-pepper-abc123"
 
 
 def test_ocr_search_defaults() -> None:
-    settings = Settings()
+    settings = Settings(_env_file="")
     assert settings.ocr_search_enabled is True
     assert settings.ocr_bm25_boost == 0.6
 
@@ -132,6 +132,7 @@ class TestProductionGuards:
 
     def test_error_lists_all_failures_not_just_first(self) -> None:
         settings = Settings(
+            _env_file="",
             environment="production",
             jwt_secret_key=_DEV_JWT,
             agent_api_key=_DEV_AGENT,
@@ -146,6 +147,7 @@ class TestProductionGuards:
         assert "AGENT_API_KEY" in error_msg
         assert "AUTH0_ENABLED" in error_msg
         assert "EMBEDDING_USE_MOCK" in error_msg
+        assert "DEVICE_SECRET_PEPPER" in error_msg
         assert "5 issue(s)" in error_msg
 
     def test_error_includes_remediation_hints(self) -> None:

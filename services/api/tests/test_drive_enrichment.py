@@ -8,6 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "drive-worker"))
 
+_process = pytest.importorskip(
+    "src.tasks.process",
+    reason="drive-worker code not available in API container",
+)
+
 
 def _make_scene_doc(scene_id: str, thumbnail_path: str = None):
     return SimpleNamespace(
@@ -22,9 +27,7 @@ def _make_scene_result(scenes):
 
 class TestUploadEnrichmentArtifactsDisabled:
     def test_returns_empty_when_disabled(self, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
-
-        result = _upload_enrichment_artifacts(
+        result = _process._upload_enrichment_artifacts(
             s3=MagicMock(),
             original_path=tmp_path / "video.mp4",
             scene_result=_make_scene_result([]),
@@ -36,10 +39,8 @@ class TestUploadEnrichmentArtifactsDisabled:
         assert result == {}
 
     def test_no_s3_calls_when_disabled(self, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
-
         s3 = MagicMock()
-        _upload_enrichment_artifacts(
+        _process._upload_enrichment_artifacts(
             s3=s3,
             original_path=tmp_path / "video.mp4",
             scene_result=_make_scene_result([_make_scene_doc("s_000")]),
@@ -54,7 +55,7 @@ class TestUploadEnrichmentArtifactsDisabled:
 class TestUploadEnrichmentArtifactsEnabled:
     @patch("src.tasks.process.subprocess.run")
     def test_audio_extraction_and_upload(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         audio_path = tmp_path / "audio.wav"
         audio_path.write_bytes(b"\x00" * 1024)
@@ -91,7 +92,7 @@ class TestUploadEnrichmentArtifactsEnabled:
 
     @patch("src.tasks.process.subprocess.run")
     def test_keyframe_upload(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         mock_run.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
 
@@ -123,7 +124,7 @@ class TestUploadEnrichmentArtifactsEnabled:
 
     @patch("src.tasks.process.subprocess.run")
     def test_both_audio_and_keyframes(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         audio_path = tmp_path / "audio.wav"
 
@@ -163,7 +164,7 @@ class TestUploadEnrichmentArtifactsEnabled:
 
     @patch("src.tasks.process.subprocess.run")
     def test_no_thumbnail_path_skips_keyframe(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         mock_run.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
 
@@ -185,7 +186,7 @@ class TestUploadEnrichmentArtifactsEnabled:
 
     @patch("src.tasks.process.subprocess.run")
     def test_audio_failure_still_uploads_keyframes(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         mock_run.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
 
@@ -212,7 +213,7 @@ class TestUploadEnrichmentArtifactsEnabled:
 
     @patch("src.tasks.process.subprocess.run")
     def test_keyframe_upload_failure_is_graceful(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         mock_run.side_effect = subprocess.CalledProcessError(1, "ffmpeg")
 
@@ -237,7 +238,7 @@ class TestUploadEnrichmentArtifactsEnabled:
 
     @patch("src.tasks.process.subprocess.run")
     def test_ffmpeg_command_format(self, mock_run, tmp_path):
-        from src.tasks.process import _upload_enrichment_artifacts
+        _upload_enrichment_artifacts = _process._upload_enrichment_artifacts
 
         audio_path = tmp_path / "audio.wav"
 

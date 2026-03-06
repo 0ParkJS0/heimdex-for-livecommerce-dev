@@ -159,6 +159,8 @@ class SceneFacetsMixin:
 
         if sort == "latest":
             videos.sort(key=lambda v: v["capture_time"] or v["latest_ingest_time"] or "", reverse=True)
+        elif sort == "oldest":
+            videos.sort(key=lambda v: v["capture_time"] or v["latest_ingest_time"] or "")
         elif sort == "alpha_asc":
             videos.sort(key=lambda v: (v["video_title"] or "").lower())
         elif sort == "alpha_desc":

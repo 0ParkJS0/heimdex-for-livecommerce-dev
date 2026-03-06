@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.modules.drive.keys import scene_manifest_s3_key
 
 
@@ -74,6 +76,8 @@ class TestSceneManifestUpload:
 
         drive_worker_path = Path(__file__).resolve().parents[2] / "drive-worker"
         process_path = drive_worker_path / "src" / "tasks" / "process.py"
+        if not process_path.exists():
+            pytest.skip("drive-worker code not available in API container")
         spec = importlib.util.spec_from_file_location(
             "_drive_worker_process_for_test", process_path,
         )

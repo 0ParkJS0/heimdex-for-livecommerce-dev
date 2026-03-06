@@ -26,6 +26,8 @@ def _startup_patches():
         patch("app.db.base.get_async_engine", return_value=startup_engine),
         patch("app.main._startup_search_checks", new=AsyncMock()),
         patch("app.main._startup_scene_search_checks", new=AsyncMock()),
+        patch("app.main._verify_org_auth0_bindings", new=AsyncMock()),
+        patch("app.main._ensure_search_event_partitions", new=AsyncMock()),
     ]
 
 
@@ -48,7 +50,7 @@ def test_upload_and_retrieve_thumbnail(tmp_path: Path):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     upload = client.post(
@@ -85,7 +87,7 @@ def test_get_thumbnail_404_when_missing(tmp_path: Path):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.get(
@@ -102,7 +104,7 @@ def test_upload_requires_auth(tmp_path: Path):
     settings = Settings(thumbnail_storage_dir=str(tmp_path))
 
     startup_patchers = _startup_patches()
-    with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+    with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
         with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
             with TestClient(app) as client:
                 response = client.post(
@@ -130,7 +132,7 @@ def test_get_thumbnail_is_public_no_auth_header(tmp_path: Path):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.get(
@@ -158,7 +160,7 @@ def test_upload_and_retrieve_face_thumbnail(tmp_path: Path):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     upload = client.post(
@@ -194,7 +196,7 @@ def test_upload_face_thumbnail_wrong_content_type(tmp_path: Path):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.post(
@@ -219,7 +221,7 @@ def test_get_face_thumbnail_404_when_missing(tmp_path: Path):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.get(
@@ -262,7 +264,7 @@ def test_upload_thumbnail_rejects_path_traversal_video_id(tmp_path, bad_video_id
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.post(
@@ -287,7 +289,7 @@ def test_upload_thumbnail_rejects_path_traversal_scene_id(tmp_path, bad_scene_id
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.post(
@@ -310,7 +312,7 @@ def test_upload_face_thumbnail_rejects_path_traversal(tmp_path, bad_id):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.post(
@@ -332,7 +334,7 @@ def test_get_face_thumbnail_rejects_path_traversal(tmp_path, bad_id):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.get(
@@ -353,7 +355,7 @@ def test_get_thumbnail_rejects_path_traversal(tmp_path, bad_video_id):
 
     startup_patchers = _startup_patches()
     try:
-        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4]:
+        with startup_patchers[0], startup_patchers[1], startup_patchers[2], startup_patchers[3], startup_patchers[4], startup_patchers[5], startup_patchers[6]:
             with patch("app.modules.thumbnails.router.get_settings", return_value=settings):
                 with TestClient(app) as client:
                     response = client.get(
