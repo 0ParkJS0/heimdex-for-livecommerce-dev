@@ -57,6 +57,15 @@ class SetExcludePreferencesRequest(BaseModel):
     person_cluster_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
+class VideoExclusionsResponse(BaseModel):
+    person_cluster_id: str
+    excluded_video_ids: list[str]
+
+
+class SetVideoExclusionsRequest(BaseModel):
+    excluded_video_ids: list[str] = Field(default_factory=list, max_length=200)
+
+
 class MergePersonRequest(BaseModel):
     """Request to merge one or more source clusters into a target cluster.
 

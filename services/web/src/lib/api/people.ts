@@ -6,6 +6,7 @@ import {
   PeopleListResponse,
   PersonVideosResponse,
   RenamePersonResponse,
+  VideoExclusionsResponse,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -147,6 +148,30 @@ export async function saveExcludePreferences(
     "PUT",
     getToken,
     { person_cluster_ids: personClusterIds },
+  );
+}
+
+export async function getVideoExclusions(
+  personClusterId: string,
+  getToken?: TokenGetter,
+): Promise<VideoExclusionsResponse> {
+  return apiRequest<VideoExclusionsResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/video-exclusions`,
+    "GET",
+    getToken,
+  );
+}
+
+export async function saveVideoExclusions(
+  personClusterId: string,
+  excludedVideoIds: string[],
+  getToken?: TokenGetter,
+): Promise<VideoExclusionsResponse> {
+  return apiRequest<VideoExclusionsResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/video-exclusions`,
+    "PUT",
+    getToken,
+    { excluded_video_ids: excludedVideoIds },
   );
 }
 

@@ -8,6 +8,7 @@ from app.modules.people.models import (
     DriveNicknameRegistry,
     PeopleClusterLabel,
     PeopleExcludePreference,
+    PeopleVideoExclusion,
 )
 
 
@@ -186,14 +187,15 @@ class PeopleExcludePreferenceRepository:
 
         Returns the number of rows deleted.
         """
-        result = await self.session.execute(
+        result_obj: object = await self.session.execute(
             delete(PeopleExcludePreference).where(
                 PeopleExcludePreference.org_id == org_id,
                 PeopleExcludePreference.person_cluster_id == cluster_id,
             )
         )
         await self.session.flush()
-        return result.rowcount  # type: ignore[return-value]
+        rowcount = getattr(result_obj, "rowcount", 0)
+        return int(rowcount or 0)
 
     async def transfer_exclusions(
         self,
@@ -240,5 +242,113 @@ class PeopleExcludePreferenceRepository:
                 row.person_cluster_id = target_cluster_id
             affected += 1
 
+        await self.session.flush()
+        return affected
+
+
+class PeopleVideoExclusionRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_by_user_and_person(
+        self, org_id: UUID, user_id: UUID, person_cluster_id: str,
+    ) -> list[str]:
+        """Return excluded video_ids for a specific user+person pair."""
+        result = await self.session.execute(
+            select(PeopleVideoExclusion.video_id).where(
+                PeopleVideoExclusion.org_id == org_id,
+                PeopleVideoExclusion.user_id == user_id,
+                PeopleVideoExclusion.person_cluster_id == person_cluster_id,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def list_by_user(
+        self, org_id: UUID, user_id: UUID, limit: int = 2000,
+    ) -> list[tuple[str, str]]:
+        """Return all (person_cluster_id, video_id) pairs for a user.
+        Used at search time to build compound must_not clauses."""
+        result = await self.session.execute(
+            select(
+                PeopleVideoExclusion.person_cluster_id,
+                PeopleVideoExclusion.video_id,
+            ).where(
+                PeopleVideoExclusion.org_id == org_id,
+                PeopleVideoExclusion.user_id == user_id,
+            ).limit(limit)
+        )
+        return list(result.tuples().all())
+
+    async def replace_for_person(
+        self, org_id: UUID, user_id: UUID, person_cluster_id: str,
+        excluded_video_ids: list[str],
+    ) -> list[str]:
+        """Atomically replace all video exclusions for one user+person."""
+        await self.session.execute(
+            delete(PeopleVideoExclusion).where(
+                PeopleVideoExclusion.org_id == org_id,
+                PeopleVideoExclusion.user_id == user_id,
+                PeopleVideoExclusion.person_cluster_id == person_cluster_id,
+            )
+        )
+        for vid in excluded_video_ids:
+            self.session.add(
+                PeopleVideoExclusion(
+                    org_id=org_id,
+                    user_id=user_id,
+                    person_cluster_id=person_cluster_id,
+                    video_id=vid,
+                )
+            )
+        await self.session.flush()
+        return excluded_video_ids
+
+    async def delete_by_cluster_id(self, org_id: UUID, cluster_id: str) -> int:
+        """Delete ALL video exclusions for a cluster (all users, all videos).
+        Called during person delete."""
+        result_obj: object = await self.session.execute(
+            delete(PeopleVideoExclusion).where(
+                PeopleVideoExclusion.org_id == org_id,
+                PeopleVideoExclusion.person_cluster_id == cluster_id,
+            )
+        )
+        await self.session.flush()
+        rowcount = getattr(result_obj, "rowcount", 0)
+        return int(rowcount or 0)
+
+    async def transfer_exclusions(
+        self, org_id: UUID, source_cluster_id: str, target_cluster_id: str,
+    ) -> int:
+        """Transfer video exclusions from source -> target during merge.
+        Deduplicates: if user already excludes (target, video), deletes source row."""
+        source_prefs = await self.session.execute(
+            select(PeopleVideoExclusion).where(
+                PeopleVideoExclusion.org_id == org_id,
+                PeopleVideoExclusion.person_cluster_id == source_cluster_id,
+            )
+        )
+        source_rows = list(source_prefs.scalars().all())
+        if not source_rows:
+            return 0
+
+        # Find existing (user_id, video_id) pairs for target
+        target_prefs = await self.session.execute(
+            select(
+                PeopleVideoExclusion.user_id,
+                PeopleVideoExclusion.video_id,
+            ).where(
+                PeopleVideoExclusion.org_id == org_id,
+                PeopleVideoExclusion.person_cluster_id == target_cluster_id,
+            )
+        )
+        existing_target = set(target_prefs.tuples().all())
+
+        affected = 0
+        for row in source_rows:
+            if (row.user_id, row.video_id) in existing_target:
+                await self.session.delete(row)
+            else:
+                row.person_cluster_id = target_cluster_id
+            affected += 1
         await self.session.flush()
         return affected

@@ -10,6 +10,7 @@ from app.dependencies import (
     get_face_repository,
     get_people_cluster_label_repository,
     get_people_exclude_preference_repository,
+    get_people_video_exclusion_repository,
     get_scene_opensearch_client,
 )
 from app.logging_config import get_logger
@@ -17,6 +18,7 @@ from app.modules.auth import get_current_user
 from app.modules.people.repository import (
     PeopleClusterLabelRepository,
     PeopleExcludePreferenceRepository,
+    PeopleVideoExclusionRepository,
 )
 from app.modules.face.repository import FaceRepository
 from app.modules.people.schemas import (
@@ -30,6 +32,8 @@ from app.modules.people.schemas import (
     RenamePersonRequest,
     RenamePersonResponse,
     SetExcludePreferencesRequest,
+    SetVideoExclusionsRequest,
+    VideoExclusionsResponse,
 )
 from app.modules.search.scene_client import SceneSearchClient
 from app.modules.tenancy import OrgContext, get_current_org
@@ -149,6 +153,7 @@ async def merge_people(
     user: User = Depends(get_current_user),
     people_repo: PeopleClusterLabelRepository = Depends(get_people_cluster_label_repository),
     exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
+    video_excl_repo: PeopleVideoExclusionRepository = Depends(get_people_video_exclusion_repository),
     face_repo: FaceRepository = Depends(get_face_repository),
     scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
     db: AsyncSession = Depends(get_db_session),
@@ -228,6 +233,11 @@ async def merge_people(
             org_ctx.org_id, source_id, target_id,
         )
 
+        # 4b. Transfer per-video exclusions
+        await video_excl_repo.transfer_exclusions(
+            org_ctx.org_id, source_id, target_id,
+        )
+
         # 5. Clean up source face thumbnail
         try:
             thumbnail_dir = FilePath(settings.thumbnail_storage_dir)
@@ -275,6 +285,7 @@ async def delete_person(
     user: User = Depends(get_current_user),
     people_repo: PeopleClusterLabelRepository = Depends(get_people_cluster_label_repository),
     exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
+    video_excl_repo: PeopleVideoExclusionRepository = Depends(get_people_video_exclusion_repository),
     scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -301,6 +312,11 @@ async def delete_person(
 
     # 2. Delete all exclude preferences for this cluster (all users)
     exclude_count = await exclude_repo.delete_by_cluster_id(
+        org_ctx.org_id, person_cluster_id
+    )
+
+    # 2b. Delete per-video exclusions for this cluster (all users)
+    video_excl_count = await video_excl_repo.delete_by_cluster_id(
         org_ctx.org_id, person_cluster_id
     )
 
@@ -347,6 +363,7 @@ async def delete_person(
         person_cluster_id=person_cluster_id,
         label_deleted=deleted_label,
         exclude_prefs_deleted=exclude_count,
+        video_excl_deleted=video_excl_count,
         scenes_updated=scenes_updated,
     )
 
@@ -441,3 +458,62 @@ async def set_exclude_preferences(
     )
     await db.commit()
     return ExcludePreferencesResponse(excluded_person_cluster_ids=excluded)
+
+
+@router.get("/{person_cluster_id}/video-exclusions", response_model=VideoExclusionsResponse)
+async def get_video_exclusions(
+    person_cluster_id: str,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    video_excl_repo: PeopleVideoExclusionRepository = Depends(get_people_video_exclusion_repository),
+):
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    user_id = cast(UUID, user.id)
+    excluded = await video_excl_repo.list_by_user_and_person(
+        org_ctx.org_id, user_id, person_cluster_id,
+    )
+    return VideoExclusionsResponse(
+        person_cluster_id=person_cluster_id,
+        excluded_video_ids=excluded,
+    )
+
+
+@router.put("/{person_cluster_id}/video-exclusions", response_model=VideoExclusionsResponse)
+async def set_video_exclusions(
+    person_cluster_id: str,
+    request: SetVideoExclusionsRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    video_excl_repo: PeopleVideoExclusionRepository = Depends(get_people_video_exclusion_repository),
+    db: AsyncSession = Depends(get_db_session),
+):
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    user_id = cast(UUID, user.id)
+    logger.debug(
+        "set_video_exclusions",
+        user_id=str(user_id),
+        org_id=str(org_ctx.org_id),
+        person_cluster_id=person_cluster_id,
+        count=len(request.excluded_video_ids),
+    )
+
+    excluded = await video_excl_repo.replace_for_person(
+        org_ctx.org_id, user_id, person_cluster_id, request.excluded_video_ids,
+    )
+    await db.commit()
+    return VideoExclusionsResponse(
+        person_cluster_id=person_cluster_id,
+        excluded_video_ids=excluded,
+    )

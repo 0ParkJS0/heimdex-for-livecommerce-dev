@@ -30,6 +30,7 @@ from app.modules.drive.repository import DriveFileRepository
 from app.modules.people.repository import (
     PeopleClusterLabelRepository,
     PeopleExcludePreferenceRepository,
+    PeopleVideoExclusionRepository,
 )
 from app.modules.search.embedding import get_query_embedding
 from app.modules.search.visual_embedding import get_visual_query_embedding
@@ -409,6 +410,12 @@ class SceneSearchService:
             if user_excludes:
                 exclude_ids_not_in = list(set(exclude_ids_not_in + user_excludes))
 
+        # Per-video exclusions
+        video_exclusion_pairs: list[tuple[str, str]] = []
+        if user_id is not None:
+            video_excl_repo = PeopleVideoExclusionRepository(self.session)
+            video_exclusion_pairs = await video_excl_repo.list_by_user(org_id, user_id)
+
         matched_person_cluster_ids: list[str] = []
         for p in people_labels:
             if p.label and p.label.strip() and p.label.strip() in query:
@@ -431,6 +438,7 @@ class SceneSearchService:
             "library_ids": filters.library_ids,
             "person_cluster_ids": effective_person_ids or None,
             "person_cluster_ids_not_in": exclude_ids_not_in or None,
+            "person_video_exclusions": video_exclusion_pairs or None,
             "keyword_tags_in": filters.keyword_tags_in,
             "keyword_tags_not_in": filters.keyword_tags_not_in,
             "product_tags_in": filters.product_tags_in,

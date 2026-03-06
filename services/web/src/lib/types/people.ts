@@ -34,6 +34,11 @@ export interface ExcludePreferencesResponse {
   excluded_person_cluster_ids: string[];
 }
 
+export interface VideoExclusionsResponse {
+  person_cluster_id: string;
+  excluded_video_ids: string[];
+}
+
 export interface MergePersonRequest {
   source_cluster_ids: string[];
   target_cluster_id: string;

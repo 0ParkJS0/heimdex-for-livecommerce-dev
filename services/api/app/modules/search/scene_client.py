@@ -1443,6 +1443,18 @@ class SceneSearchClient:
         if filters.get("person_cluster_ids_not_in"):
             must_not.append({"terms": {"people_cluster_ids": filters["person_cluster_ids_not_in"]}})
 
+        # Per-video person exclusions: exclude a person from specific videos only
+        if filters.get("person_video_exclusions"):
+            for person_cluster_id, video_id in filters["person_video_exclusions"]:
+                must_not.append({
+                    "bool": {
+                        "must": [
+                            {"term": {"video_id": video_id}},
+                            {"term": {"people_cluster_ids": person_cluster_id}},
+                        ]
+                    }
+                })
+
         # Tag inclusion filters (OR within field, AND across fields)
         _TAG_IN_FIELDS = {
             "keyword_tags_in": "keyword_tags",

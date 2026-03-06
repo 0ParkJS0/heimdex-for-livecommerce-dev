@@ -17,10 +17,7 @@ from app.config import get_settings
 from app.db.base import get_db_session as _get_db_session
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Database session dependency."""
-    async for session in _get_db_session():
-        yield session
+get_db_session = _get_db_session
 
 
 def get_opensearch_client(request: Request):
@@ -75,6 +72,12 @@ def get_people_exclude_preference_repository(db: AsyncSession = Depends(get_db_s
     """People exclude preference repository factory."""
     from app.modules.people.repository import PeopleExcludePreferenceRepository
     return PeopleExcludePreferenceRepository(db)
+
+
+def get_people_video_exclusion_repository(db: AsyncSession = Depends(get_db_session)):
+    """People video exclusion repository factory."""
+    from app.modules.people.repository import PeopleVideoExclusionRepository
+    return PeopleVideoExclusionRepository(db)
 
 
 def get_face_repository(db: AsyncSession = Depends(get_db_session)):
