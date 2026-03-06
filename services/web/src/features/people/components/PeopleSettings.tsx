@@ -19,6 +19,7 @@ import { getPersonVideos } from "@/lib/api/people";
 import { getCloudThumbnailUrl, getFaceThumbnailUrl } from "@/lib/agent";
 import type { PersonResponse, PersonVideoItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ScenePreviewTooltip } from "@/components/ScenePreviewTooltip";
 import { DeletePersonDialog } from "./DeletePersonDialog";
 import { MergeConfirmDialog } from "./MergeConfirmDialog";
 
@@ -185,49 +186,57 @@ function PersonAvatar({
   );
 
   return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        "group relative flex flex-col items-center gap-1",
-        isDragging && "opacity-30",
-      )}
-      {...attributes}
-      {...listeners}
+    <ScenePreviewTooltip
+      videoId={person.representative_video_id}
+      sceneId={person.representative_scene_id}
+      label={person.label}
+      badge={`${person.face_count}개 장면`}
+      disabled={isDragging || isDragActive || isOver}
     >
-      <button
-        type="button"
-        onClick={() => {
-          if (!isDragActive) onToggle(person.person_cluster_id);
-        }}
-        className="flex flex-col items-center"
+      <div
+        ref={setNodeRef}
+        className={cn(
+          "group relative flex flex-col items-center gap-1",
+          isDragging && "opacity-30",
+        )}
+        {...attributes}
+        {...listeners}
       >
-        <AvatarThumbnail
-          person={person}
-          agentAvailable={agentAvailable}
-          className={cn(
-            isSelected && "ring-2 ring-indigo-500 ring-offset-2",
-            !isSelected && !isOver && "hover:bg-gray-200",
-            isOver && "ring-2 ring-indigo-500 scale-105 bg-indigo-50",
-          )}
-        />
-      </button>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete(person.person_cluster_id);
-        }}
-        className="absolute -right-1 -top-1 hidden rounded-full bg-white p-1 shadow-md transition-colors hover:bg-red-50 hover:text-red-500 group-hover:block"
-        title="삭제"
-      >
-        <TrashIcon />
-      </button>
-      {person.label && (
-        <span className="max-w-[80px] truncate text-xs text-gray-600">
-          {person.label}
-        </span>
-      )}
-    </div>
+        <button
+          type="button"
+          onClick={() => {
+            if (!isDragActive) onToggle(person.person_cluster_id);
+          }}
+          className="flex flex-col items-center"
+        >
+          <AvatarThumbnail
+            person={person}
+            agentAvailable={agentAvailable}
+            className={cn(
+              isSelected && "ring-2 ring-indigo-500 ring-offset-2",
+              !isSelected && !isOver && "hover:bg-gray-200",
+              isOver && "ring-2 ring-indigo-500 scale-105 bg-indigo-50",
+            )}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(person.person_cluster_id);
+          }}
+          className="absolute -right-1 -top-1 hidden rounded-full bg-white p-1 shadow-md transition-colors hover:bg-red-50 hover:text-red-500 group-hover:block"
+          title="삭제"
+        >
+          <TrashIcon />
+        </button>
+        {person.label && (
+          <span className="max-w-[80px] truncate text-xs text-gray-600">
+            {person.label}
+          </span>
+        )}
+      </div>
+    </ScenePreviewTooltip>
   );
 }
 
