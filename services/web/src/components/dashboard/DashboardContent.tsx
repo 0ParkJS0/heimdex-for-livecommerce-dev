@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getVideos, getVideoStats } from "@/lib/api/videos";
 import { searchScenes } from "@/lib/api/search";
@@ -12,12 +13,20 @@ import type { GroupBy } from "@/features/search/hooks/useSearch";
 import type { VideoSummary, VideoStats, SceneResult, VideoResult, AnySearchResponse, SceneSearchResponse, SearchFilters, SearchMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { OpenInDriveButton } from "@/components/OpenInDriveButton";
+import {
+  serializeSearchState,
+  deserializeSearchState,
+  hasSearchParams,
+  ALL_SOURCES as SEARCH_STATE_ALL_SOURCES,
+  type SortOption as SearchStateSortOption,
+  type SourceType as SearchStateSourceType,
+  type DashboardSearchState,
+} from "@/lib/search-state";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 const PAGE_SIZE = 16;
-const DATE_RANGE_KEY = "heimdex_dashboard_date_range";
 const KOREAN_DAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 type SourceType = "gdrive" | "removable_disk" | "local";
 const ALL_SOURCES: SourceType[] = ["gdrive", "removable_disk", "local"];
@@ -707,6 +716,21 @@ function SearchVideoCard({ video }: { video: VideoResult }) {
 // ---------------------------------------------------------------------------
 export default function DashboardContent() {
   const { getAccessToken } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // ── Initialize state from URL params ───────────────────────────────────
+  const initialState = useMemo(
+    () => deserializeSearchState(searchParams),
+    // Only compute on mount — URL is synced *from* state, not the other way
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const hadSearchParamsOnMount = useMemo(
+    () => hasSearchParams(searchParams),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [totalVideos, setTotalVideos] = useState(0);
@@ -714,45 +738,55 @@ export default function DashboardContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState<SortOption>("latest");
-  const [currentPage, setCurrentPage] = useState(1);
+  const [query, setQuery] = useState(initialState.query);
+  const [sortBy, setSortBy] = useState<SortOption>(initialState.sortBy);
+  const [currentPage, setCurrentPage] = useState(initialState.currentPage);
   const [dateStart, setDateStart] = useState<Date | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const raw = sessionStorage.getItem(DATE_RANGE_KEY);
-        if (raw) {
-          const { start } = JSON.parse(raw);
-          if (start) return new Date(start);
-        }
-      } catch {}
-    }
+    if (initialState.dateStart) return initialState.dateStart;
     const d = new Date();
     d.setDate(d.getDate() - 7);
     return d;
   });
   const [dateEnd, setDateEnd] = useState<Date | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const raw = sessionStorage.getItem(DATE_RANGE_KEY);
-        if (raw) {
-          const { end } = JSON.parse(raw);
-          if (end) return new Date(end);
-        }
-      } catch {}
-    }
-    return new Date();
+    return initialState.dateEnd ?? new Date();
   });
   const [showCalendar, setShowCalendar] = useState(false);
 
-  const [groupBy, setGroupBy] = useState<GroupBy>("scene");
-  const [searchMode, setSearchMode] = useState<SearchMode>("lexical");
+  const [groupBy, setGroupBy] = useState<GroupBy>(initialState.groupBy);
+  const [searchMode, setSearchMode] = useState<SearchMode>(initialState.searchMode);
   const [sourceFilters, setSourceFilters] = useState<Set<SourceType>>(
-    () => new Set(ALL_SOURCES),
+    () => new Set(initialState.sourceFilters as ReadonlySet<SourceType>),
   );
   const [searchResponse, setSearchResponse] = useState<AnySearchResponse | null>(null);
-  const [activeQuery, setActiveQuery] = useState("");
+  const [activeQuery, setActiveQuery] = useState(initialState.query);
   const isSearchMode = searchResponse !== null;
+
+  // ── Sync state → URL (replace, not push, to avoid polluting history) ───
+  const isInitialRender = useRef(true);
+  useEffect(() => {
+    // Skip the first render to avoid a redundant replace on mount
+    if (isInitialRender.current) {
+      isInitialRender.current = false;
+      return;
+    }
+    const state: DashboardSearchState = {
+      query: activeQuery,
+      searchMode,
+      groupBy,
+      sortBy,
+      currentPage,
+      sourceFilters,
+      dateStart,
+      dateEnd,
+    };
+    const params = serializeSearchState(state);
+    const paramString = params.toString();
+    const newUrl = paramString ? `/?${paramString}` : "/";
+    router.replace(newUrl, { scroll: false });
+  }, [activeQuery, searchMode, groupBy, sortBy, currentPage, sourceFilters, dateStart, dateEnd, router]);
+
+  // ── Auto-search on mount if URL had a query ────────────────────────────
+  const hasTriggeredInitialSearch = useRef(false);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -886,6 +920,15 @@ export default function DashboardContent() {
     [query, performSearch],
   );
 
+  // Re-execute search from URL params on mount (e.g. browser back-navigation)
+  useEffect(() => {
+    if (hasTriggeredInitialSearch.current) return;
+    if (!hadSearchParamsOnMount || !initialState.query) return;
+    hasTriggeredInitialSearch.current = true;
+    performSearch(initialState.query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [performSearch]);
+
   useEffect(() => {
     if (activeQuery) {
       performSearch(activeQuery);
@@ -905,9 +948,6 @@ export default function DashboardContent() {
     setDateEnd(end);
     setShowCalendar(false);
     setCurrentPage(1);
-    try {
-      sessionStorage.setItem(DATE_RANGE_KEY, JSON.stringify({ start: formatDateKr(start), end: formatDateKr(end) }));
-    } catch {}
   }, []);
 
   const videoCount = isSearchMode ? (searchResponse?.results.length ?? 0) : totalVideos;
