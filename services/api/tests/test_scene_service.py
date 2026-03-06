@@ -527,6 +527,51 @@ class TestSceneSearchService:
         matched = mock_scene_opensearch_client.search_lexical.call_args.kwargs["matched_person_cluster_ids"]
         assert matched is None
 
+    @pytest.mark.asyncio
+    async def test_person_name_overrides_global_exclusion(
+        self, scene_search_service, mock_scene_opensearch_client
+    ):
+        org_id = uuid4()
+        user_id = uuid4()
+
+        mock_person = MagicMock()
+        mock_person.person_cluster_id = "cluster_abc"
+        mock_person.label = "장원영"
+
+        with patch.object(scene_search_service.session, "execute") as mock_execute:
+            people_result = MagicMock()
+            people_result.scalars.return_value.all.return_value = [mock_person]
+
+            exclude_result = MagicMock()
+            exclude_result.scalars.return_value.all.return_value = [
+                "cluster_abc", "cluster_other"
+            ]
+
+            video_excl_result = MagicMock()
+            video_excl_result.tuples.return_value.all.return_value = []
+
+            lib_result = MagicMock()
+            lib_result.scalars.return_value.all.return_value = []
+
+            mock_execute.side_effect = [
+                people_result,
+                exclude_result,
+                video_excl_result,
+                lib_result,
+            ]
+
+            await scene_search_service.search(
+                query="장원영",
+                org_id=org_id,
+                alpha=0.5,
+                filters=SearchFilters(),
+                user_id=user_id,
+            )
+
+        filter_dict = mock_scene_opensearch_client.search_lexical.call_args.kwargs["filters"]
+        assert filter_dict["person_cluster_ids"] == ["cluster_abc"]
+        assert filter_dict["person_cluster_ids_not_in"] == ["cluster_other"]
+
     # ------------------------------------------------------------------
     # Quality factor applied (via shared fusion logic)
     # ------------------------------------------------------------------

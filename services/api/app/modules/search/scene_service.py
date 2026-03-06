@@ -424,6 +424,21 @@ class SceneSearchService:
         effective_person_ids = list(filters.person_cluster_ids or [])
         if matched_person_cluster_ids:
             effective_person_ids = list(set(effective_person_ids + matched_person_cluster_ids))
+            # When a person name is detected in the query, remove that person
+            # from global exclusions to prevent contradictory OpenSearch clauses
+            # (filter MUST include person + must_not MUST exclude person → 0 results).
+            matched_set = set(matched_person_cluster_ids)
+            excluded_before = len(exclude_ids_not_in)
+            exclude_ids_not_in = [
+                pid for pid in exclude_ids_not_in if pid not in matched_set
+            ]
+            if len(exclude_ids_not_in) < excluded_before:
+                logger.info(
+                    "person_name_override_global_exclude",
+                    query=query[:50],
+                    overridden_ids=[pid for pid in matched_set if pid not in set(exclude_ids_not_in)],
+                    remaining_excludes=len(exclude_ids_not_in),
+                )
             logger.info(
                 "person_name_detected_in_query",
                 query=query[:50],
