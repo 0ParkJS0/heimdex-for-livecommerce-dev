@@ -530,7 +530,7 @@ class TestSceneSearchClient:
 
         mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
 
-        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+        with patch("app.modules.search.scene_query.get_settings") as mock_get_settings:
             settings = MagicMock()
             settings.ocr_search_enabled = False
             settings.ocr_bm25_boost = 0.6
@@ -567,7 +567,7 @@ class TestSceneSearchClient:
 
         mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
 
-        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+        with patch("app.modules.search.scene_query.get_settings") as mock_get_settings:
             settings = MagicMock()
             settings.ocr_search_enabled = False
             settings.ocr_bm25_boost = 0.6
