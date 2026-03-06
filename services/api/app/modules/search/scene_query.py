@@ -3,7 +3,7 @@ from typing import Any, cast
 from opensearchpy import AsyncOpenSearch
 
 from app.config import Settings
-from app.config import get_settings
+
 
 
 class SceneQueryMixin:
@@ -116,7 +116,7 @@ class SceneQueryMixin:
         include_ocr: bool | None = None,
         matched_person_cluster_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        settings = get_settings()
+        settings = self.settings
         raw_ocr_enabled = getattr(settings, "ocr_search_enabled", True)
         default_ocr_enabled = raw_ocr_enabled if isinstance(raw_ocr_enabled, bool) else False
         raw_ocr_bm25_boost = getattr(settings, "ocr_bm25_boost", 0.6)
