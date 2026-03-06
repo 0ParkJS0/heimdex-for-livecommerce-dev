@@ -10,7 +10,6 @@ Tenancy: org_id passed explicitly via X-Heimdex-Org-Id header (no Host-based
          resolution — workers are internal services, not tenants).
 Feature-gated: only registered when DRIVE_CONNECTOR_ENABLED=true.
 """
-import hmac
 import re
 from pathlib import Path
 from typing import Annotated
@@ -36,35 +35,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/internal/ingest", tags=["internal-ingest"])
 
 
-async def _verify_internal_token(
-    authorization: str = Header(..., alias="Authorization"),
-) -> str:
-    """Validate internal Bearer token against DRIVE_INTERNAL_API_KEY."""
-    settings = get_settings()
-
-    if not settings.drive_internal_api_key:
-        logger.error("drive_internal_api_key_not_configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Internal ingest not configured",
-        )
-
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header",
-        )
-
-    token = parts[1]
-    if not hmac.compare_digest(token, settings.drive_internal_api_key):
-        logger.warning("internal_ingest_invalid_token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid internal API key",
-        )
-
-    return token
+from app.dependencies import verify_internal_token as _verify_internal_token
 
 
 @router.post("/scenes", response_model=IngestScenesResponse)

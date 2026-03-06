@@ -30,8 +30,8 @@ async def dev_login(
     
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with email {request.email} not found in org {org_ctx.org_slug}",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
         )
     
     token = auth_service.create_access_token(

@@ -14,7 +14,6 @@ Feature-gated: only registered when DRIVE_CONNECTOR_ENABLED=true.
 Lease tokens: Each claimed job receives a UUID lease_token with an expiry.
 Status updates must present the matching lease_token; mismatches yield 409.
 """
-import hmac
 import time
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
@@ -50,37 +49,7 @@ LEASE_DURATION_SECONDS = 600
 _TERMINAL_STATUSES = frozenset({"done", "failed"})
 
 
-# ── Auth dependency (same pattern as internal_ingest_router) ──────────
-
-async def _verify_internal_token(
-    authorization: str = Header(..., alias="Authorization"),
-) -> str:
-    """Validate internal Bearer token against DRIVE_INTERNAL_API_KEY."""
-    settings = get_settings()
-
-    if not settings.drive_internal_api_key:
-        logger.error("drive_internal_api_key_not_configured")
-        raise HTTPException(
-            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Internal drive API not configured",
-        )
-
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header",
-        )
-
-    token = parts[1]
-    if not hmac.compare_digest(token, settings.drive_internal_api_key):
-        logger.warning("internal_drive_invalid_token")
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid internal API key",
-        )
-
-    return token
+from app.dependencies import verify_internal_token as _verify_internal_token
 
 
 def _mask_lease_token(token: str | None) -> str:

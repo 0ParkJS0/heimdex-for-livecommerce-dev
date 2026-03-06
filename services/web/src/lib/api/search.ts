@@ -1,6 +1,5 @@
 import { ApiError, SearchRequest, SearchResponse, SceneSearchResponse } from "@/lib/types";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+import { API_BASE_URL } from "./utils";
 
 type TokenGetter = () => Promise<string | null>;
 

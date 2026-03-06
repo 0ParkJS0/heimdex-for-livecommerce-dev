@@ -33,10 +33,10 @@ from sqlalchemy.sql import func
 from app.config import get_settings
 from app.dependencies import get_db_session, get_scene_opensearch_client
 from app.logging_config import get_logger
+from app.dependencies import verify_internal_token as _verify_internal_token
 from app.modules.drive.internal_router import (
     LEASE_DURATION_SECONDS,
     _mask_lease_token,
-    _verify_internal_token,
 )
 from app.modules.drive.internal_sync_schemas import (
     ClaimedConnectionInfo,

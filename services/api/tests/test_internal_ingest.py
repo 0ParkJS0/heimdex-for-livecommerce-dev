@@ -9,14 +9,14 @@ from app.modules.ingest.internal_router import internal_ingest_scenes, _verify_i
 class TestVerifyInternalToken:
     @pytest.mark.asyncio
     async def test_valid_token_accepted(self):
-        with patch("app.modules.ingest.internal_router.get_settings") as mock_settings:
+        with patch("app.dependencies.get_settings") as mock_settings:
             mock_settings.return_value.drive_internal_api_key = "secret-key-123"
             result = await _verify_internal_token("Bearer secret-key-123")
             assert result == "secret-key-123"
 
     @pytest.mark.asyncio
     async def test_wrong_token_returns_401(self):
-        with patch("app.modules.ingest.internal_router.get_settings") as mock_settings:
+        with patch("app.dependencies.get_settings") as mock_settings:
             mock_settings.return_value.drive_internal_api_key = "correct-key"
             from fastapi import HTTPException
             with pytest.raises(HTTPException) as exc_info:
@@ -25,7 +25,7 @@ class TestVerifyInternalToken:
 
     @pytest.mark.asyncio
     async def test_missing_bearer_prefix_returns_401(self):
-        with patch("app.modules.ingest.internal_router.get_settings") as mock_settings:
+        with patch("app.dependencies.get_settings") as mock_settings:
             mock_settings.return_value.drive_internal_api_key = "key"
             from fastapi import HTTPException
             with pytest.raises(HTTPException) as exc_info:
@@ -34,7 +34,7 @@ class TestVerifyInternalToken:
 
     @pytest.mark.asyncio
     async def test_unconfigured_key_returns_503(self):
-        with patch("app.modules.ingest.internal_router.get_settings") as mock_settings:
+        with patch("app.dependencies.get_settings") as mock_settings:
             mock_settings.return_value.drive_internal_api_key = ""
             from fastapi import HTTPException
             with pytest.raises(HTTPException) as exc_info:

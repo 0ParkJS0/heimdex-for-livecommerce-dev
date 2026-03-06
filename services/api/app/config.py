@@ -70,11 +70,8 @@ class Settings(BaseSettings):
     search_page_size: int = 20
     ocr_search_enabled: bool = True
     ocr_bm25_boost: float = 0.6
+    opensearch_facet_size: int = 100
 
-    search_title_boost_enabled: bool = False
-    search_title_boost: float = 3.0
-    search_tag_boost_enabled: bool = False
-    search_tag_boost: float = 2.0
     
     # OpenSearch bulk refresh policy: "true" (default, sync), "false" (async), or "wait_for".
     # Set OPENSEARCH_BULK_REFRESH="false" for higher ingest throughput at the cost of search latency.
@@ -157,8 +154,7 @@ class Settings(BaseSettings):
     drive_caption_concurrency: int = 1
     drive_caption_model: str = "Qwen/Qwen2-VL-2B-Instruct"
     caption_engine: str = "qwen2vl"  # "qwen2vl", "internvl2", "florence2", or "llama_http"
-    llama_caption_url: str = "http://llama-caption-server:8089"
-    llama_caption_api_key: str = ""
+
 
 
     # --- SQS (Phase 3 complete — enrichment workers are mandatory SQS consumers) ---

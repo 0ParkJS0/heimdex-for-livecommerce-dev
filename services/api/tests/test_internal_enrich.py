@@ -251,7 +251,7 @@ class TestInternalEnrichService:
 class TestInternalEnrichEndpoint:
     @pytest.mark.asyncio
     async def test_invalid_token_returns_401(self):
-        with patch("app.modules.ingest.internal_router.get_settings") as mock_settings:
+        with patch("app.dependencies.get_settings") as mock_settings:
             mock_settings.return_value.drive_internal_api_key = "correct-key"
             from fastapi import HTTPException
 

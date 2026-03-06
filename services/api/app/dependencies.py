@@ -10,7 +10,9 @@ DI Pattern:
 """
 from typing import AsyncGenerator
 
-from fastapi import Depends, Request
+import hmac
+
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -144,3 +146,36 @@ def get_auth_service(db: AsyncSession = Depends(get_db_session)):
     """Auth service factory."""
     from app.modules.auth.service import AuthService
     return AuthService(db)
+
+
+async def verify_internal_token(
+    authorization: str = Header(..., alias="Authorization"),
+) -> str:
+    from app.logging_config import get_logger
+
+    _logger = get_logger("internal_auth")
+    settings = get_settings()
+
+    if not settings.drive_internal_api_key:
+        _logger.error("drive_internal_api_key_not_configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal API not configured",
+        )
+
+    parts = authorization.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header",
+        )
+
+    token = parts[1]
+    if not hmac.compare_digest(token, settings.drive_internal_api_key):
+        _logger.warning("internal_auth_invalid_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal API key",
+        )
+
+    return token

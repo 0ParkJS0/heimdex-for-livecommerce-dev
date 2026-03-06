@@ -21,10 +21,10 @@ from app.modules.drive.internal_processing_schemas import (
     UpdateProcessingStatusRequest,
     UpdateProcessingStatusResponse,
 )
+from app.dependencies import verify_internal_token as _verify_internal_token
 from app.modules.drive.internal_router import (
     LEASE_DURATION_SECONDS,
     _mask_lease_token,
-    _verify_internal_token,
 )
 from app.modules.drive.models import DriveConnection, DriveFile
 from app.config import get_settings

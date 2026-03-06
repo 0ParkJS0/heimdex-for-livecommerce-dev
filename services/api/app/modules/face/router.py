@@ -1,11 +1,9 @@
-import hmac
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
-from app.dependencies import get_db_session, get_face_repository
+from app.dependencies import get_db_session, get_face_repository, verify_internal_token as _verify_internal_token
 from app.logging_config import get_logger
 from app.modules.face.repository import FaceRepository
 from app.modules.face.schemas import (
@@ -19,37 +17,6 @@ from app.modules.face.schemas import (
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/internal/face", tags=["internal-face"])
-
-
-async def _verify_internal_token(
-    authorization: str = Header(..., alias="Authorization"),
-) -> str:
-    """Validate internal Bearer token against DRIVE_INTERNAL_API_KEY."""
-    settings = get_settings()
-
-    if not settings.drive_internal_api_key:
-        logger.error("drive_internal_api_key_not_configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Internal face API not configured",
-        )
-
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header",
-        )
-
-    token = parts[1]
-    if not hmac.compare_digest(token, settings.drive_internal_api_key):
-        logger.warning("internal_face_invalid_token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid internal API key",
-        )
-
-    return token
 
 
 @router.post("/match", response_model=FaceMatchResponse)

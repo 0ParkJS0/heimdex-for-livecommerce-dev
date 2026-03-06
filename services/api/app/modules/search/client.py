@@ -574,9 +574,9 @@ class OpenSearchClient:
             "query": {"bool": bool_query},
             "size": 0,
             "aggs": {
-                "libraries": {"terms": {"field": "library_id", "size": 100}},
+                "libraries": {"terms": {"field": "library_id", "size": self.settings.opensearch_facet_size}},
                 "source_types": {"terms": {"field": "source_type", "size": 10}},
-                "people": {"terms": {"field": "people_cluster_ids", "size": 100}},
+                "people": {"terms": {"field": "people_cluster_ids", "size": self.settings.opensearch_facet_size}},
             },
         }
         

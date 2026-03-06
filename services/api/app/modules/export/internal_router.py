@@ -3,50 +3,25 @@
 These endpoints are called by the drive-worker (via HTTP + internal API key)
 to fetch export records and update their status. No user auth required.
 """
-import hmac
 import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.base import get_db_session
+from app.dependencies import verify_internal_token
 from app.modules.export.repository import ExportRecordRepository
 
 logger = logging.getLogger(__name__)
 
 
-async def _verify_internal_token(
-    authorization: str = Header(..., alias="Authorization"),
-) -> str:
-    settings = get_settings()
-    if not settings.drive_internal_api_key:
-        raise HTTPException(
-            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Internal export API not configured",
-        )
-    parts = authorization.split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header",
-        )
-    token = parts[1]
-    if not hmac.compare_digest(token, settings.drive_internal_api_key):
-        raise HTTPException(
-            status_code=http_status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid internal token",
-        )
-    return token
-
-
 router = APIRouter(
     prefix="/internal/export",
     tags=["internal-export"],
-    dependencies=[Depends(_verify_internal_token)],
+    dependencies=[Depends(verify_internal_token)],
 )
 
 
