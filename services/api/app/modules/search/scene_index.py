@@ -223,6 +223,15 @@ class SceneIndexMixin:
                 "capture_time": {"type": "date"},
                 "ingest_time": {"type": "date"},
                 "embedding_version": {"type": "keyword"},
+                "content_type": {"type": "keyword"},
+                "image_width": {"type": "integer"},
+                "image_height": {"type": "integer"},
+                "image_orientation": {"type": "keyword"},
+                "filename_text": {
+                    "type": "text",
+                    "analyzer": transcript_analyzer,
+                    "search_analyzer": transcript_analyzer,
+                },
             }
         }
 
