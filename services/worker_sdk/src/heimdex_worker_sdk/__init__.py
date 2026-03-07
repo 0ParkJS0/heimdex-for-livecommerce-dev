@@ -1,5 +1,11 @@
 """Heimdex Worker SDK — shared settings, S3 client, drive key helpers, and internal API client."""
 
+from heimdex_worker_sdk.content_type import (
+    classify_mime,
+    is_image,
+    is_supported_mime,
+    is_video,
+)
 from heimdex_worker_sdk.drive_keys import (
     audio_s3_key,
     drive_video_id,
@@ -50,9 +56,13 @@ __all__ = [
     "sqs_to_claimed_file",
     "sqs_to_claimed_processing_file",
     "audio_s3_key",
+    "classify_mime",
     "drive_video_id",
     "enrichment_keyframe_s3_key",
     "enrichment_keyframe_s3_prefix",
+    "is_image",
+    "is_supported_mime",
+    "is_video",
     "proxy_s3_key",
     "scene_manifest_s3_key",
     "thumbnail_s3_key",
