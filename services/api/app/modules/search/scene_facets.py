@@ -300,6 +300,101 @@ class SceneFacetsMixin:
             for bucket in buckets
         ]
 
+    async def get_person_timeline(
+        self,
+        org_id: str,
+        person_cluster_id: str,
+    ) -> list[dict[str, Any]]:
+        video_id_body: dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"org_id": org_id}},
+                        {"term": {"people_cluster_ids": person_cluster_id}},
+                    ],
+                }
+            },
+            "size": 0,
+            "aggs": {
+                "video_ids": {
+                    "terms": {"field": "video_id", "size": 200},
+                },
+            },
+        }
+
+        resp1 = await self.client.search(
+            index=self.alias_name, body=video_id_body,
+        )
+        video_ids = [
+            b["key"]
+            for b in resp1["aggregations"]["video_ids"]["buckets"]
+        ]
+        if not video_ids:
+            return []
+
+        all_scenes_body: dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"org_id": org_id}},
+                        {"terms": {"video_id": video_ids}},
+                    ],
+                }
+            },
+            "size": 0,
+            "aggs": {
+                "by_video": {
+                    "terms": {"field": "video_id", "size": 200},
+                    "aggs": {
+                        "video_title": {
+                            "terms": {"field": "video_title", "size": 1},
+                        },
+                        "scenes": {
+                            "top_hits": {
+                                "size": 500,
+                                "sort": [{"start_ms": "asc"}],
+                                "_source": [
+                                    "scene_id",
+                                    "start_ms",
+                                    "end_ms",
+                                    "people_cluster_ids",
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
+        resp2 = await self.client.search(
+            index=self.alias_name, body=all_scenes_body,
+        )
+
+        result: list[dict[str, Any]] = []
+        for bucket in resp2["aggregations"]["by_video"]["buckets"]:
+            title_buckets = bucket["video_title"]["buckets"]
+            video_title = title_buckets[0]["key"] if title_buckets else None
+
+            scenes: list[dict[str, Any]] = []
+            for hit in bucket["scenes"]["hits"]["hits"]:
+                src = hit["_source"]
+                cluster_ids = src.get("people_cluster_ids") or []
+                scenes.append({
+                    "scene_id": src["scene_id"],
+                    "start_ms": src.get("start_ms", 0),
+                    "end_ms": src.get("end_ms", 0),
+                    "has_person": person_cluster_id in cluster_ids,
+                })
+
+            result.append({
+                "video_id": bucket["key"],
+                "video_title": video_title,
+                "total_scenes": len(scenes),
+                "scenes": scenes,
+            })
+
+        return result
+
     async def get_representative_scenes_for_people(
         self,
         org_id: str,

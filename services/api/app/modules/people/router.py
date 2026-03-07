@@ -27,6 +27,9 @@ from app.modules.people.schemas import (
     MergePersonResponse,
     PeopleListResponse,
     PersonResponse,
+    PersonTimelineResponse,
+    PersonTimelineScene,
+    PersonTimelineVideo,
     PersonVideoItem,
     PersonVideosResponse,
     RenamePersonRequest,
@@ -409,6 +412,56 @@ async def person_videos(
         person_cluster_id=person_cluster_id,
         videos=videos,
         total=len(videos),
+    )
+
+
+@router.get("/{person_cluster_id}/timeline", response_model=PersonTimelineResponse)
+async def person_timeline(
+    person_cluster_id: str,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
+):
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    logger.debug(
+        "person_timeline_request",
+        user_id=str(user.id),
+        org_id=str(org_ctx.org_id),
+        person_cluster_id=person_cluster_id,
+    )
+
+    raw = await scene_opensearch.get_person_timeline(
+        str(org_ctx.org_id),
+        person_cluster_id,
+    )
+
+    videos = [
+        PersonTimelineVideo(
+            video_id=v["video_id"],
+            video_title=v.get("video_title"),
+            total_scenes=v.get("total_scenes", 0),
+            scenes=[
+                PersonTimelineScene(
+                    scene_id=s["scene_id"],
+                    start_ms=s["start_ms"],
+                    end_ms=s["end_ms"],
+                    has_person=s["has_person"],
+                )
+                for s in v.get("scenes", [])
+            ],
+        )
+        for v in raw
+    ]
+
+    return PersonTimelineResponse(
+        person_cluster_id=person_cluster_id,
+        videos=videos,
     )
 
 

@@ -66,6 +66,25 @@ class SetVideoExclusionsRequest(BaseModel):
     excluded_video_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
+class PersonTimelineScene(BaseModel):
+    scene_id: str
+    start_ms: int
+    end_ms: int
+    has_person: bool
+
+
+class PersonTimelineVideo(BaseModel):
+    video_id: str
+    video_title: str | None = None
+    total_scenes: int
+    scenes: list[PersonTimelineScene]
+
+
+class PersonTimelineResponse(BaseModel):
+    person_cluster_id: str
+    videos: list[PersonTimelineVideo]
+
+
 class MergePersonRequest(BaseModel):
     """Request to merge one or more source clusters into a target cluster.
 
