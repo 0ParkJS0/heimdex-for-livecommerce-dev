@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
@@ -15,13 +16,14 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { usePeople } from "../hooks/usePeople";
 import { useAuth } from "@/lib/auth";
 import { useAgent } from "@/features/search/hooks/useAgent";
-import { getPersonVideos, getVideoExclusions, saveVideoExclusions } from "@/lib/api/people";
+import { getPersonTimeline, getPersonVideos, getVideoExclusions, saveVideoExclusions } from "@/lib/api/people";
 import { getCloudThumbnailUrl, getFaceThumbnailUrl } from "@/lib/agent";
-import type { PersonResponse, PersonVideoItem } from "@/lib/types";
+import type { PersonResponse, PersonTimelineVideo, PersonVideoItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ScenePreviewTooltip } from "@/components/ScenePreviewTooltip";
 import { DeletePersonDialog } from "./DeletePersonDialog";
 import { MergeConfirmDialog } from "./MergeConfirmDialog";
+import { TimelineBar } from "./TimelineBar";
 
 function PersonIcon({ className }: { className?: string }) {
   return (
@@ -261,6 +263,8 @@ function SelectedPersonCard({
   const [headerImgError, setHeaderImgError] = useState(false);
   const [headerUseFallback, setHeaderUseFallback] = useState(false);
   const [excludedVideoIds, setExcludedVideoIds] = useState<Set<string>>(new Set());
+  const [timelineVideos, setTimelineVideos] = useState<PersonTimelineVideo[]>([]);
+  const router = useRouter();
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const inputRef = useRef<HTMLInputElement>(null);
   const headerFaceUrl = getFaceThumbnailUrl(person.person_cluster_id);
@@ -284,11 +288,13 @@ function SelectedPersonCard({
     Promise.all([
       getPersonVideos(person.person_cluster_id, getToken),
       getVideoExclusions(person.person_cluster_id, getToken),
+      getPersonTimeline(person.person_cluster_id, getToken).catch(() => ({ videos: [] })),
     ])
-      .then(([videosRes, exclusionsRes]) => {
+      .then(([videosRes, exclusionsRes, timelineRes]) => {
         if (cancelled) return;
         setVideoFiles(videosRes.videos);
         setExcludedVideoIds(new Set(exclusionsRes.excluded_video_ids));
+        setTimelineVideos(timelineRes.videos);
       })
       .catch(() => {
         if (!cancelled) setVideoFiles([]);
@@ -412,27 +418,37 @@ function SelectedPersonCard({
         ) : (
           videoFiles.slice(0, 7).map((video) => {
             const isChecked = excludedVideoIds.has(video.video_id);
+            const timeline = timelineVideos.find((t) => t.video_id === video.video_id);
             return (
-              <button
-                key={video.video_id}
-                type="button"
-                onClick={() => toggleVideo(video.video_id)}
-                className="flex w-full items-center justify-between rounded px-1 py-1 hover:bg-gray-50"
-              >
-                <span className="truncate text-sm text-gray-700">
-                  {video.video_title || video.video_id}
-                </span>
-                <div
-                  className={cn(
-                    "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded transition-colors",
-                    isChecked
-                      ? "bg-indigo-500"
-                      : "border border-gray-300 bg-white",
-                  )}
+              <div key={video.video_id} className="space-y-0.5 px-1 py-1">
+                <button
+                  type="button"
+                  onClick={() => toggleVideo(video.video_id)}
+                  className="flex w-full items-center justify-between rounded hover:bg-gray-50"
                 >
-                  {isChecked && <CheckIcon />}
-                </div>
-              </button>
+                  <span className="truncate text-sm text-gray-700">
+                    {video.video_title || video.video_id}
+                  </span>
+                  <div
+                    className={cn(
+                      "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded transition-colors",
+                      isChecked
+                        ? "bg-indigo-500"
+                        : "border border-gray-300 bg-white",
+                    )}
+                  >
+                    {isChecked && <CheckIcon />}
+                  </div>
+                </button>
+                {timeline && timeline.scenes.length > 0 && (
+                  <TimelineBar
+                    scenes={timeline.scenes}
+                    videoId={video.video_id}
+                    videoTitle={video.video_title}
+                    onSceneClick={(vid, ms) => router.push(`/videos/${vid}?t=${ms}`)}
+                  />
+                )}
+              </div>
             );
           })
         )}
