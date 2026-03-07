@@ -51,7 +51,7 @@ class TestSceneSearchClient:
         """Index names follow {prefix}_scenes / {prefix}_scenes_{version} pattern."""
         client, _ = mock_scene_client
         assert client.alias_name == "test_scenes_scenes"
-        assert client.index_name == "test_scenes_scenes_v3"
+        assert client.index_name == "test_scenes_scenes_v4"
         assert client.EMBEDDING_DIMENSION == 1024
 
     # ------------------------------------------------------------------
@@ -936,6 +936,7 @@ class TestSceneSearchClient:
                 "libraries": {"buckets": []},
                 "source_types": {"buckets": []},
                 "people": {"buckets": []},
+                "content_types": {"buckets": []},
             }
         })
 
@@ -978,6 +979,7 @@ class TestSceneSearchClient:
                 "libraries": {"buckets": [{"key": "lib1", "doc_count": 5}]},
                 "source_types": {"buckets": [{"key": "gdrive", "doc_count": 10}]},
                 "people": {"buckets": [{"key": "cluster_001", "doc_count": 3}]},
+                "content_types": {"buckets": [{"key": "video", "doc_count": 15}]},
             }
         })
 
