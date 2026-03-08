@@ -17,6 +17,7 @@ def _update_youtube_status(
     file_id: Any,
     org_id: str,
     processing_status: str,
+    error: str | None = None,
 ) -> None:
     """Update YouTube video processing status via the YouTube internal API.
 
@@ -26,9 +27,12 @@ def _update_youtube_status(
     """
     api_base = settings.drive_api_base_url.rstrip("/")
     url = f"{api_base}/internal/youtube/videos/{file_id}/status"
+    payload: dict[str, Any] = {"processing_status": processing_status}
+    if error:
+        payload["enrichment_status"] = {"transcode_error": error[:500]}
     resp = requests.patch(
         url,
-        json={"processing_status": processing_status},
+        json=payload,
         headers={
             "Authorization": f"Bearer {settings.drive_internal_api_key}",
             "X-Heimdex-Org-Id": org_id,
@@ -269,7 +273,7 @@ def _process_single_transcode(
         error_msg = f"{type(e).__name__}: {e}"
         try:
             if source_type == "youtube":
-                _update_youtube_status(settings, file_id, org_id_str, "failed")
+                _update_youtube_status(settings, file_id, org_id_str, "failed", error=error_msg)
             else:
                 api_client.update_processing_status(
                     file_id,
