@@ -45,6 +45,7 @@ def _process_single_transcode(
     file_name = message_body.get("file_name", video_id)
     library_id = message_body.get("library_id")
     source_path = message_body.get("source_path")
+    source_type = message_body.get("source_type", "gdrive")
 
     if not google_file_id:
         raise RuntimeError("missing_google_file_id_in_transcode_message")
@@ -163,7 +164,7 @@ def _process_single_transcode(
         audio_key = audio_s3_key(org_id_str, video_id)
         s3.upload_file(audio_path, audio_key, content_type="audio/wav")
 
-        scene_dicts = _build_ingest_scene_dicts(scene_result.scenes, source_type="gdrive", capture_time=None)
+        scene_dicts = _build_ingest_scene_dicts(scene_result.scenes, source_type=source_type, capture_time=None)
         _upload_scene_manifest(
             s3=s3,
             org_id_str=org_id_str,
