@@ -61,6 +61,7 @@ class VideoService:
         *,
         library_id: str | None = None,
         source_type: str | None = None,
+        content_types: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
         sort: str = "latest",
@@ -79,6 +80,7 @@ class VideoService:
             str(org_id),
             library_id=library_id,
             source_type=source_type,
+            content_types=content_types,
             date_from=date_from,
             date_to=date_to,
             sort=sort,
@@ -110,7 +112,8 @@ class VideoService:
                   people_count=v["people_count"],
                   required_drive_nickname=v["required_drive_nickname"],
                   source_path=v.get("source_path"),
-                 web_view_link=v.get("web_view_link"),
+                  web_view_link=v.get("web_view_link"),
+                  content_type=v.get("content_type", "video"),
               )
               for v in result["videos"]
           ]

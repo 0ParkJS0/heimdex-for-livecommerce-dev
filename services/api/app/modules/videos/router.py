@@ -36,6 +36,7 @@ async def list_videos(
     video_service: VideoService = Depends(get_video_service),
     library_id: str | None = Query(None, description="Filter by library UUID"),
     source_type: SourceType | None = Query(None, description="Filter by source type"),
+    content_types: str | None = Query(None, description="Comma-separated content types: video,image"),
     date_from: str | None = Query(None, description="Filter scenes ingested on or after this ISO-8601 date"),
     date_to: str | None = Query(None, description="Filter scenes ingested on or before this ISO-8601 date"),
     sort: Literal["latest", "alpha_asc", "alpha_desc"] = Query("latest", description="Sort order: latest (by date), alpha_asc/alpha_desc (by title)"),
@@ -54,10 +55,16 @@ async def list_videos(
         sort=sort,
     )
 
+    parsed_content_types = (
+        [ct.strip() for ct in content_types.split(",") if ct.strip() in ("video", "image")]
+        if content_types else None
+    )
+
     return await video_service.list_videos(
         org_ctx.org_id,
         library_id=library_id,
         source_type=source_type,
+        content_types=parsed_content_types or None,
         date_from=date_from,
         date_to=date_to,
         sort=sort,

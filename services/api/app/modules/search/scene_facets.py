@@ -57,15 +57,18 @@ class SceneFacetsMixin:
         *,
         library_id: str | None = None,
         source_type: str | None = None,
+        content_types: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
         sort: str = "latest",
         page_size: int = 20,
         after_key: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Default to video-only for backward compatibility
+        ct = content_types or ["video"]
         filter_clauses: list[dict[str, Any]] = [
             {"term": {"org_id": org_id}},
-            {"term": {"content_type": "video"}},
+            {"term": {"content_type": ct[0]}} if len(ct) == 1 else {"terms": {"content_type": ct}},
         ]
         if library_id:
             filter_clauses.append({"term": {"library_id": library_id}})
@@ -104,6 +107,7 @@ class SceneFacetsMixin:
                     "source_type": {"terms": {"field": "source_type", "size": 1}},
                     "required_drive_nickname": {"terms": {"field": "required_drive_nickname", "size": 1}},
                     "web_view_link": {"terms": {"field": "web_view_link", "size": 1}},
+                    "content_type": {"terms": {"field": "content_type", "size": 1}},
                     "source_path": {"terms": {"field": "source_path", "size": 1}},
                     "keyword_tags": {"terms": {"field": "keyword_tags", "size": 10}},
                     "product_tags": {"terms": {"field": "product_tags", "size": 10}},
@@ -136,6 +140,7 @@ class SceneFacetsMixin:
             src_buckets = bucket["source_type"]["buckets"]
             drive_buckets = bucket["required_drive_nickname"]["buckets"]
             web_view_link_buckets = bucket.get("web_view_link", {}).get("buckets", [])
+            ct_buckets = bucket.get("content_type", {}).get("buckets", [])
             sp_buckets = bucket.get("source_path", {}).get("buckets", [])
             kw_buckets = bucket["keyword_tags"]["buckets"]
             pt_buckets = bucket["product_tags"]["buckets"]
@@ -158,6 +163,7 @@ class SceneFacetsMixin:
                 "people_count": int(bucket["people_count"]["value"]),
                 "required_drive_nickname": drive_buckets[0]["key"] if drive_buckets else None,
                 "web_view_link": web_view_link_buckets[0]["key"] if web_view_link_buckets else None,
+                "content_type": ct_buckets[0]["key"] if ct_buckets else "video",
                 "source_path": sp_buckets[0]["key"] if sp_buckets else None,
                 "capture_time": bucket.get("earliest_capture", {}).get("value_as_string") if bucket.get("earliest_capture", {}).get("value") else None,
             })

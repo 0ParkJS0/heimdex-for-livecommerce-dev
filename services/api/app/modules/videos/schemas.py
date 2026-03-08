@@ -32,6 +32,7 @@ class VideoSummary(BaseModel):
     required_drive_nickname: str | None = None
     source_path: str | None = None
     web_view_link: str | None = None
+    content_type: str | None = None
 
 
 class VideoFacetItem(BaseModel):
