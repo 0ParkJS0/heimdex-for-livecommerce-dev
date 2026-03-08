@@ -17,7 +17,7 @@ def _videos_tab_url(channel_url: str) -> str:
     return f"{url}/videos"
 
 
-def enumerate_channel(channel_url: str) -> list[dict[str, Any]]:
+def enumerate_channel(channel_url: str, cookies_path: str | None = None) -> list[dict[str, Any]]:
     url = _videos_tab_url(channel_url)
     options: dict[str, Any] = {
         "extract_flat": True,
@@ -26,6 +26,8 @@ def enumerate_channel(channel_url: str) -> list[dict[str, Any]]:
         "no_warnings": True,
         "ignoreerrors": True,
     }
+    if cookies_path:
+        options["cookiefile"] = cookies_path
     ydl = yt_dlp.YoutubeDL(options)  # type: ignore[arg-type]
     info = ydl.extract_info(url, download=False) or {}
 
@@ -74,7 +76,8 @@ def sync_all_channels(api_client: Any, settings: Any) -> int:
         org_id = str(channel.get("org_id", default_org_id))
         channel_url = channel["channel_url"]
         try:
-            discovered = enumerate_channel(channel_url)
+            cookies = getattr(settings, "youtube_cookies_path", "") or None
+            discovered = enumerate_channel(channel_url, cookies_path=cookies)
             existing_ids = set(
                 _call_api(
                     api_client,

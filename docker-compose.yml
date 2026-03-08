@@ -583,6 +583,7 @@ services:
       - PYTHONPATH=/app
       - YOUTUBE_ENABLED=${YOUTUBE_ENABLED:-false}
       - YOUTUBE_ORG_ID=${YOUTUBE_ORG_ID:-}
+      - YOUTUBE_COOKIES_PATH=${YOUTUBE_COOKIES_PATH:-}
       - YOUTUBE_S3_BUCKET=${YOUTUBE_S3_BUCKET:-}
       - YOUTUBE_SYNC_INTERVAL_SECONDS=${YOUTUBE_SYNC_INTERVAL_SECONDS:-21600}
       - YOUTUBE_DOWNLOAD_FORMAT=${YOUTUBE_DOWNLOAD_FORMAT:-bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]}
@@ -599,9 +600,12 @@ services:
       - SQS_REGION=${SQS_REGION:-ap-northeast-2}
       - SQS_TRANSCODE_QUEUE_URL=${SQS_TRANSCODE_QUEUE_URL:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       - ./services/youtube-worker:/app
       - youtube_tmp:/data/youtube-tmp
+      - ${YOUTUBE_COOKIES_HOST_DIR:-./secrets/youtube}:/app/cookies:ro
     depends_on:
       api:
         condition: service_healthy

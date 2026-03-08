@@ -31,8 +31,15 @@ def _first_file(path: Path, pattern: str) -> Path | None:
     return matches[0] if matches else None
 
 
+def _resolve_cookies_path(settings: Any) -> str | None:
+    cookies_path = getattr(settings, "youtube_cookies_path", "")
+    if cookies_path and Path(cookies_path).is_file():
+        return cookies_path
+    return None
+
+
 def _yt_options(temp_dir: Path, settings: Any) -> dict[str, Any]:
-    return {
+    opts: dict[str, Any] = {
         "format": settings.youtube_download_format,
         "outtmpl": str(temp_dir / "%(id)s.%(ext)s"),
         "writesubtitles": True,
@@ -46,6 +53,10 @@ def _yt_options(temp_dir: Path, settings: Any) -> dict[str, Any]:
         "sleep_interval": settings.youtube_rate_limit_sleep,
         "max_sleep_interval": settings.youtube_rate_limit_max_sleep,
     }
+    cookies = _resolve_cookies_path(settings)
+    if cookies:
+        opts["cookiefile"] = cookies
+    return opts
 
 
 def download_and_upload_video(api_client: Any, settings: Any, video_record: dict[str, Any]) -> bool:

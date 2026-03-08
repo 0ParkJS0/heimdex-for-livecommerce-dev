@@ -64,6 +64,23 @@ def main() -> None:
 
     Path(settings.youtube_temp_dir).mkdir(parents=True, exist_ok=True)
 
+    cookies_path = settings.youtube_cookies_path
+    if cookies_path:
+        p = Path(cookies_path)
+        if p.is_file():
+            import time as _time
+            age_days = (_time.time() - p.stat().st_mtime) / 86400
+            logger.info(
+                "youtube_cookies_loaded",
+                extra={"path": cookies_path, "size_bytes": p.stat().st_size, "age_days": round(age_days, 1)},
+            )
+            if age_days > 14:
+                logger.warning("youtube_cookies_stale", extra={"age_days": round(age_days, 1)})
+        else:
+            logger.warning("youtube_cookies_not_found", extra={"path": cookies_path})
+    else:
+        logger.warning("youtube_cookies_not_configured")
+
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         run_sync_cycle,
