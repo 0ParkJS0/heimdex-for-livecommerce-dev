@@ -157,6 +157,8 @@ services:
       - ANALYTICS_EXPORT_ENABLED=${ANALYTICS_EXPORT_ENABLED:-false}
       - ANALYTICS_S3_BUCKET=${ANALYTICS_S3_BUCKET:-}
       - ANALYTICS_S3_PREFIX=${ANALYTICS_S3_PREFIX:-analytics}
+      - YOUTUBE_ENABLED=${YOUTUBE_ENABLED:-false}
+      - YOUTUBE_S3_BUCKET=${YOUTUBE_S3_BUCKET:-}
       - HF_HOME=/home/appuser/.cache/huggingface
     ports:
       - "8000:8000"
@@ -569,6 +571,42 @@ services:
              python -m src.worker"
 
 
+  youtube-worker:
+    profiles: ["youtube"]
+    build:
+      context: .
+      dockerfile: services/youtube-worker/Dockerfile
+    container_name: heimdex-youtube-worker
+    mem_limit: 2g
+    cpus: "2.0"
+    environment:
+      - PYTHONPATH=/app
+      - YOUTUBE_ENABLED=${YOUTUBE_ENABLED:-false}
+      - YOUTUBE_S3_BUCKET=${YOUTUBE_S3_BUCKET:-}
+      - YOUTUBE_SYNC_INTERVAL_SECONDS=${YOUTUBE_SYNC_INTERVAL_SECONDS:-21600}
+      - YOUTUBE_DOWNLOAD_FORMAT=${YOUTUBE_DOWNLOAD_FORMAT:-bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]}
+      - YOUTUBE_RATE_LIMIT_SLEEP=${YOUTUBE_RATE_LIMIT_SLEEP:-3}
+      - YOUTUBE_RATE_LIMIT_MAX_SLEEP=${YOUTUBE_RATE_LIMIT_MAX_SLEEP:-8}
+      - YOUTUBE_MAX_CONCURRENT_DOWNLOADS=${YOUTUBE_MAX_CONCURRENT_DOWNLOADS:-2}
+      - YOUTUBE_AUTO_DELETE_ORIGINALS=${YOUTUBE_AUTO_DELETE_ORIGINALS:-true}
+      - YOUTUBE_ORIGINAL_TTL_DAYS=${YOUTUBE_ORIGINAL_TTL_DAYS:-7}
+      - DRIVE_API_BASE_URL=${DRIVE_API_BASE_URL:-http://api:8000}
+      - DRIVE_INTERNAL_API_KEY=${DRIVE_INTERNAL_API_KEY:-}
+      - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - S3_REGION=${S3_REGION:-ap-northeast-2}
+      - SQS_ENABLED=${SQS_ENABLED:-false}
+      - SQS_REGION=${SQS_REGION:-ap-northeast-2}
+      - SQS_TRANSCODE_QUEUE_URL=${SQS_TRANSCODE_QUEUE_URL:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./services/youtube-worker:/app
+      - youtube_tmp:/data/youtube-tmp
+    depends_on:
+      api:
+        condition: service_healthy
+    command: >
+      sh -c "python -m src.worker"
+
   # NOTE (2026-02-26): elasticmq is for LOCAL DEV SQS simulation only.
   # Staging/prod uses real AWS SQS (ap-northeast-2). Not needed on EC2.
   # Guarded by profiles: ["local-dev"] — requires --profile local-dev to start.
@@ -590,6 +628,7 @@ volumes:
   huggingface_cache:
   whisper_model_cache:
   llama_models:
+  youtube_tmp:
 
 networks:
   caption-net:
