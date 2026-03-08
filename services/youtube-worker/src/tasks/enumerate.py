@@ -64,13 +64,14 @@ def _call_api(api_client: Any, candidates: list[str], *args: Any, **kwargs: Any)
 
 def sync_all_channels(api_client: Any, settings: Any) -> int:
     created_total = 0
+    default_org_id = getattr(settings, "youtube_org_id", "") or getattr(api_client, "org_id", "")
     channels = _call_api(
         api_client,
         ["list_enabled_youtube_channels", "list_youtube_channels_for_sync", "list_youtube_channels"],
     )
     for channel in channels:
-        channel_id = str(channel["channel_id"])
-        org_id = str(channel["org_id"])
+        channel_id = str(channel["id"])
+        org_id = str(channel.get("org_id", default_org_id))
         channel_url = channel["channel_url"]
         try:
             discovered = enumerate_channel(channel_url)
