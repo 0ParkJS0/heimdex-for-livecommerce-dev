@@ -70,10 +70,11 @@ class VideoService:
         after_cursor: str | None = None,
     ) -> VideoListResponse:
         """List ingested videos for an org via OpenSearch aggregation."""
-        after_key = None
+        offset = 0
         if after_cursor:
             try:
-                after_key = json.loads(base64.urlsafe_b64decode(after_cursor))
+                cursor_data = json.loads(base64.urlsafe_b64decode(after_cursor))
+                offset = cursor_data.get("offset", 0) if isinstance(cursor_data, dict) else 0
             except Exception:
                 logger.warning("invalid_video_cursor", cursor=after_cursor)
 
@@ -87,7 +88,7 @@ class VideoService:
             date_to=date_to,
             sort=sort,
             page_size=page_size,
-            after_key=after_key,
+            offset=offset,
         )
 
         # Enrich with library names

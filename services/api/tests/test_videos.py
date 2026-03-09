@@ -46,21 +46,17 @@ class TestSceneClientAggregateVideos:
 
             yield client, async_client
 
-    def _make_agg_response(self, buckets, total=1, after_key=None):
+    def _make_agg_response(self, buckets, total=None):
         """Build a mock OpenSearch aggregation response."""
-        result = {
+        return {
             "aggregations": {
                 "videos": {
                     "buckets": buckets,
                 },
-                "total_videos": {"value": total},
                 "facet_libraries": {"buckets": [{"key": "lib-1", "doc_count": 5}]},
                 "facet_source_types": {"buckets": [{"key": "gdrive", "doc_count": 5}]},
             }
         }
-        if after_key:
-            result["aggregations"]["videos"]["after_key"] = after_key
-        return result
 
     def _make_video_bucket(
         self,
@@ -72,7 +68,7 @@ class TestSceneClientAggregateVideos:
         ingest_time="2026-02-10T05:00:00Z",
     ):
         return {
-            "key": {"video_id": video_id},
+            "key": video_id,
             "doc_count": scene_count,
             "scene_count": {"value": scene_count},
             "min_start_ms": {"value": 0},
@@ -161,31 +157,44 @@ class TestSceneClientAggregateVideos:
         assert result["next_cursor"] is None
 
     @pytest.mark.asyncio
-    async def test_aggregate_videos_pagination_cursor(self, mock_scene_client):
+    async def test_aggregate_videos_offset_pagination(self, mock_scene_client):
         client, mock_async = mock_scene_client
-        after = {"video_id": "last-vid"}
-        mock_async.search = AsyncMock(
-            return_value=self._make_agg_response(
-                [self._make_video_bucket()],
-                after_key=after,
-            )
-        )
+        buckets = [
+            self._make_video_bucket(f"vid-{i}", ingest_time=f"2026-01-{i+1:02d}T00:00:00Z")
+            for i in range(5)
+        ]
+        mock_async.search = AsyncMock(return_value=self._make_agg_response(buckets))
 
-        result = await client.aggregate_videos("org-1")
+        result = await client.aggregate_videos("org-1", page_size=2, offset=0)
 
-        assert result["next_cursor"] == after
+        assert len(result["videos"]) == 2
+        assert result["total"] == 5
+        assert result["next_cursor"] == {"offset": 2}
 
     @pytest.mark.asyncio
-    async def test_aggregate_videos_passes_after_key(self, mock_scene_client):
+    async def test_aggregate_videos_offset_last_page(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+        buckets = [
+            self._make_video_bucket(f"vid-{i}", ingest_time=f"2026-01-{i+1:02d}T00:00:00Z")
+            for i in range(5)
+        ]
+        mock_async.search = AsyncMock(return_value=self._make_agg_response(buckets))
+
+        result = await client.aggregate_videos("org-1", page_size=3, offset=3)
+
+        assert len(result["videos"]) == 2
+        assert result["next_cursor"] is None
+
+    @pytest.mark.asyncio
+    async def test_aggregate_videos_uses_terms_agg_not_composite(self, mock_scene_client):
         client, mock_async = mock_scene_client
         mock_async.search = AsyncMock(return_value=self._make_agg_response([]))
 
-        after_key = {"video_id": "cursor-vid"}
-        await client.aggregate_videos("org-1", after_key=after_key)
+        await client.aggregate_videos("org-1")
 
         call_body = mock_async.search.call_args.kwargs["body"]
-        composite = call_body["aggs"]["videos"]["composite"]
-        assert composite["after"] == after_key
+        assert "terms" in call_body["aggs"]["videos"]
+        assert "composite" not in call_body["aggs"]["videos"]
 
     @pytest.mark.asyncio
     async def test_aggregate_videos_sort_latest(self, mock_scene_client):
@@ -193,7 +202,7 @@ class TestSceneClientAggregateVideos:
         b1 = self._make_video_bucket("vid-old", ingest_time="2026-01-01T00:00:00Z")
         b2 = self._make_video_bucket("vid-new", ingest_time="2026-02-10T00:00:00Z")
         mock_async.search = AsyncMock(
-            return_value=self._make_agg_response([b1, b2], total=2)
+            return_value=self._make_agg_response([b1, b2])
         )
 
         result = await client.aggregate_videos("org-1", sort="latest")
@@ -207,13 +216,73 @@ class TestSceneClientAggregateVideos:
         b1 = self._make_video_bucket("vid-old", ingest_time="2026-01-01T00:00:00Z")
         b2 = self._make_video_bucket("vid-new", ingest_time="2026-02-10T00:00:00Z")
         mock_async.search = AsyncMock(
-            return_value=self._make_agg_response([b1, b2], total=2)
+            return_value=self._make_agg_response([b1, b2])
         )
 
         result = await client.aggregate_videos("org-1", sort="oldest")
 
         assert result["videos"][0]["video_id"] == "vid-old"
         assert result["videos"][1]["video_id"] == "vid-new"
+
+    @pytest.mark.asyncio
+    async def test_global_sort_across_pages(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+        buckets = [
+            self._make_video_bucket("vid-jan", ingest_time="2026-01-15T00:00:00Z"),
+            self._make_video_bucket("vid-mar", ingest_time="2026-03-01T00:00:00Z"),
+            self._make_video_bucket("vid-feb", ingest_time="2026-02-10T00:00:00Z"),
+            self._make_video_bucket("vid-apr", ingest_time="2026-04-20T00:00:00Z"),
+        ]
+        mock_async.search = AsyncMock(return_value=self._make_agg_response(buckets))
+
+        page1 = await client.aggregate_videos("org-1", sort="latest", page_size=2, offset=0)
+        page2 = await client.aggregate_videos("org-1", sort="latest", page_size=2, offset=2)
+
+        all_ids = [v["video_id"] for v in page1["videos"]] + [v["video_id"] for v in page2["videos"]]
+        assert all_ids == ["vid-apr", "vid-mar", "vid-feb", "vid-jan"]
+
+    @pytest.mark.asyncio
+    async def test_alpha_sort_across_pages(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+        buckets = [
+            self._make_video_bucket("vid-1", video_title="Charlie"),
+            self._make_video_bucket("vid-2", video_title="Alpha"),
+            self._make_video_bucket("vid-3", video_title="Bravo"),
+        ]
+        mock_async.search = AsyncMock(return_value=self._make_agg_response(buckets))
+
+        page1 = await client.aggregate_videos("org-1", sort="alpha_asc", page_size=2, offset=0)
+        page2 = await client.aggregate_videos("org-1", sort="alpha_asc", page_size=2, offset=2)
+
+        all_titles = [v["video_title"] for v in page1["videos"]] + [v["video_title"] for v in page2["videos"]]
+        assert all_titles == ["Alpha", "Bravo", "Charlie"]
+
+    @pytest.mark.asyncio
+    async def test_no_date_filter_returns_all(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+        buckets = [self._make_video_bucket(f"vid-{i}") for i in range(3)]
+        mock_async.search = AsyncMock(return_value=self._make_agg_response(buckets))
+
+        result = await client.aggregate_videos("org-1")
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        filters = call_body["query"]["bool"]["filter"]
+        date_filters = [f for f in filters if "range" in str(f)]
+        assert date_filters == []
+        assert result["total"] == 3
+
+    @pytest.mark.asyncio
+    async def test_source_types_plural_filter(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+        mock_async.search = AsyncMock(return_value=self._make_agg_response([]))
+
+        await client.aggregate_videos("org-1", source_types=["gdrive", "youtube"])
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        filters = call_body["query"]["bool"]["filter"]
+        terms_filters = [f for f in filters if "terms" in f and "source_type" in f.get("terms", {})]
+        assert len(terms_filters) == 1
+        assert set(terms_filters[0]["terms"]["source_type"]) == {"gdrive", "youtube"}
 
 
 # ======================================================================
@@ -520,11 +589,11 @@ class TestVideoService:
     async def test_list_videos_cursor_encoding(self, service, mock_db_session, mock_scene_client):
         self._mock_library_repo(mock_db_session)
 
-        after_key = {"video_id": "last-vid"}
+        next_cursor = {"offset": 20}
         mock_scene_client.aggregate_videos.return_value = {
             "videos": [],
             "total": 0,
-            "next_cursor": after_key,
+            "next_cursor": next_cursor,
             "facets": {"libraries": [], "source_types": []},
         }
 
@@ -533,7 +602,7 @@ class TestVideoService:
 
         assert result.next_cursor is not None
         decoded = json.loads(base64.urlsafe_b64decode(result.next_cursor))
-        assert decoded == after_key
+        assert decoded == next_cursor
 
     @pytest.mark.asyncio
     async def test_list_videos_cursor_decoding(self, service, mock_db_session, mock_scene_client):
@@ -546,14 +615,14 @@ class TestVideoService:
             "facets": {"libraries": [], "source_types": []},
         }
 
-        cursor_data = {"video_id": "cursor-vid"}
+        cursor_data = {"offset": 20}
         cursor = base64.urlsafe_b64encode(json.dumps(cursor_data).encode()).decode()
 
         org_id = uuid4()
         await service.list_videos(org_id, after_cursor=cursor)
 
         call_kwargs = mock_scene_client.aggregate_videos.call_args.kwargs
-        assert call_kwargs["after_key"] == cursor_data
+        assert call_kwargs["offset"] == 20
 
     @pytest.mark.asyncio
     async def test_list_videos_invalid_cursor_ignored(self, service, mock_db_session, mock_scene_client):
@@ -571,7 +640,7 @@ class TestVideoService:
         await service.list_videos(org_id, after_cursor="not-valid-base64!!!")
 
         call_kwargs = mock_scene_client.aggregate_videos.call_args.kwargs
-        assert call_kwargs["after_key"] is None
+        assert call_kwargs["offset"] == 0
 
     @pytest.mark.asyncio
     async def test_get_video_scenes_happy_path(self, service, mock_db_session, mock_scene_client):

@@ -63,9 +63,8 @@ class SceneFacetsMixin:
         date_to: str | None = None,
         sort: str = "latest",
         page_size: int = 20,
-        after_key: dict[str, Any] | None = None,
+        offset: int = 0,
     ) -> dict[str, Any]:
-        # Default to video-only for backward compatibility
         ct = content_types or ["video"]
         filter_clauses: list[dict[str, Any]] = [
             {"term": {"org_id": org_id}},
@@ -73,7 +72,6 @@ class SceneFacetsMixin:
         ]
         if library_id:
             filter_clauses.append({"term": {"library_id": library_id}})
-        # source_types (plural) takes precedence over source_type (singular)
         if source_types:
             if len(source_types) == 1:
                 filter_clauses.append({"term": {"source_type": source_types[0]}})
@@ -92,15 +90,13 @@ class SceneFacetsMixin:
                 {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": date_range}}}},
             ], "minimum_should_match": 1}})
 
-        composite_sources: list[dict[str, Any]] = [
-            {"video_id": {"terms": {"field": "video_id", "order": "desc"}}},
-        ]
+        _MAX_VIDEO_BUCKETS = 10_000
 
         aggs: dict[str, Any] = {
             "videos": {
-                "composite": {
-                    "sources": composite_sources,
-                    "size": page_size,
+                "terms": {
+                    "field": "video_id",
+                    "size": _MAX_VIDEO_BUCKETS,
                 },
                 "aggs": {
                     "scene_count": {"value_count": {"field": "scene_id"}},
@@ -122,13 +118,9 @@ class SceneFacetsMixin:
                     "earliest_capture": {"min": {"field": "capture_time"}},
                 },
             },
-            "total_videos": {"cardinality": {"field": "video_id", "precision_threshold": 10000}},
             "facet_libraries": {"terms": {"field": "library_id", "size": 100}},
             "facet_source_types": {"terms": {"field": "source_type", "size": 10}},
         }
-
-        if after_key:
-            aggs["videos"]["composite"]["after"] = after_key
 
         body: dict[str, Any] = {
             "query": {"bool": {"filter": filter_clauses}},
@@ -141,7 +133,7 @@ class SceneFacetsMixin:
 
         videos = []
         for bucket in agg_result["videos"]["buckets"]:
-            video_id = bucket["key"]["video_id"]
+            video_id = bucket["key"]
             lib_buckets = bucket["library_id"]["buckets"]
             title_buckets = bucket["video_title"]["buckets"]
             src_buckets = bucket["source_type"]["buckets"]
@@ -186,12 +178,15 @@ class SceneFacetsMixin:
         else:
             videos.sort(key=lambda v: v["capture_time"] or v["latest_ingest_time"] or "", reverse=True)
 
-        after_key_result = agg_result["videos"].get("after_key")
+        total = len(videos)
+        page = videos[offset:offset + page_size]
+        has_more = offset + page_size < total
+        next_cursor = {"offset": offset + page_size} if has_more else None
 
         return {
-            "videos": videos,
-            "total": int(agg_result["total_videos"]["value"]),
-            "next_cursor": after_key_result,
+            "videos": page,
+            "total": total,
+            "next_cursor": next_cursor,
             "facets": {
                 "libraries": agg_result["facet_libraries"]["buckets"],
                 "source_types": agg_result["facet_source_types"]["buckets"],
