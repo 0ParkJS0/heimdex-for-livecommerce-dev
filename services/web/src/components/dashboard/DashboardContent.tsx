@@ -652,7 +652,7 @@ function VideoCard({ video }: { video: VideoSummary }) {
       <div className="relative aspect-video w-full overflow-hidden rounded-lg">
         <SceneThumbnail
           videoId={video.video_id}
-          sceneId={video.source_type === "gdrive" ? `${video.video_id}_scene_000` : undefined}
+          sceneId={video.source_type === "gdrive" || video.source_type === "youtube" ? `${video.video_id}_scene_000` : undefined}
           agentAvailable={true}
           className="w-full h-full"
           sourceType={video.source_type}

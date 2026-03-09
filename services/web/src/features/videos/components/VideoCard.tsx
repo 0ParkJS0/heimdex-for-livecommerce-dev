@@ -37,7 +37,7 @@ export function VideoCard({ video, onSelect, agentAvailable }: VideoCardProps) {
       <div className="flex gap-3">
         <SceneThumbnail
           videoId={video.video_id}
-          sceneId={video.source_type === "gdrive" ? `${video.video_id}_scene_000` : undefined}
+          sceneId={video.source_type === "gdrive" || video.source_type === "youtube" ? `${video.video_id}_scene_000` : undefined}
           agentAvailable={agentAvailable}
           className="flex-shrink-0 w-28 h-20 rounded-lg"
           sourceType={video.source_type}
@@ -75,13 +75,15 @@ export function VideoCard({ video, onSelect, agentAvailable }: VideoCardProps) {
                 "inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full",
                 video.source_type === "gdrive"
                   ? "bg-blue-100 text-blue-700"
+                  : video.source_type === "youtube"
+                  ? "bg-red-100 text-red-700"
                   : video.source_type === "removable_disk"
                   ? "bg-orange-100 text-orange-700"
                   : video.source_type === "local"
                   ? "bg-green-100 text-green-700"
                   : "bg-gray-100 text-gray-700"
               )}>
-                {video.source_type === "gdrive" ? "Drive" : video.source_type === "removable_disk" ? "Disk" : video.source_type === "local" ? "Local" : "Unknown"}
+                {video.source_type === "gdrive" ? "Drive" : video.source_type === "youtube" ? "YouTube" : video.source_type === "removable_disk" ? "Disk" : video.source_type === "local" ? "Local" : "Unknown"}
               </span>
             </div>
           </div>
