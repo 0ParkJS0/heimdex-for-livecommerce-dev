@@ -83,6 +83,7 @@ def _process_single_transcode(
     library_id = message_body.get("library_id")
     source_path = message_body.get("source_path")
     source_type = message_body.get("source_type", "gdrive")
+    web_view_link = message_body.get("web_view_link")
 
     if not google_file_id:
         raise RuntimeError("missing_google_file_id_in_transcode_message")
@@ -227,7 +228,7 @@ def _process_single_transcode(
         audio_key = audio_s3_key(org_id_str, video_id)
         s3.upload_file(audio_path, audio_key, content_type="audio/wav")
 
-        scene_dicts = _build_ingest_scene_dicts(scene_result.scenes, source_type=source_type, capture_time=None)
+        scene_dicts = _build_ingest_scene_dicts(scene_result.scenes, source_type=source_type, capture_time=None, web_view_link=web_view_link)
         _upload_scene_manifest(
             s3=s3,
             org_id_str=org_id_str,
@@ -255,6 +256,7 @@ def _process_single_transcode(
                 video_fps=original_probe.frame_rate,
                 video_width=original_probe.width,
                 video_height=original_probe.height,
+                web_view_link=web_view_link,
             )
             total_indexed += ingest_result.get("indexed_count", 0)
             logger.info(
@@ -361,28 +363,30 @@ def _build_ingest_scene_dicts(
     scene_docs: list[Any],
     source_type: str = "gdrive",
     capture_time: str | None = None,
+    web_view_link: str | None = None,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for doc in scene_docs:
-        result.append(
-            {
-                "scene_id": doc.scene_id,
-                "index": doc.index,
-                "start_ms": doc.start_ms,
-                "end_ms": doc.end_ms,
-                "keyframe_timestamp_ms": doc.keyframe_timestamp_ms,
-                "transcript_raw": doc.transcript_raw,
-                "speech_segment_count": doc.speech_segment_count,
-                "keyword_tags": doc.keyword_tags,
-                "product_tags": doc.product_tags,
-                "product_entities": doc.product_entities,
-                "ocr_text_raw": doc.ocr_text_raw,
-                "ocr_char_count": doc.ocr_char_count,
-                "source_type": source_type,
-                "capture_time": capture_time,
-                "content_type": "video",
-            }
-        )
+        d: dict[str, Any] = {
+            "scene_id": doc.scene_id,
+            "index": doc.index,
+            "start_ms": doc.start_ms,
+            "end_ms": doc.end_ms,
+            "keyframe_timestamp_ms": doc.keyframe_timestamp_ms,
+            "transcript_raw": doc.transcript_raw,
+            "speech_segment_count": doc.speech_segment_count,
+            "keyword_tags": doc.keyword_tags,
+            "product_tags": doc.product_tags,
+            "product_entities": doc.product_entities,
+            "ocr_text_raw": doc.ocr_text_raw,
+            "ocr_char_count": doc.ocr_char_count,
+            "source_type": source_type,
+            "capture_time": capture_time,
+            "content_type": "video",
+        }
+        if web_view_link:
+            d["web_view_link"] = web_view_link
+        result.append(d)
     return result
 
 
@@ -398,6 +402,7 @@ def _post_scenes_to_api(
     video_fps: float | None = None,
     video_width: int | None = None,
     video_height: int | None = None,
+    web_view_link: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "video_id": video_id,
@@ -408,6 +413,8 @@ def _post_scenes_to_api(
     }
     if source_path is not None:
         payload["source_path"] = source_path
+    if web_view_link is not None:
+        payload["web_view_link"] = web_view_link
     if video_fps is not None:
         payload["video_fps"] = video_fps
     if video_width is not None:

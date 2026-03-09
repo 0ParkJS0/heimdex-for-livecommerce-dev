@@ -303,6 +303,24 @@ class YouTubeVideoRepository:
         await self.session.flush()
         return video
 
+    async def get_web_view_links(
+        self, org_id: UUID, video_ids: list[str],
+    ) -> dict[str, str]:
+        """Map internal video_ids (yt_*) to YouTube watch URLs."""
+        if not video_ids:
+            return {}
+        result = await self.session.execute(
+            select(YouTubeVideo.video_id, YouTubeVideo.youtube_video_id)
+            .where(
+                YouTubeVideo.org_id == org_id,
+                YouTubeVideo.video_id.in_(video_ids),
+            )
+        )
+        return {
+            row.video_id: f"https://www.youtube.com/watch?v={row.youtube_video_id}"
+            for row in result.all()
+        }
+
     async def delete(self, video: YouTubeVideo) -> None:
         await self.session.delete(video)
         await self.session.flush()

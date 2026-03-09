@@ -118,14 +118,23 @@ class VideoService:
               for v in result["videos"]
           ]
 
-        # Backfill web_view_link from Postgres for Drive videos missing it in OpenSearch
-        missing_link_ids = [v.video_id for v in videos if not v.web_view_link and v.video_id.startswith("gd_")]
-        if missing_link_ids:
+        # Backfill web_view_link from Postgres for videos missing it in OpenSearch
+        missing_drive_ids = [v.video_id for v in videos if not v.web_view_link and v.video_id.startswith("gd_")]
+        if missing_drive_ids:
             drive_repo = DriveFileRepository(self.session)
-            link_map = await drive_repo.get_web_view_links(org_id, missing_link_ids)
+            link_map = await drive_repo.get_web_view_links(org_id, missing_drive_ids)
             for v in videos:
                 if not v.web_view_link and v.video_id in link_map:
                     v.web_view_link = link_map[v.video_id]
+
+        missing_yt_ids = [v.video_id for v in videos if not v.web_view_link and v.video_id.startswith("yt_")]
+        if missing_yt_ids:
+            from app.modules.youtube.repository import YouTubeVideoRepository
+            yt_repo = YouTubeVideoRepository(self.session)
+            yt_link_map = await yt_repo.get_web_view_links(org_id, missing_yt_ids)
+            for v in videos:
+                if not v.web_view_link and v.video_id in yt_link_map:
+                    v.web_view_link = yt_link_map[v.video_id]
 
         # Encode next cursor
         next_cursor = None
@@ -199,6 +208,11 @@ class VideoService:
             drive_repo = DriveFileRepository(self.session)
             link_map = await drive_repo.get_web_view_links(org_id, [video_id])
             web_view_link = link_map.get(video_id)
+        if not web_view_link and video_id.startswith("yt_"):
+            from app.modules.youtube.repository import YouTubeVideoRepository
+            yt_repo = YouTubeVideoRepository(self.session)
+            yt_link_map = await yt_repo.get_web_view_links(org_id, [video_id])
+            web_view_link = yt_link_map.get(video_id)
 
         return VideoScenesResponse(
             video_id=video_id,

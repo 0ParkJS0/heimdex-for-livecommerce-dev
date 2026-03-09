@@ -499,22 +499,29 @@ class SceneSearchService:
     async def _backfill_web_view_links(
         self, results: list[SceneResult], org_id: UUID,
     ) -> None:
-        """Backfill web_view_link from Postgres for Drive scenes missing it in OpenSearch.
-
-        Mutates the results list in-place. Only queries Postgres when there are
-        Drive video IDs (prefix 'gd_') with missing web_view_link.
-        """
-        missing_ids = list({
+        """Backfill web_view_link from Postgres for scenes missing it in OpenSearch."""
+        missing_drive = list({
             r.video_id for r in results
             if not r.web_view_link and r.video_id.startswith("gd_")
         })
-        if not missing_ids:
-            return
-        drive_repo = DriveFileRepository(self.session)
-        link_map = await drive_repo.get_web_view_links(org_id, missing_ids)
-        for r in results:
-            if not r.web_view_link and r.video_id in link_map:
-                r.web_view_link = link_map[r.video_id]
+        if missing_drive:
+            drive_repo = DriveFileRepository(self.session)
+            link_map = await drive_repo.get_web_view_links(org_id, missing_drive)
+            for r in results:
+                if not r.web_view_link and r.video_id in link_map:
+                    r.web_view_link = link_map[r.video_id]
+
+        missing_yt = list({
+            r.video_id for r in results
+            if not r.web_view_link and r.video_id.startswith("yt_")
+        })
+        if missing_yt:
+            from app.modules.youtube.repository import YouTubeVideoRepository
+            yt_repo = YouTubeVideoRepository(self.session)
+            yt_link_map = await yt_repo.get_web_view_links(org_id, missing_yt)
+            for r in results:
+                if not r.web_view_link and r.video_id in yt_link_map:
+                    r.web_view_link = yt_link_map[r.video_id]
 
     @staticmethod
     def _build_scene_results(

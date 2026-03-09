@@ -283,6 +283,7 @@ async def trigger_transcode(
         original_s3_key=body.original_s3_key,
         original_size_bytes=body.original_size_bytes,
         library_id=library.id,
+        web_view_link=f"https://www.youtube.com/watch?v={video.youtube_video_id}",
     )
 
     await video_repo.update_status(

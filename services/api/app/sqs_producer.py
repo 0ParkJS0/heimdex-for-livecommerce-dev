@@ -262,6 +262,7 @@ def publish_youtube_transcode_job(
     original_size_bytes: int,
     library_id: UUID,
     source_type: str = "youtube",
+    web_view_link: str | None = None,
 ) -> None:
     """Publish a YouTube transcode job to the shared GPU transcode queue.
 
@@ -285,6 +286,7 @@ def publish_youtube_transcode_job(
         "scope_type": "youtube",
         "drive_id": "youtube",
         "source_type": source_type,
+        "web_view_link": web_view_link,
     }
     dedup_id = f"{file_id}:transcode:{now.strftime('%Y%m%dT%H%M')}"
     _publish("transcode", body, dedup_id)
