@@ -76,6 +76,9 @@ class UpdateYouTubeVideoStatusRequest(BaseModel):
     has_subtitles: bool | None = None
     enrichment_status: dict[str, str | None] | None = None
     original_deleted: bool | None = None
+    scene_count: int | None = None
+    keyframe_s3_prefix: str | None = None
+    audio_s3_key: str | None = None
 
 
 class KnownYouTubeVideoIdsResponse(BaseModel):

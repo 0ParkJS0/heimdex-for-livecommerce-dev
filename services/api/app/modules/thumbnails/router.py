@@ -162,7 +162,7 @@ async def get_thumbnail(
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    if video_id.startswith("gd_") and settings.drive_connector_enabled:
+    if video_id.startswith(("gd_", "yt_")) and settings.drive_connector_enabled:
         return await _get_s3_thumbnail(str(org_ctx.org_id), video_id, scene_id)
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail not found")

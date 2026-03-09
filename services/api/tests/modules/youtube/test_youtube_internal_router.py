@@ -106,11 +106,18 @@ async def test_create_video_update_status_cleanup_and_mark_deleted():
     channel_repo.get_by_id = AsyncMock(return_value=channel)
     channel_repo.set_video_count = AsyncMock(return_value=channel)
 
+    async def _fake_update_status(*, video, processing_status, **kwargs):
+        video.processing_status = processing_status
+        for k, v in kwargs.items():
+            if v is not None:
+                setattr(video, k, v)
+        return video
+
     video_repo = cast(YouTubeVideoRepository, AsyncMock())
     video_repo.get_by_youtube_video_id = AsyncMock(return_value=None)
     video_repo.create = AsyncMock(return_value=video)
     video_repo.get_by_id = AsyncMock(return_value=video)
-    video_repo.update_status = AsyncMock(return_value=video)
+    video_repo.update_status = AsyncMock(side_effect=_fake_update_status)
     video_repo.list_cleanup_candidates = AsyncMock(return_value=[video])
     video_repo.mark_original_deleted = AsyncMock(return_value=video)
 
@@ -146,7 +153,7 @@ async def test_create_video_update_status_cleanup_and_mark_deleted():
     assert updated.processing_status == "complete"
     assert updated.has_subtitles is True
 
-    cleanup = await list_cleanup_candidates(str(org_id), "token", video_repo)
+    cleanup = await list_cleanup_candidates(str(org_id), "token", video_repo, channel_repo)
     assert cleanup.total == 1
 
     marked = await mark_original_deleted(video.id, str(org_id), "token", video_repo)

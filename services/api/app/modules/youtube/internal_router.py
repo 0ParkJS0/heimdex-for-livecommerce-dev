@@ -1,4 +1,6 @@
-from typing import Annotated
+import asyncio
+import logging
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -10,7 +12,11 @@ from app.dependencies import (
     get_youtube_video_repository,
 )
 from app.modules.libraries.repository import LibraryRepository
-from app.sqs_producer import publish_youtube_transcode_job
+from app.sqs_producer import (
+    publish_enrichment_jobs,
+    publish_scene_enrichment_jobs,
+    publish_youtube_transcode_job,
+)
 
 from .models import YouTubeVideo
 from .repository import YouTubeChannelRepository, YouTubeVideoRepository, _is_enrichment_complete
@@ -27,7 +33,39 @@ from .schemas import (
 from .router import _to_channel_response, _to_video_response
 from .service import YouTubeService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/internal/youtube", tags=["internal-youtube"])
+
+
+async def _publish_scene_jobs_in_background(
+    *,
+    file_id: UUID,
+    org_id: UUID,
+    video_id: str,
+    scenes: list[dict[str, Any]],
+) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: publish_scene_enrichment_jobs(
+                file_id=file_id,
+                org_id=org_id,
+                video_id=video_id,
+                scenes=scenes,
+            ),
+        )
+        logger.info(
+            "youtube_scene_enrichment_jobs_published",
+            extra={"video_id": video_id, "scene_count": len(scenes)},
+        )
+    except Exception:
+        logger.warning(
+            "youtube_scene_enrichment_jobs_failed",
+            extra={"video_id": video_id},
+            exc_info=True,
+        )
 
 
 def _parse_org_id(x_heimdex_org_id: str) -> UUID:
@@ -171,6 +209,43 @@ async def update_video_status(
         enrichment_status=body.enrichment_status or video.enrichment_status,
         original_deleted=body.original_deleted,
     )
+
+    # Publish enrichment SQS jobs when transcode finishes (mirrors Drive handler).
+    if body.processing_status == "indexed":
+        _eff_keyframe = body.keyframe_s3_prefix
+        _eff_audio = body.audio_s3_key
+
+        # v1: per-video enrichment for STT, OCR, face
+        if _eff_keyframe or _eff_audio:
+            publish_enrichment_jobs(
+                file_id=video.id,
+                org_id=org_id,
+                video_id=video.video_id,
+                keyframe_s3_prefix=_eff_keyframe,
+                audio_s3_key=_eff_audio,
+            )
+
+        # v2: per-scene enrichment for caption + visual-embed
+        _scene_count = body.scene_count or 0
+        if _scene_count > 0 and _eff_keyframe:
+            _vid = video.video_id
+            scenes_for_publish = [
+                {
+                    "scene_id": f"{_vid}_scene_{i:03d}",
+                    "scene_index": i,
+                    "keyframe_s3_key": f"{_eff_keyframe}{_vid}_scene_{i:03d}.jpg",
+                }
+                for i in range(_scene_count)
+            ]
+            asyncio.create_task(
+                _publish_scene_jobs_in_background(
+                    file_id=video.id,
+                    org_id=org_id,
+                    video_id=_vid,
+                    scenes=scenes_for_publish,
+                )
+            )
+
     return _to_video_response(video)
 
 
@@ -204,7 +279,7 @@ async def trigger_transcode(
         org_id=org_id,
         video_id=video.video_id,
         youtube_video_id=body.youtube_video_id,
-        file_name=f"{body.youtube_video_id}.mp4",
+        file_name=video.title,
         original_s3_key=body.original_s3_key,
         original_size_bytes=body.original_size_bytes,
         library_id=library.id,

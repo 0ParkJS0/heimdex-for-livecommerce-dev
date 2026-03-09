@@ -18,18 +18,21 @@ def _update_youtube_status(
     org_id: str,
     processing_status: str,
     error: str | None = None,
+    scene_count: int | None = None,
+    keyframe_s3_prefix: str | None = None,
+    audio_s3_key: str | None = None,
 ) -> None:
-    """Update YouTube video processing status via the YouTube internal API.
-
-    YouTube videos live in ``youtube_videos`` (not ``drive_files``), so the
-    standard ``update_processing_status`` endpoint returns 404. This calls
-    the YouTube-specific ``PATCH /internal/youtube/videos/{id}/status``.
-    """
     api_base = settings.drive_api_base_url.rstrip("/")
     url = f"{api_base}/internal/youtube/videos/{file_id}/status"
     payload: dict[str, Any] = {"processing_status": processing_status}
     if error:
         payload["enrichment_status"] = {"transcode_error": error[:500]}
+    if scene_count is not None:
+        payload["scene_count"] = scene_count
+    if keyframe_s3_prefix is not None:
+        payload["keyframe_s3_prefix"] = keyframe_s3_prefix
+    if audio_s3_key is not None:
+        payload["audio_s3_key"] = audio_s3_key
     resp = requests.patch(
         url,
         json=payload,
@@ -266,7 +269,15 @@ def _process_single_transcode(
         logger.info("transcode_ingest_complete", extra={"indexed_count": total_indexed, "total_scenes": len(scene_dicts)})
 
         if source_type == "youtube":
-            _update_youtube_status(settings, file_id, org_id_str, "indexed")
+            _update_youtube_status(
+                settings,
+                file_id,
+                org_id_str,
+                "indexed",
+                scene_count=len(scene_result.scenes),
+                keyframe_s3_prefix=enrichment_keyframe_s3_prefix(org_id_str, video_id),
+                audio_s3_key=audio_key,
+            )
         else:
             api_client.update_processing_status(
                 file_id,
