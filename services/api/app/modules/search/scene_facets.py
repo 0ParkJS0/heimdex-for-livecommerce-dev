@@ -57,6 +57,7 @@ class SceneFacetsMixin:
         *,
         library_id: str | None = None,
         source_type: str | None = None,
+        source_types: list[str] | None = None,
         content_types: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -72,7 +73,13 @@ class SceneFacetsMixin:
         ]
         if library_id:
             filter_clauses.append({"term": {"library_id": library_id}})
-        if source_type:
+        # source_types (plural) takes precedence over source_type (singular)
+        if source_types:
+            if len(source_types) == 1:
+                filter_clauses.append({"term": {"source_type": source_types[0]}})
+            else:
+                filter_clauses.append({"terms": {"source_type": source_types}})
+        elif source_type:
             filter_clauses.append({"term": {"source_type": source_type}})
         if date_from or date_to:
             date_range: dict[str, str] = {}

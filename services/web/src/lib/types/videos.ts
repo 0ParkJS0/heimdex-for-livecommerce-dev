@@ -87,6 +87,7 @@ export interface VideoStats {
 export interface VideoFilters {
   library_id?: string;
   source_type?: "gdrive" | "removable_disk" | "local" | "youtube";
+  source_types?: ("gdrive" | "removable_disk" | "local" | "youtube")[];
   content_types?: ("video" | "image")[];
   date_from?: string;
   date_to?: string;

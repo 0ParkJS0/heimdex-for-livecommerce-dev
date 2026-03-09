@@ -838,6 +838,20 @@ export default function DashboardContent() {
     return initialState.dateEnd ?? new Date();
   });
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showSourceDropdown, setShowSourceDropdown] = useState(false);
+  const sourceDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (sourceDropdownRef.current && !sourceDropdownRef.current.contains(e.target as Node)) {
+        setShowSourceDropdown(false);
+      }
+    }
+    if (showSourceDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showSourceDropdown]);
 
   const [groupBy, setGroupBy] = useState<GroupBy>(initialState.groupBy);
   const [searchMode, setSearchMode] = useState<SearchMode>(initialState.searchMode);
@@ -889,6 +903,11 @@ export default function DashboardContent() {
     [contentType],
   );
 
+  const browseSourceTypes = useMemo<SourceType[] | undefined>(
+    () => sourceFilters.size === ALL_SOURCES.length ? undefined : Array.from(sourceFilters),
+    [sourceFilters],
+  );
+
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     setNextCursor(null);
@@ -900,6 +919,7 @@ export default function DashboardContent() {
             sort: videoSortBy,
             page_size: 20,
             content_types: browseContentTypes,
+            source_types: browseSourceTypes,
             date_from: dateStart ? formatDateKr(dateStart) : undefined,
             date_to: dateEnd ? formatDateKr(dateEnd) : undefined,
           },
@@ -918,7 +938,7 @@ export default function DashboardContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [getAccessToken, videoSortBy, browseContentTypes, dateStart, dateEnd]);
+  }, [getAccessToken, videoSortBy, browseContentTypes, browseSourceTypes, dateStart, dateEnd]);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || isLoadingMore) return;
@@ -930,6 +950,7 @@ export default function DashboardContent() {
           sort: videoSortBy,
           page_size: 20,
           content_types: browseContentTypes,
+          source_types: browseSourceTypes,
           date_from: dateStart ? formatDateKr(dateStart) : undefined,
           date_to: dateEnd ? formatDateKr(dateEnd) : undefined,
           after: nextCursor,
@@ -944,7 +965,7 @@ export default function DashboardContent() {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [getAccessToken, nextCursor, isLoadingMore, videoSortBy, browseContentTypes, dateStart, dateEnd]);
+  }, [getAccessToken, nextCursor, isLoadingMore, videoSortBy, browseContentTypes, browseSourceTypes, dateStart, dateEnd]);
 
   useEffect(() => {
     if (!isSearchMode) {
@@ -1221,28 +1242,53 @@ export default function DashboardContent() {
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {ALL_SOURCES.map((type) => (
-              <label key={type} className="flex items-center gap-1.5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={sourceFilters.has(type)}
-                  onChange={() => toggleSource(type)}
-                  className={cn(
-                    "h-3.5 w-3.5 rounded border-gray-300 focus:ring-1 focus:ring-offset-0",
-                    SOURCE_META[type].color,
-                  )}
-                />
-                <span
-                  className={cn(
-                    "text-xs font-medium transition-colors",
-                    sourceFilters.has(type) ? "text-gray-700" : "text-gray-400",
-                  )}
-                >
-                  {SOURCE_META[type].label}
-                </span>
-              </label>
-            ))}
+          <div ref={sourceDropdownRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setShowSourceDropdown((v) => !v)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                sourceFilters.size === ALL_SOURCES.length
+                  ? "border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100",
+              )}
+            >
+              <span>
+                소스{" "}
+                {sourceFilters.size === ALL_SOURCES.length
+                  ? "전체"
+                  : `${sourceFilters.size}/${ALL_SOURCES.length}`}
+              </span>
+              <span className="text-[10px] leading-none">▾</span>
+            </button>
+            {showSourceDropdown && (
+              <div className="absolute right-0 top-full z-50 mt-1.5 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                {ALL_SOURCES.map((type) => (
+                  <label
+                    key={type}
+                    className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-gray-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={sourceFilters.has(type)}
+                      onChange={() => toggleSource(type)}
+                      className={cn(
+                        "h-3.5 w-3.5 rounded border-gray-300 focus:ring-1 focus:ring-offset-0",
+                        SOURCE_META[type].color,
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "text-xs font-medium",
+                        sourceFilters.has(type) ? "text-gray-700" : "text-gray-400",
+                      )}
+                    >
+                      {SOURCE_META[type].label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

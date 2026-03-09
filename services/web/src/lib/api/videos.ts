@@ -56,7 +56,8 @@ export async function getVideos(
 ): Promise<VideoListResponse> {
   const params = new URLSearchParams();
   if (filters?.library_id) params.set("library_id", filters.library_id);
-  if (filters?.source_type) params.set("source_type", filters.source_type);
+  if (filters?.source_types?.length) params.set("source_types", filters.source_types.join(","));
+  else if (filters?.source_type) params.set("source_type", filters.source_type);
   if (filters?.date_from) params.set("date_from", filters.date_from);
   if (filters?.date_to) params.set("date_to", filters.date_to);
   if (filters?.content_types?.length) params.set("content_types", filters.content_types.join(","));

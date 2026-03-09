@@ -35,7 +35,8 @@ async def list_videos(
     user: User = Depends(get_current_user),
     video_service: VideoService = Depends(get_video_service),
     library_id: str | None = Query(None, description="Filter by library UUID"),
-    source_type: SourceType | None = Query(None, description="Filter by source type"),
+    source_type: SourceType | None = Query(None, description="Filter by single source type (deprecated, use source_types)"),
+    source_types: str | None = Query(None, description="Comma-separated source types: gdrive,youtube,local,removable_disk"),
     content_types: str | None = Query(None, description="Comma-separated content types: video,image"),
     date_from: str | None = Query(None, description="Filter scenes ingested on or after this ISO-8601 date"),
     date_to: str | None = Query(None, description="Filter scenes ingested on or before this ISO-8601 date"),
@@ -60,10 +61,17 @@ async def list_videos(
         if content_types else None
     )
 
+    valid_source_types = {"gdrive", "removable_disk", "local", "youtube"}
+    parsed_source_types = (
+        [st.strip() for st in source_types.split(",") if st.strip() in valid_source_types]
+        if source_types else None
+    )
+
     return await video_service.list_videos(
         org_ctx.org_id,
         library_id=library_id,
         source_type=source_type,
+        source_types=parsed_source_types or None,
         content_types=parsed_content_types or None,
         date_from=date_from,
         date_to=date_to,
