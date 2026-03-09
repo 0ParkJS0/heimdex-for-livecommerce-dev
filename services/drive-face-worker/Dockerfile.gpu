@@ -4,7 +4,9 @@ COPY dev-heimdex-for-livecommerce/services/worker_sdk/pyproject.toml .
 COPY dev-heimdex-for-livecommerce/services/worker_sdk/src/ src/
 RUN pip install --no-cache-dir build && python -m build --wheel --outdir /dist
 
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+# cuDNN is required by onnxruntime-gpu for GPU inference (CUDAExecutionProvider).
+# The plain '-runtime' tag does NOT include cuDNN — worker falls back to CPU without it.
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
