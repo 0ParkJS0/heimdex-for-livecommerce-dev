@@ -1,5 +1,7 @@
 import {
   ApiError,
+  ReprocessJobResponse,
+  ReprocessParams,
   VideoFilters,
   VideoListResponse,
   VideoScenesResponse,
@@ -32,6 +34,51 @@ async function apiGet<T>(
     if (!response.ok) {
       const body = await response.json().catch(() => null);
       throw ApiError.fromResponse(response.status, body);
+    }
+
+    return response.json();
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    throw new ApiError(
+      "network",
+      0,
+      "Network error. Check your connection and try again.",
+    );
+  }
+}
+
+async function apiPost<T>(
+  endpoint: string,
+  body: unknown,
+  getToken?: TokenGetter,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (getToken) {
+    try {
+      const token = await getToken();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch (err) {
+      console.warn("[Heimdex] Failed to get access token:", err);
+    }
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null);
+      throw ApiError.fromResponse(response.status, errorBody);
     }
 
     return response.json();
@@ -98,4 +145,55 @@ export async function getVideoStats(
   getToken?: TokenGetter,
 ): Promise<VideoStats> {
   return apiGet<VideoStats>("/api/videos/stats", getToken);
+}
+
+export async function reprocessScenes(
+  videoId: string,
+  params: ReprocessParams,
+  getToken: TokenGetter,
+): Promise<ReprocessJobResponse> {
+  return apiPost<ReprocessJobResponse>(
+    `/api/videos/${encodeURIComponent(videoId)}/reprocess`,
+    params,
+    getToken,
+  );
+}
+
+export async function getReprocessStatus(
+  videoId: string,
+  getToken: TokenGetter,
+): Promise<ReprocessJobResponse | null> {
+  const headers: Record<string, string> = {};
+
+  try {
+    const token = await getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  } catch (err) {
+    console.warn("[Heimdex] Failed to get access token:", err);
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/videos/${encodeURIComponent(videoId)}/reprocess`, { headers });
+
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      const body = await response.json().catch(() => null);
+      throw ApiError.fromResponse(response.status, body);
+    }
+
+    const text = await response.text();
+    if (!text) return null;
+    return JSON.parse(text);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    throw new ApiError(
+      "network",
+      0,
+      "Network error. Check your connection and try again.",
+    );
+  }
 }

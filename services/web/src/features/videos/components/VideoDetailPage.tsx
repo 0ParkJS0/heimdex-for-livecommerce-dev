@@ -5,14 +5,15 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { useAgent } from "@/features/search/hooks/useAgent";
-import { getVideoScenes } from "@/lib/api/videos";
+import { getVideoScenes, getReprocessStatus, reprocessScenes } from "@/lib/api/videos";
 import { getAgentPlaybackUrl, getAgentThumbnailUrl, getCloudPlaybackUrl, getCloudThumbnailUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { formatTimestamp } from "@/lib/api/utils";
-import type { VideoScene, VideoScenesResponse } from "@/lib/types";
+import type { VideoScene, VideoScenesResponse, ReprocessJobResponse, ReprocessParams } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
+import { ReprocessDialog } from "./ReprocessDialog";
 
 type ViewMode = "overview" | "scenes";
 
@@ -153,12 +154,16 @@ function VideoInfoPanel({
   scenes,
   seekMs,
   seekKey,
+  onReprocessClick,
+  isReprocessing,
 }: {
   videoId: string;
   meta: VideoScenesResponse | null;
   scenes: VideoScene[];
   seekMs?: number | null;
   seekKey?: number;
+  onReprocessClick: () => void;
+  isReprocessing: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const title = meta?.video_title || videoId;
@@ -233,6 +238,15 @@ function VideoInfoPanel({
           sourceType={meta?.source_type ?? "local"}
           webViewLink={meta?.web_view_link}
         />
+        {!isReprocessing && (
+          <button
+            type="button"
+            onClick={onReprocessClick}
+            className="ml-auto rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            장면 재분석
+          </button>
+        )}
       </div>
 
       <dl className="mt-4 space-y-3">
@@ -848,6 +862,9 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
   const [seekMs, setSeekMs] = useState<number | null>(initialT ? Number(initialT) : null);
   const [seekKey, setSeekKey] = useState(initialT ? 1 : 0);
 
+  const [reprocessStatus, setReprocessStatus] = useState<ReprocessJobResponse | null>(null);
+  const [isReprocessDialogOpen, setIsReprocessDialogOpen] = useState(false);
+
   const handleSeekToScene = useCallback((startMs: number) => {
     setSeekMs(startMs);
     setSeekKey((k) => k + 1);
@@ -857,12 +874,16 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
     let cancelled = false;
     setIsLoading(true);
 
-    getVideoScenes(videoId, 200, 0, getAccessToken)
-      .then((res) => {
+    Promise.all([
+      getVideoScenes(videoId, 200, 0, getAccessToken),
+      getReprocessStatus(videoId, getAccessToken),
+    ])
+      .then(([scenesRes, statusRes]) => {
         if (cancelled) return;
-        setMeta(res);
-        setScenes(res.scenes);
-        setTotalScenes(res.total);
+        setMeta(scenesRes);
+        setScenes(scenesRes.scenes);
+        setTotalScenes(scenesRes.total);
+        setReprocessStatus(statusRes);
       })
       .catch(() => {
         if (cancelled) return;
@@ -875,6 +896,43 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
 
     return () => { cancelled = true; };
   }, [videoId, getAccessToken]);
+
+  useEffect(() => {
+    if (!reprocessStatus || (reprocessStatus.status !== "pending" && reprocessStatus.status !== "processing")) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await getReprocessStatus(videoId, getAccessToken);
+        setReprocessStatus(res);
+        if (res?.status === "completed") {
+          const scenesRes = await getVideoScenes(videoId, 200, 0, getAccessToken);
+          setMeta(scenesRes);
+          setScenes(scenesRes.scenes);
+          setTotalScenes(scenesRes.total);
+        }
+      } catch (err) {
+        console.error("Failed to poll reprocess status", err);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [videoId, getAccessToken, reprocessStatus?.status]);
+
+  const handleReprocessSubmit = async (params: ReprocessParams) => {
+    try {
+      const res = await reprocessScenes(videoId, params, getAccessToken);
+      setReprocessStatus(res);
+    } catch (err) {
+      if (err instanceof Error && "status" in err && (err as { status: number }).status === 409) {
+        alert("이미 진행 중인 재분석 작업이 있습니다");
+      } else {
+        alert("재분석 요청에 실패했습니다");
+      }
+      throw err;
+    }
+  };
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -894,6 +952,8 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
       </div>
     );
   }
+
+  const isReprocessing = reprocessStatus?.status === "pending" || reprocessStatus?.status === "processing";
 
   return (
     <div className="mx-auto max-w-6xl pt-4">
@@ -916,9 +976,30 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
         )}
       </div>
 
+      {reprocessStatus && (
+        <div className={cn(
+          "mb-6 rounded-lg p-4 text-sm font-medium",
+          isReprocessing && "bg-yellow-50 text-yellow-800",
+          reprocessStatus.status === "completed" && "bg-green-50 text-green-800",
+          reprocessStatus.status === "failed" && "bg-red-50 text-red-800",
+        )}>
+          {isReprocessing && "장면 재분석 진행 중..."}
+          {reprocessStatus.status === "completed" && `장면 재분석이 완료되었습니다. (${reprocessStatus.scene_count}개 장면)`}
+          {reprocessStatus.status === "failed" && `장면 재분석에 실패했습니다: ${reprocessStatus.error}`}
+        </div>
+      )}
+
       <div className="flex gap-8">
         <div className="w-[45%] flex-shrink-0">
-          <VideoInfoPanel videoId={videoId} meta={meta} scenes={scenes} seekMs={seekMs} seekKey={seekKey} />
+          <VideoInfoPanel
+            videoId={videoId}
+            meta={meta}
+            scenes={scenes}
+            seekMs={seekMs}
+            seekKey={seekKey}
+            onReprocessClick={() => setIsReprocessDialogOpen(true)}
+            isReprocessing={isReprocessing}
+          />
 
           {view === "scenes" && (
             <div className="mt-4">
@@ -966,6 +1047,12 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
           )}
         </div>
       </div>
+
+      <ReprocessDialog
+        isOpen={isReprocessDialogOpen}
+        onClose={() => setIsReprocessDialogOpen(false)}
+        onSubmit={handleReprocessSubmit}
+      />
     </div>
   );
 }

@@ -25,6 +25,7 @@ from app.modules.basket.router import router as basket_router
 from app.modules.thumbnails.router import public_router as thumbnails_public_router
 from app.modules.thumbnails.router import upload_router as thumbnails_upload_router
 from app.modules.videos.router import router as videos_router
+from app.modules.videos.internal_router import router as videos_internal_router
 from app.modules.youtube.router import router as youtube_router
 
 setup_logging()
@@ -362,6 +363,8 @@ if get_settings().drive_connector_enabled:
 
     from app.modules.export.internal_router import router as internal_export_router
     app.include_router(internal_export_router)
+
+    app.include_router(videos_internal_router, prefix="/internal")
 
 
 @app.exception_handler(Exception)

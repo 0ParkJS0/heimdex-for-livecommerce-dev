@@ -17,3 +17,4 @@ from app.modules.basket.models import SceneBasket, SceneBasketItem  # noqa: F401
 from app.modules.export.models import ExportRecord  # noqa: F401
 from app.modules.search.models import SearchEvent  # noqa: F401
 from app.modules.youtube.models import YouTubeChannel, YouTubeVideo  # noqa: F401
+from app.modules.videos.reprocess_models import SceneReprocessJob  # noqa: F401

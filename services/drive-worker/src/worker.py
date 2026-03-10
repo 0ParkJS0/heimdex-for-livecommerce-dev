@@ -1,4 +1,7 @@
+# pyright: reportMissingImports=false
+
 import asyncio
+import json
 import logging
 import shutil
 import signal
@@ -70,9 +73,24 @@ def _make_sqs_callback(api_client, settings):
     endpoints (status updates, token broker, etc.).
     """
     from heimdex_worker_sdk.message_adapters import sqs_to_claimed_processing_file
+    from heimdex_worker_sdk.sqs_consumer import InvalidMessageError
     from src.tasks.process import _process_single_file
+    from src.tasks.resplit import handle_resplit
 
     def callback(message):
+        body = message.body
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError as e:
+                raise InvalidMessageError(f"Invalid SQS message JSON: {e}") from e
+        if not isinstance(body, dict):
+            raise InvalidMessageError("SQS message body must be an object")
+
+        if body.get("type") == "resplit.job_created":
+            handle_resplit(body, api_client, settings)
+            return
+
         # Parse message for org_id (used for per-org concurrency check only)
         sqs_file = sqs_to_claimed_processing_file(message)
         org_id_str = str(sqs_file.org_id)

@@ -6,16 +6,25 @@ Endpoints:
   GET /api/videos/stats    - Summary statistics
   GET /api/videos/{video_id}/scenes - Scenes for a specific video
 """
-from typing import Literal
+from typing import Literal, cast
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.base import get_db_session
 from app.dependencies import get_video_service
 from app.logging_config import get_logger
 from app.modules.auth import get_current_user
+from app.modules.drive.models import DriveConnection
+from app.modules.drive.repository import DriveFileRepository
 from app.modules.tenancy import OrgContext, get_current_org
 from app.modules.users.models import User
+from app.modules.videos.reprocess_repository import ReprocessRepository
+from app.modules.videos.reprocess_models import SceneReprocessJob
 from app.modules.videos.schemas import (
+    ReprocessJobResponse,
+    ReprocessScenesRequest,
     ShortsPlanRequest,
     ShortsPlanResponse,
     VideoListResponse,
@@ -23,10 +32,24 @@ from app.modules.videos.schemas import (
     VideoStats,
 )
 from app.modules.videos.service import VideoService
+from app.modules.youtube.repository import YouTubeVideoRepository
+from app.sqs_producer import publish_resplit_job
 from heimdex_media_contracts.ingest import SourceType
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/videos", tags=["videos"])
+
+
+def _to_reprocess_job_response(job: SceneReprocessJob) -> ReprocessJobResponse:
+    return ReprocessJobResponse(
+        job_id=str(job.id),
+        video_id=job.video_id,
+        status=job.status,
+        scene_params=job.scene_params,
+        scene_count=job.scene_count,
+        error=job.error,
+        created_at=job.created_at.isoformat(),
+    )
 
 
 @router.get("", response_model=VideoListResponse)
@@ -149,3 +172,126 @@ async def generate_shorts_plan(
         max_duration_ms=request.max_duration_ms,
         weights=request.weights,
     )
+
+
+@router.post("/{video_id}/reprocess", response_model=ReprocessJobResponse)
+async def reprocess_video_scenes(
+    video_id: str,
+    request: ReprocessScenesRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    _ = user
+    if request.min_scene_duration_ms >= request.max_scene_duration_ms:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="min_scene_duration_ms must be less than max_scene_duration_ms",
+        )
+
+    repo = ReprocessRepository(db)
+    active = await repo.get_active_for_video(org_ctx.org_id, video_id)
+    if active is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Reprocess job already active for this video",
+        )
+
+    source_type: str
+    proxy_s3_key: str | None = None
+    keyframe_s3_prefix: str = ""
+    audio_s3_key: str = ""
+    library_id: str | None = None
+    video_title: str = video_id
+
+    if video_id.startswith("gd_"):
+        source_type = "gdrive"
+        drive_repo = DriveFileRepository(db)
+        drive_file = await drive_repo.get_by_video_id(org_ctx.org_id, video_id)
+        if drive_file is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found",
+            )
+        proxy_s3_key = drive_file.proxy_s3_key
+        keyframe_s3_prefix = drive_file.keyframe_s3_prefix or ""
+        audio_s3_key = drive_file.audio_s3_key or ""
+        video_title = drive_file.file_name or video_id
+        connection = await db.get(DriveConnection, drive_file.connection_id)
+        if connection is not None:
+            library_id = str(connection.library_id)
+    elif video_id.startswith("yt_"):
+        source_type = "youtube"
+        yt_repo = YouTubeVideoRepository(db)
+        yt_video = await yt_repo.get_by_video_id(org_ctx.org_id, video_id)
+        if yt_video is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Video not found",
+            )
+        proxy_s3_key = getattr(yt_video, "proxy_s3_key", None)
+        keyframe_s3_prefix = getattr(yt_video, "keyframe_s3_prefix", "") or ""
+        audio_s3_key = getattr(yt_video, "audio_s3_key", "") or ""
+        library_id = getattr(yt_video, "library_id", None)
+        video_title = getattr(yt_video, "title", video_id) or video_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported video_id prefix",
+        )
+
+    if not proxy_s3_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Video must be transcoded before reprocessing",
+        )
+
+    if not library_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Video library not found",
+        )
+
+    scene_params = {
+        "min_scene_duration_ms": request.min_scene_duration_ms,
+        "max_scene_duration_ms": request.max_scene_duration_ms,
+        "threshold": request.threshold,
+    }
+
+    job = await repo.create(
+        org_id=org_ctx.org_id,
+        video_id=video_id,
+        source_type=source_type,
+        scene_params=cast(dict[str, object], scene_params),
+        proxy_s3_key=proxy_s3_key,
+    )
+
+    publish_resplit_job(
+        job_id=cast(UUID, job.id),
+        org_id=org_ctx.org_id,
+        video_id=video_id,
+        source_type=source_type,
+        proxy_s3_key=proxy_s3_key,
+        keyframe_s3_prefix=keyframe_s3_prefix,
+        audio_s3_key=audio_s3_key,
+        library_id=library_id,
+        video_title=video_title,
+        scene_params=scene_params,
+    )
+
+    return _to_reprocess_job_response(job)
+
+
+@router.get("/{video_id}/reprocess", response_model=ReprocessJobResponse | None)
+async def get_reprocess_status(
+    video_id: str,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    _ = user
+    repo = ReprocessRepository(db)
+    job = await repo.get_latest_for_video(org_ctx.org_id, video_id)
+    if job is None:
+        return None
+    return _to_reprocess_job_response(job)

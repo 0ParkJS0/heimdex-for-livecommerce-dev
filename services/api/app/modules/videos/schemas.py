@@ -147,3 +147,19 @@ class ShortsPlanResponse(BaseModel):
     total_scenes: int
     eligible_scenes: int
     candidates: list[ShortsCandidateResponse]
+
+
+class ReprocessScenesRequest(BaseModel):
+    min_scene_duration_ms: int = Field(500, ge=500, le=30000)
+    max_scene_duration_ms: int = Field(45000, ge=5000, le=120000)
+    threshold: float = Field(0.3, ge=0.1, le=0.9)
+
+
+class ReprocessJobResponse(BaseModel):
+    job_id: str
+    video_id: str
+    status: str
+    scene_params: dict[str, object]
+    scene_count: int | None = None
+    error: str | None = None
+    created_at: str

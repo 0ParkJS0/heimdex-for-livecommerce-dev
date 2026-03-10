@@ -28,6 +28,7 @@ logger = get_logger(__name__)
 
 _QUEUE_URL_ATTRS = {
     "processing": "sqs_processing_queue_url",
+    "resplit": "sqs_processing_queue_url",
     "caption": "sqs_caption_queue_url",
     "stt": "sqs_stt_queue_url",
     "ocr": "sqs_ocr_queue_url",
@@ -316,6 +317,39 @@ def publish_export_job(
     }
     dedup_id = f"{export_id}:export:{now.strftime('%Y%m%dT%H%M')}"
     _publish("export", body, dedup_id)
+
+
+def publish_resplit_job(
+    *,
+    job_id: UUID,
+    org_id: UUID,
+    video_id: str,
+    source_type: str,
+    proxy_s3_key: str,
+    keyframe_s3_prefix: str,
+    audio_s3_key: str,
+    library_id: str,
+    video_title: str,
+    scene_params: dict[str, Any],
+) -> None:
+    now = datetime.now(timezone.utc)
+    body = {
+        "version": "1",
+        "type": "resplit.job_created",
+        "timestamp": now.isoformat(),
+        "job_id": str(job_id),
+        "org_id": str(org_id),
+        "video_id": video_id,
+        "source_type": source_type,
+        "proxy_s3_key": proxy_s3_key,
+        "keyframe_s3_prefix": keyframe_s3_prefix,
+        "audio_s3_key": audio_s3_key or "",
+        "library_id": library_id,
+        "video_title": video_title,
+        "scene_params": scene_params,
+    }
+    dedup_id = f"{job_id}:resplit:{now.strftime('%Y%m%dT%H%M')}"
+    _publish("resplit", body, dedup_id)
 
 
 def publish_scene_enrichment_jobs(

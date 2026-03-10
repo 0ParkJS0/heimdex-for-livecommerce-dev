@@ -97,3 +97,19 @@ export interface VideoFilters {
   page_size?: number;
   after?: string;
 }
+
+export interface ReprocessParams {
+  min_scene_duration_ms: number;
+  max_scene_duration_ms: number;
+  threshold: number;
+}
+
+export interface ReprocessJobResponse {
+  job_id: string;
+  video_id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  scene_params: ReprocessParams;
+  scene_count: number | null;
+  error: string | null;
+  created_at: string;
+}
