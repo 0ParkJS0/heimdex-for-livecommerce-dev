@@ -21,8 +21,8 @@ jobs:
           host: ${{ secrets.STAGING_HOST }}
           username: ec2-user
           key: ${{ secrets.STAGING_SSH_KEY }}
-          script_stop: true
           command_timeout: 12m
+          # script_stop: true breaks if/else — drone-ssh injects $? checks per-line
           script: |
             set -euo pipefail
 
