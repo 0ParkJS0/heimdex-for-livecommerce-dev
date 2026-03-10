@@ -129,12 +129,18 @@ def handle_resplit(
             scenes=scenes,
         )
 
+        eff_keyframe_prefix = _keyframe_prefix(source_type, org_id, video_id)
+        audio_s3_key = str(message.get("audio_s3_key", ""))
+
         _patch_reprocess_status(
             settings=settings,
             video_id=video_id,
             job_id=job_id,
             status="completed",
             scene_count=indexed_count,
+            org_id=org_id,
+            keyframe_s3_prefix=eff_keyframe_prefix,
+            audio_s3_key=audio_s3_key,
         )
 
         logger.info(
@@ -148,7 +154,7 @@ def handle_resplit(
                 "uploaded_thumbnail_count": uploaded_thumbnails,
                 "uploaded_keyframe_count": uploaded_keyframes,
                 "thumbnail_s3_prefix": _thumbnail_prefix(source_type, org_id, video_id),
-                "keyframe_s3_prefix": _keyframe_prefix(source_type, org_id, video_id),
+                "keyframe_s3_prefix": eff_keyframe_prefix,
             },
         )
     except Exception as e:
@@ -192,6 +198,9 @@ def _patch_reprocess_status(
     status: str,
     scene_count: int | None = None,
     error: str | None = None,
+    org_id: str | None = None,
+    keyframe_s3_prefix: str | None = None,
+    audio_s3_key: str | None = None,
 ) -> None:
     url = f"{settings.drive_api_base_url.rstrip('/')}/internal/videos/{video_id}/reprocess/{job_id}/status"
     body: dict[str, Any] = {"status": status}
@@ -199,6 +208,12 @@ def _patch_reprocess_status(
         body["scene_count"] = scene_count
     if error is not None:
         body["error"] = error
+    if org_id is not None:
+        body["org_id"] = org_id
+    if keyframe_s3_prefix is not None:
+        body["keyframe_s3_prefix"] = keyframe_s3_prefix
+    if audio_s3_key is not None:
+        body["audio_s3_key"] = audio_s3_key
 
     resp = requests.patch(
         url,
