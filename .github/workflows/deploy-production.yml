@@ -146,6 +146,7 @@ jobs:
                   if echo "$DIFF_FILES" | grep -qE '^services/drive-worker/|^services/worker_sdk/'; then DEPLOY_WORKER=true; fi
                   # Shared config changes trigger all
                   if echo "$DIFF_FILES" | grep -qE '^(docker-compose\.yml|\.env\.example|requirements)'; then DEPLOY_API=true; DEPLOY_WEB=true; DEPLOY_WORKER=true; fi
+                fi
               else
                 echo "No new commits. Force-deploying all services."
                 DEPLOY_API=true
@@ -157,6 +158,7 @@ jobs:
               if echo "$SERVICES" | grep -q "api"; then DEPLOY_API=true; fi
               if echo "$SERVICES" | grep -q "web"; then DEPLOY_WEB=true; fi
               if echo "$SERVICES" | grep -q "drive-worker"; then DEPLOY_WORKER=true; fi
+            fi
 
             echo "Deploy API:          $DEPLOY_API"
             echo "Deploy Web:          $DEPLOY_WEB"
