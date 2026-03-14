@@ -228,7 +228,121 @@ describe("usePeople", () => {
       expect(result.current.people.length).toBe(3);
       expect(result.current.error).toBeTruthy();
     });
+  });
 
+  describe("mergePeople", () => {
+    it("should prune stale selectedIds after merge", async () => {
+      const { result } = renderHook(() => usePeople());
 
+      await waitFor(() => {
+        expect(result.current.people.length).toBe(3);
+      });
+
+      // Select person-1 and person-2 (source clusters to be merged)
+      act(() => {
+        result.current.toggleSelection("person-1");
+        result.current.toggleSelection("person-2");
+      });
+
+      expect(result.current.selectedIds.size).toBe(2);
+      expect(result.current.selectedIds.has("person-1")).toBe(true);
+      expect(result.current.selectedIds.has("person-2")).toBe(true);
+
+      // Mock merge response: person-1 and person-2 merged into person-3
+      vi.mocked(peopleApi.mergePeople).mockResolvedValueOnce({
+        target_cluster_id: "person-3",
+        merged_source_ids: ["person-1", "person-2"],
+        label: "Merged Person",
+      });
+
+      // Mock refreshed people list (person-1 and person-2 no longer exist)
+      vi.mocked(peopleApi.getPeople).mockResolvedValueOnce({
+        people: [
+          {
+            person_cluster_id: "person-3",
+            label: "Merged Person",
+            face_count: 10,
+            last_seen_scene_time: "2026-03-15T10:00:00Z",
+            representative_video_id: "video-3",
+            representative_scene_id: "scene-3",
+            is_excluded: false,
+          },
+        ],
+        total: 1,
+      });
+
+      await act(async () => {
+        await result.current.mergePeople({
+          source_cluster_ids: ["person-1", "person-2"],
+          target_cluster_id: "person-3",
+          keep_label: "Merged Person",
+        });
+      });
+
+      // Wait for fetchPeopleList to complete
+      await waitFor(() => {
+        expect(result.current.people.length).toBe(1);
+      });
+
+      // selectedIds should be pruned: person-1 and person-2 removed
+      expect(result.current.selectedIds.size).toBe(0);
+      expect(result.current.selectedIds.has("person-1")).toBe(false);
+      expect(result.current.selectedIds.has("person-2")).toBe(false);
+    });
+
+    it("should keep target cluster in selectedIds after merge", async () => {
+      const { result } = renderHook(() => usePeople());
+
+      await waitFor(() => {
+        expect(result.current.people.length).toBe(3);
+      });
+
+      // Select person-1, person-2, and person-3 (target)
+      act(() => {
+        result.current.toggleSelection("person-1");
+        result.current.toggleSelection("person-2");
+        result.current.toggleSelection("person-3");
+      });
+
+      expect(result.current.selectedIds.size).toBe(3);
+
+      // Mock merge: person-1 and person-2 merged into person-3
+      vi.mocked(peopleApi.mergePeople).mockResolvedValueOnce({
+        target_cluster_id: "person-3",
+        merged_source_ids: ["person-1", "person-2"],
+        label: "Merged Person",
+      });
+
+      vi.mocked(peopleApi.getPeople).mockResolvedValueOnce({
+        people: [
+          {
+            person_cluster_id: "person-3",
+            label: "Merged Person",
+            face_count: 10,
+            last_seen_scene_time: "2026-03-15T10:00:00Z",
+            representative_video_id: "video-3",
+            representative_scene_id: "scene-3",
+            is_excluded: false,
+          },
+        ],
+        total: 1,
+      });
+
+      await act(async () => {
+        await result.current.mergePeople({
+          source_cluster_ids: ["person-1", "person-2"],
+          target_cluster_id: "person-3",
+          keep_label: "Merged Person",
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.people.length).toBe(1);
+      });
+
+      // person-3 (target) should still be selected
+      expect(result.current.selectedIds.size).toBe(1);
+      expect(result.current.selectedIds.has("person-3")).toBe(true);
+    });
   });
 });

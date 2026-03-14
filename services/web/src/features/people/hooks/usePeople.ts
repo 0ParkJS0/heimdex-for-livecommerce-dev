@@ -235,6 +235,13 @@ export function usePeople(): UsePeopleReturn {
               : p,
           );
         });
+        // Prune stale selectedIds — remove any IDs that no longer exist
+        // (source clusters were merged away)
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          sourceIds.forEach((id) => next.delete(id));
+          return next;
+        });
         // Refetch full people list to get updated face_count,
         // representative scenes, and other server-computed fields
         // that the merge response doesn't include.
