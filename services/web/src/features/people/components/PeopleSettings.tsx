@@ -254,6 +254,7 @@ function SelectedPersonCard({
   /** Monotonic counter — increment to force video list re-fetch. */
   refreshTrigger: number;
 }) {
+  const INITIAL_VIDEO_COUNT = 5;
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(person.label ?? "");
   const [videoFiles, setVideoFiles] = useState<PersonVideoItem[]>([]);
@@ -262,6 +263,7 @@ function SelectedPersonCard({
   const [headerUseFallback, setHeaderUseFallback] = useState(false);
   const [excludedVideoIds, setExcludedVideoIds] = useState<Set<string>>(new Set());
   const [timelineVideos, setTimelineVideos] = useState<PersonTimelineVideo[]>([]);
+  const [showAllVideos, setShowAllVideos] = useState(false);
   const router = useRouter();
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -278,6 +280,10 @@ function SelectedPersonCard({
       inputRef.current.select();
     }
   }, [isEditing]);
+
+  useEffect(() => {
+    setShowAllVideos(false);
+  }, [person.person_cluster_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -419,41 +425,61 @@ function SelectedPersonCard({
         ) : videoFiles.length === 0 ? (
           <p className="py-2 text-xs text-gray-400">연관된 영상이 없습니다.</p>
         ) : (
-          videoFiles.slice(0, 7).map((video) => {
-            const isChecked = excludedVideoIds.has(video.video_id);
-            const timeline = timelineVideos.find((t) => t.video_id === video.video_id);
-            return (
-              <div key={video.video_id} className="space-y-0.5 px-1 py-1">
-                <button
-                  type="button"
-                  onClick={() => toggleVideo(video.video_id)}
-                  className="flex w-full items-center justify-between rounded hover:bg-gray-50"
-                >
-                  <span className="truncate text-sm text-gray-700">
-                    {video.video_title || video.video_id}
-                  </span>
-                  <div
-                    className={cn(
-                      "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded transition-colors",
-                      isChecked
-                        ? "bg-indigo-500"
-                        : "border border-gray-300 bg-white",
+          <>
+            <div className={showAllVideos && videoFiles.length > INITIAL_VIDEO_COUNT ? "max-h-[400px] overflow-y-auto" : ""}>
+              {(showAllVideos ? videoFiles : videoFiles.slice(0, INITIAL_VIDEO_COUNT)).map((video) => {
+                const isChecked = excludedVideoIds.has(video.video_id);
+                const timeline = timelineVideos.find((t) => t.video_id === video.video_id);
+                return (
+                  <div key={video.video_id} className="space-y-0.5 px-1 py-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleVideo(video.video_id)}
+                      className="flex w-full items-center justify-between rounded hover:bg-gray-50"
+                    >
+                      <span className="truncate text-sm text-gray-700">
+                        {video.video_title || video.video_id}
+                      </span>
+                      <div
+                        className={cn(
+                          "flex h-5 w-5 flex-shrink-0 items-center justify-center rounded transition-colors",
+                          isChecked
+                            ? "bg-indigo-500"
+                            : "border border-gray-300 bg-white",
+                        )}
+                      >
+                        {isChecked && <CheckIcon />}
+                      </div>
+                    </button>
+                    {timeline && timeline.scenes.length > 0 && (
+                      <TimelineBar
+                        scenes={timeline.scenes}
+                        videoId={video.video_id}
+                        videoTitle={video.video_title}
+                        onSceneClick={(vid, ms) => router.push(`/videos/${vid}?t=${ms}`)}
+                      />
                     )}
-                  >
-                    {isChecked && <CheckIcon />}
                   </div>
-                </button>
-                {timeline && timeline.scenes.length > 0 && (
-                  <TimelineBar
-                    scenes={timeline.scenes}
-                    videoId={video.video_id}
-                    videoTitle={video.video_title}
-                    onSceneClick={(vid, ms) => router.push(`/videos/${vid}?t=${ms}`)}
-                  />
-                )}
-              </div>
-            );
-          })
+                );
+              })}
+            </div>
+            {videoFiles.length > INITIAL_VIDEO_COUNT && !showAllVideos && (
+              <button
+                onClick={() => setShowAllVideos(true)}
+                className="mt-2 w-full py-1 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                더보기 ({videoFiles.length - INITIAL_VIDEO_COUNT}개 더)
+              </button>
+            )}
+            {showAllVideos && (
+              <button
+                onClick={() => setShowAllVideos(false)}
+                className="mt-2 w-full py-1 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                접기
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
