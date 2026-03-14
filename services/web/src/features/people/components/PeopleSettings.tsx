@@ -702,22 +702,32 @@ function PeopleGridPagination({
 }
 
 function BulkDeleteDialog({
-  count,
+  people,
   isDeleting,
   onConfirm,
   onCancel,
 }: {
-  count: number;
+  people: PersonResponse[];
   isDeleting: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const count = people.length;
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
       <div className="mx-4 w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
         <h2 className="mb-2 text-lg font-semibold text-gray-900">
           {count}명의 인물을 삭제할까요?
         </h2>
+        {people.length > 0 && (
+          <ul className="mb-4 max-h-40 overflow-y-auto rounded-md border border-gray-100 bg-gray-50 py-2 text-sm text-gray-700">
+            {people.map((p) => (
+              <li key={p.person_cluster_id} className="px-3 py-1">
+                {p.label ?? "이름 없음"}
+              </li>
+            ))}
+          </ul>
+        )}
         <p className="mb-6 text-sm text-gray-500">이 작업은 되돌릴 수 없습니다.</p>
         <div className="flex justify-end gap-3">
           <button
@@ -1210,7 +1220,7 @@ export function PeopleSettings() {
       )}
       {bulkDeleteOpen && (
         <BulkDeleteDialog
-          count={selectedIds.size}
+          people={selectedPeople}
           isDeleting={isDeleting}
           onCancel={() => setBulkDeleteOpen(false)}
           onConfirm={handleBulkDelete}
