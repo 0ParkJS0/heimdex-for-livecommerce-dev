@@ -26,6 +26,21 @@ import { DeletePersonDialog } from "./DeletePersonDialog";
 import { MergeConfirmDialog } from "./MergeConfirmDialog";
 import { TimelineBar } from "./TimelineBar";
 
+/** Format ISO 8601 timestamp to Korean relative time string */
+function formatRelativeTime(isoTimestamp: string | null | undefined): string | null {
+  if (!isoTimestamp) return null;
+  const diffMs = Date.now() - new Date(isoTimestamp).getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "방금 전";
+  if (diffMins < 60) return `${diffMins}분 전`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}시간 전`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}일 전`;
+  const diffMonths = Math.floor(diffDays / 30);
+  return `${diffMonths}개월 전`;
+}
+
 function PencilIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -175,7 +190,7 @@ function PersonAvatar({
       videoId={person.representative_video_id}
       sceneId={person.representative_scene_id}
       label={person.label}
-      badge={`${person.face_count}개 장면`}
+      badge={[`${person.face_count}개 장면`, formatRelativeTime(person.last_seen_scene_time)].filter(Boolean).join(" · ")}
       disabled={isDragging || isDragActive || isOver}
     >
       <div
@@ -374,21 +389,26 @@ function SelectedPersonCard({
             placeholder="이름 입력..."
             className="flex-1 rounded border border-indigo-300 px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setEditValue(person.label ?? "");
-              setIsEditing(true);
-            }}
-            className="flex flex-1 items-center gap-1.5"
-          >
-            <span className={cn("text-sm font-medium", hasLabel ? "text-gray-900" : "text-indigo-500")}>
-              {displayName}
-            </span>
-            <PencilIcon />
-          </button>
-        )}
+         ) : (
+           <div className="flex flex-1 items-center gap-1.5">
+             <button
+               type="button"
+               onClick={() => {
+                 setEditValue(person.label ?? "");
+                 setIsEditing(true);
+               }}
+               className="flex flex-1 items-center gap-1.5"
+             >
+               <span className={cn("text-sm font-medium", hasLabel ? "text-gray-900" : "text-indigo-500")}>
+                 {displayName}
+               </span>
+               <PencilIcon />
+             </button>
+             {person.last_seen_scene_time && (
+               <span className="text-xs text-gray-400">{formatRelativeTime(person.last_seen_scene_time)}</span>
+             )}
+           </div>
+         )}
       </div>
 
       <div className="space-y-1">
@@ -440,6 +460,139 @@ function SelectedPersonCard({
   );
 }
 
+interface PeopleGridPaginationProps {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}
+
+function PeopleGridPagination({
+  currentPage,
+  totalPages,
+  onPageChange,
+}: PeopleGridPaginationProps) {
+  if (totalPages <= 1) return null;
+
+  const pages = useMemo(() => {
+    const result: (number | "ellipsis")[] = [];
+    const maxVisible = 5;
+
+    if (totalPages <= maxVisible + 2) {
+      for (let i = 1; i <= totalPages; i++) result.push(i);
+    } else {
+      result.push(1);
+
+      let start = Math.max(2, currentPage - 1);
+      let end = Math.min(totalPages - 1, currentPage + 1);
+
+      if (currentPage <= 3) {
+        start = 2;
+        end = Math.min(maxVisible, totalPages - 1);
+      } else if (currentPage >= totalPages - 2) {
+        start = Math.max(2, totalPages - maxVisible + 1);
+        end = totalPages - 1;
+      }
+
+      if (start > 2) result.push("ellipsis");
+      for (let i = start; i <= end; i++) result.push(i);
+      if (end < totalPages - 1) result.push("ellipsis");
+
+      result.push(totalPages);
+    }
+    return result;
+  }, [currentPage, totalPages]);
+
+  const btnBase =
+    "inline-flex h-8 w-8 items-center justify-center rounded text-sm transition-colors";
+
+  return (
+    <nav className="mt-6 flex items-center justify-center gap-1">
+      <button
+        type="button"
+        disabled={currentPage === 1}
+        onClick={() => onPageChange(1)}
+        className={cn(
+          btnBase,
+          currentPage === 1
+            ? "cursor-not-allowed text-gray-300"
+            : "text-gray-500 hover:bg-gray-100",
+        )}
+        aria-label="처음"
+      >
+        &laquo;
+      </button>
+      <button
+        type="button"
+        disabled={currentPage === 1}
+        onClick={() => onPageChange(currentPage - 1)}
+        className={cn(
+          btnBase,
+          currentPage === 1
+            ? "cursor-not-allowed text-gray-300"
+            : "text-gray-500 hover:bg-gray-100",
+        )}
+        aria-label="이전"
+      >
+        &lsaquo;
+      </button>
+
+      {pages.map((p, i) =>
+        p === "ellipsis" ? (
+          <span
+            key={`ell-${i}`}
+            className="inline-flex h-8 w-8 items-center justify-center text-sm text-gray-400"
+          >
+            &hellip;
+          </span>
+        ) : (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onPageChange(p)}
+            className={cn(
+              btnBase,
+              currentPage === p
+                ? "bg-indigo-500 font-medium text-white"
+                : "text-gray-600 hover:bg-gray-100",
+            )}
+          >
+            {p}
+          </button>
+        ),
+      )}
+
+      <button
+        type="button"
+        disabled={currentPage === totalPages}
+        onClick={() => onPageChange(currentPage + 1)}
+        className={cn(
+          btnBase,
+          currentPage === totalPages
+            ? "cursor-not-allowed text-gray-300"
+            : "text-gray-500 hover:bg-gray-100",
+        )}
+        aria-label="다음"
+      >
+        &rsaquo;
+      </button>
+      <button
+        type="button"
+        disabled={currentPage === totalPages}
+        onClick={() => onPageChange(totalPages)}
+        className={cn(
+          btnBase,
+          currentPage === totalPages
+            ? "cursor-not-allowed text-gray-300"
+            : "text-gray-500 hover:bg-gray-100",
+        )}
+        aria-label="마지막"
+      >
+        &raquo;
+      </button>
+    </nav>
+  );
+}
+
 export function PeopleSettings() {
   const {
     people,
@@ -477,6 +630,9 @@ export function PeopleSettings() {
     }),
   );
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 24;
+
   const filteredPeople = useMemo(() => {
     if (!searchQuery.trim()) return people;
     const q = searchQuery.trim().toLowerCase();
@@ -486,6 +642,21 @@ export function PeopleSettings() {
         p.person_cluster_id.toLowerCase().includes(q),
     );
   }, [people, searchQuery]);
+
+  const totalPages = Math.ceil(filteredPeople.length / PAGE_SIZE);
+  const paginatedPeople = filteredPeople.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredPeople.length / PAGE_SIZE));
+    if (currentPage > maxPage) setCurrentPage(maxPage);
+  }, [filteredPeople.length, currentPage]);
 
   const selectedPeople = useMemo(
     () => people.filter((p) => selectedIds.has(p.person_cluster_id)),
@@ -665,7 +836,7 @@ export function PeopleSettings() {
                   onDragCancel={handleDragCancel}
                 >
                   <div className="grid grid-cols-5 gap-4">
-                    {filteredPeople.map((person) => (
+                    {paginatedPeople.map((person) => (
                       <PersonAvatar
                         key={person.person_cluster_id}
                         person={person}
@@ -677,6 +848,13 @@ export function PeopleSettings() {
                       />
                     ))}
                   </div>
+                  {totalPages > 1 && (
+                    <PeopleGridPagination
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      onPageChange={setCurrentPage}
+                    />
+                  )}
                   <DragOverlay dropAnimation={null}>
                     {activeDragPerson ? (
                       <div className="flex flex-col items-center gap-1 opacity-80">
