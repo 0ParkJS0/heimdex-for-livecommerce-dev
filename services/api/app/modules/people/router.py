@@ -22,6 +22,8 @@ from app.modules.people.repository import (
 )
 from app.modules.face.repository import FaceRepository
 from app.modules.people.schemas import (
+    BulkDeleteRequest,
+    BulkDeleteResponse,
     ExcludePreferencesResponse,
     MergePersonRequest,
     MergePersonResponse,
@@ -372,6 +374,111 @@ async def delete_person(
     )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResponse)
+async def bulk_delete_people(
+    request: BulkDeleteRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    people_repo: PeopleClusterLabelRepository = Depends(get_people_cluster_label_repository),
+    exclude_repo: PeopleExcludePreferenceRepository = Depends(get_people_exclude_preference_repository),
+    video_excl_repo: PeopleVideoExclusionRepository = Depends(get_people_video_exclusion_repository),
+    scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Bulk delete multiple person clusters. Best-effort: failures don't rollback."""
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    org_id_str = str(org_ctx.org_id)
+    deleted_ids: list[str] = []
+    failed_ids: list[str] = []
+
+    logger.info(
+        "bulk_delete_people_request",
+        user_id=str(user.id),
+        org_id=org_id_str,
+        cluster_count=len(request.person_cluster_ids),
+    )
+
+    for person_cluster_id in request.person_cluster_ids:
+        try:
+            # 1. Delete cluster label from Postgres
+            deleted_label = await people_repo.delete_by_cluster_id(
+                org_ctx.org_id, person_cluster_id
+            )
+
+            # 2. Delete all exclude preferences for this cluster
+            exclude_count = await exclude_repo.delete_by_cluster_id(
+                org_ctx.org_id, person_cluster_id
+            )
+
+            # 3. Delete per-video exclusions for this cluster
+            video_excl_count = await video_excl_repo.delete_by_cluster_id(
+                org_ctx.org_id, person_cluster_id
+            )
+
+            # 4. Remove cluster_id from OpenSearch scene documents
+            try:
+                await scene_opensearch.remove_person_cluster_id(
+                    org_id_str, person_cluster_id
+                )
+            except Exception:
+                logger.exception(
+                    "bulk_delete_opensearch_cleanup_failed",
+                    org_id=org_id_str,
+                    person_cluster_id=person_cluster_id,
+                )
+
+            # 5. Delete face thumbnail file
+            try:
+                thumbnail_dir = FilePath(settings.thumbnail_storage_dir)
+                face_path = thumbnail_dir / org_id_str / "faces" / f"{person_cluster_id}.jpg"
+                if face_path.exists():
+                    face_path.unlink()
+            except Exception:
+                logger.exception(
+                    "bulk_delete_thumbnail_cleanup_failed",
+                    org_id=org_id_str,
+                    person_cluster_id=person_cluster_id,
+                )
+
+            deleted_ids.append(person_cluster_id)
+            logger.debug(
+                "bulk_delete_person_success",
+                org_id=org_id_str,
+                person_cluster_id=person_cluster_id,
+            )
+
+        except Exception:
+            failed_ids.append(person_cluster_id)
+            logger.exception(
+                "bulk_delete_person_failed",
+                org_id=org_id_str,
+                person_cluster_id=person_cluster_id,
+            )
+
+    await db.commit()
+
+    logger.info(
+        "bulk_delete_people_complete",
+        org_id=org_id_str,
+        deleted_count=len(deleted_ids),
+        failed_count=len(failed_ids),
+        deleted_ids=deleted_ids,
+        failed_ids=failed_ids,
+    )
+
+    return BulkDeleteResponse(
+        deleted_ids=deleted_ids,
+        failed_ids=failed_ids,
+        total_deleted=len(deleted_ids),
+    )
 
 
 @router.get("/{person_cluster_id}/videos", response_model=PersonVideosResponse)

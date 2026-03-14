@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     search_page_size: int = 20
     ocr_search_enabled: bool = True
     ocr_bm25_boost: float = 0.6
-    opensearch_facet_size: int = 100
+    opensearch_facet_size: int = 500
 
     
     # OpenSearch bulk refresh policy: "true" (default, sync), "false" (async), or "wait_for".
