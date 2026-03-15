@@ -178,6 +178,17 @@ describe("SceneCard speaker_transcript rendering", () => {
     expect(screen.getByText("안녕하세요 여러분")).toBeInTheDocument();
   });
 
+  it("renders absolute timestamp (scene start + speaker offset)", () => {
+    const scene = {
+      ...baseScene,
+      start_ms: 61000, // 00:01:01
+      speaker_transcript: "SPEAKER_00 [0:05]: 안녕하세요",
+    };
+    render(<SceneCard {...defaultCardProps} scene={scene} />);
+    // 00:01:01 + 0:05 = 00:01:06
+    expect(screen.getByText("00:01:06")).toBeInTheDocument();
+  });
+
   it("shows max 2 speaker entries", () => {
     const scene = {
       ...baseScene,

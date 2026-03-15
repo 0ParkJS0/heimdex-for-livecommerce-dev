@@ -21,12 +21,16 @@ function formatTimestampHMS(ms: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function normalizeTimestampToHMS(ts: string): string {
-  const parts = ts.split(":");
+function speakerTimestampToAbsoluteHMS(ts: string, sceneStartMs: number): string {
+  const parts = ts.split(":").map(Number);
+  let offsetSeconds: number;
   if (parts.length === 2) {
-    return `00:${parts[0].padStart(2, "0")}:${parts[1]}`;
+    offsetSeconds = parts[0] * 60 + parts[1];
+  } else {
+    offsetSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
   }
-  return `${parts[0].padStart(2, "0")}:${parts[1]}:${parts[2]}`;
+  const absoluteMs = sceneStartMs + offsetSeconds * 1000;
+  return formatTimestampHMS(absoluteMs);
 }
 
 function BackArrowIcon() {
@@ -130,7 +134,7 @@ export function SceneCard({
                   {entry.label}
                 </span>
                 <span className="flex-shrink-0 text-xs text-gray-400">
-                  {entry.timestamp ? normalizeTimestampToHMS(entry.timestamp) : ""}
+                  {entry.timestamp ? speakerTimestampToAbsoluteHMS(entry.timestamp, scene.start_ms) : ""}
                 </span>
                 <span className="text-xs text-gray-600 line-clamp-3">
                   {entry.text.length > 100 ? entry.text.slice(0, 100) + "…" : entry.text}
