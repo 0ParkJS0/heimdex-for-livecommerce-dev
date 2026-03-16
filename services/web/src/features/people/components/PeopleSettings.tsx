@@ -27,6 +27,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { PersonIcon } from "@/components/icons";
 import { ScenePreviewTooltip } from "@/components/ScenePreviewTooltip";
+import { AvatarThumbnail } from "@/components/people/AvatarThumbnail";
 import { DeletePersonDialog } from "./DeletePersonDialog";
 import { MergeConfirmDialog } from "./MergeConfirmDialog";
 import { TimelineBar } from "./TimelineBar";
@@ -128,59 +129,6 @@ function GripVerticalIcon({ className }: { className?: string }) {
     <svg className={className} fill="currentColor" viewBox="0 0 20 20">
       <path d="M7 2a1 1 0 110 2H6a1 1 0 010-2h1zm3 0a1 1 0 110 2h-1a1 1 0 010-2h1zM7 7a1 1 0 110 2H6a1 1 0 010-2h1zm3 0a1 1 0 110 2h-1a1 1 0 010-2h1zM7 12a1 1 0 110 2H6a1 1 0 010-2h1zm3 0a1 1 0 110 2h-1a1 1 0 010-2h1z" />
     </svg>
-  );
-}
-
-/** Thumbnail content shared between PersonAvatar and DragOverlay */
-function AvatarThumbnail({
-  person,
-  agentAvailable,
-  className,
-}: {
-  person: PersonResponse;
-  agentAvailable: boolean;
-  className?: string;
-}) {
-  const [imgError, setImgError] = useState(false);
-  const faceThumbnailUrl = getFaceThumbnailUrl(person.person_cluster_id);
-  const sceneThumbnailUrl =
-    person.representative_video_id && person.representative_scene_id
-      ? getCloudThumbnailUrl(person.representative_video_id, person.representative_scene_id)
-      : null;
-  const [useFallback, setUseFallback] = useState(false);
-  const thumbnailUrl = !useFallback ? faceThumbnailUrl : sceneThumbnailUrl;
-
-  return (
-    <div
-      className={cn(
-        "flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl bg-gray-100 transition-all group-hover:brightness-90",
-        className,
-      )}
-    >
-      {thumbnailUrl && !imgError ? (
-        <img
-          src={thumbnailUrl}
-          alt={person.label ?? "인물"}
-          className="h-full w-full object-cover"
-          onError={() => {
-            if (!useFallback && sceneThumbnailUrl) {
-              setUseFallback(true);
-            } else {
-              setImgError(true);
-            }
-          }}
-        />
-      ) : (
-        <div className="relative flex h-full w-full items-center justify-center">
-          <PersonIcon className="h-12 w-12 text-gray-400" />
-          {!agentAvailable && (
-            <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-gray-500/80 px-1.5 py-0.5 text-[8px] font-medium leading-tight text-white">
-              오프라인
-            </span>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 

@@ -394,6 +394,54 @@ class SceneFacetsMixin:
             for bucket in buckets
         ]
 
+    async def get_people_by_video(
+        self,
+        org_id: str,
+        video_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return person clusters appearing in scenes of a specific video.
+
+        Aggregates ``people_cluster_ids`` across all scenes that belong to
+        *video_id* within the given org. Each bucket contains the cluster
+        ID and the number of scenes (``face_count``) in which that person
+        appears within this video.
+
+        Returns ``[{"person_cluster_id": str, "face_count": int}, ...]``
+        sorted by face_count descending (OpenSearch default for terms agg).
+        """
+        body: dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"org_id": org_id}},
+                        {"term": {"video_id": video_id}},
+                        {"term": {"content_type": "video"}},
+                        {"exists": {"field": "people_cluster_ids"}},
+                    ],
+                }
+            },
+            "size": 0,
+            "aggs": {
+                "by_person": {
+                    "terms": {
+                        "field": "people_cluster_ids",
+                        "size": self.settings.opensearch_facet_size,
+                    },
+                },
+            },
+        }
+
+        response = await self.client.search(index=self.alias_name, body=body)
+        buckets = response["aggregations"]["by_person"]["buckets"]
+
+        return [
+            {
+                "person_cluster_id": bucket["key"],
+                "face_count": int(bucket["doc_count"]),
+            }
+            for bucket in buckets
+        ]
+
     async def get_person_timeline(
         self,
         org_id: str,

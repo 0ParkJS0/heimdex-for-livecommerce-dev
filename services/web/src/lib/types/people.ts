@@ -81,3 +81,9 @@ export interface BulkDeleteResponse {
   failed_ids: string[];
   total_deleted: number;
 }
+
+export interface VideoPeopleResponse {
+  video_id: string;
+  people: PersonResponse[];
+  total: number;
+}

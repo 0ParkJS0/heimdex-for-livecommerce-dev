@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { useAgent } from "@/features/search/hooks/useAgent";
@@ -14,10 +13,11 @@ import { cn } from "@/lib/utils";
 import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 import { ReprocessDialog } from "./ReprocessDialog";
+import { VideoPeoplePanel } from "./VideoPeoplePanel";
 import { useOrgSettings } from "@/lib/orgSettings";
 import { getDetailThumbnailClass, getThumbnailAspectClass, type ThumbnailAspectRatio } from "@/lib/thumbnailUtils";
 
-type ViewMode = "overview" | "scenes";
+type ViewMode = "overview" | "scenes" | "people";
 
 const SCENES_PER_PAGE = 10;
 
@@ -268,11 +268,13 @@ function OverviewPanel({
   allTags,
   videoId,
   onSwitchToScenes,
+  onSwitchToPeople,
 }: {
   scenes: VideoScene[];
   allTags: string[];
   videoId: string;
   onSwitchToScenes: () => void;
+  onSwitchToPeople: () => void;
 }) {
   const router = useRouter();
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
@@ -327,13 +329,14 @@ function OverviewPanel({
           <FilmIcon />
           영상 장면 분석
         </button>
-        <Link
-          href="/settings/people"
+        <button
+          type="button"
+          onClick={onSwitchToPeople}
           className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
         >
           <PersonIcon />
           인물 라벨 관리
-        </Link>
+        </button>
         <button
           type="button"
           onClick={() => router.push(`/shorts/create?videoId=${videoId}`)}
@@ -972,6 +975,14 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
             <span>&gt;</span>
             <span className="text-gray-700">영상 장면 분석</span>
           </>
+        ) : view === "people" ? (
+          <>
+            <button type="button" onClick={() => setView("overview")} className="hover:text-gray-700">
+              {videoTitle}
+            </button>
+            <span>&gt;</span>
+            <span className="text-gray-700">인물 관리</span>
+          </>
         ) : (
           <span className="text-gray-700">{videoTitle}</span>
         )}
@@ -1023,8 +1034,9 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
               allTags={allTags}
               videoId={videoId}
               onSwitchToScenes={() => setView("scenes")}
+              onSwitchToPeople={() => setView("people")}
             />
-          ) : (
+          ) : view === "scenes" ? (
             <ScenesPanel
               scenes={scenes}
               totalScenes={totalScenes}
@@ -1034,6 +1046,11 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
               activeSceneMs={seekMs}
               getToken={getAccessToken}
               aspectRatio={aspectRatio}
+            />
+          ) : (
+            <VideoPeoplePanel
+              videoId={videoId}
+              onSwitchToOverview={() => setView("overview")}
             />
           )}
         </div>
