@@ -1,7 +1,7 @@
 """Add settings JSONB column to orgs table.
 
-Revision ID: 035
-Revises: 034
+Revision ID: 035_add_org_settings
+Revises: 034_create_scene_reprocess_jobs
 Create Date: 2026-03-16
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "035"
-down_revision = "034"
+revision = "035_add_org_settings"
+down_revision = "034_create_scene_reprocess_jobs"
 branch_labels = None
 depends_on = None
 
