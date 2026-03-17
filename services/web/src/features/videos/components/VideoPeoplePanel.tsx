@@ -254,8 +254,8 @@ export function VideoPeoplePanel({
         </div>
       ) : (
         <>
-          {/* Avatar Grid */}
-          <div className="mt-6 grid grid-cols-4 gap-5">
+          {/* Avatar Grid — 3 visible rows, scroll for rest */}
+          <div className="mt-6 grid max-h-[380px] grid-cols-4 gap-5 overflow-y-auto">
             {people.map((person) => (
               <VideoPersonAvatar
                 key={person.person_cluster_id}
