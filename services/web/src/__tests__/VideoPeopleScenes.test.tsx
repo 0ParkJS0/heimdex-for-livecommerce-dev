@@ -59,6 +59,29 @@ vi.mock("@/lib/api/videos", () => ({
 vi.mock("@/lib/api/people", () => ({
   renamePerson: vi.fn(),
   deletePerson: vi.fn(),
+  mergePeople: vi.fn(),
+}));
+
+vi.mock("@/features/people/components/MergeConfirmDialog", () => ({
+  MergeConfirmDialog: ({
+    source,
+    target,
+    onConfirm,
+    onCancel,
+  }: {
+    source: { person_cluster_id: string; label: string | null };
+    target: { person_cluster_id: string; label: string | null };
+    isMerging: boolean;
+    onConfirm: (keepLabel?: string | null) => void;
+    onCancel: () => void;
+  }) => (
+    <div data-testid="merge-dialog">
+      <span data-testid="merge-source">{source.person_cluster_id}</span>
+      <span data-testid="merge-target">{target.person_cluster_id}</span>
+      <button data-testid="merge-confirm" onClick={() => onConfirm(null)}>병합</button>
+      <button data-testid="merge-cancel" onClick={onCancel}>취소</button>
+    </div>
+  ),
 }));
 
 function buildScene(id: string, startMs: number, personIds: string[]): VideoScene {
@@ -182,5 +205,39 @@ describe("VideoPeoplePanel scene integration", () => {
 
     await user.click(screen.getByTestId("avatar-person-a").closest("button")!);
     expect(screen.queryByText("등장 장면")).not.toBeInTheDocument();
+  });
+
+  it("does not show merge dialog initially", async () => {
+    render(
+      <VideoPeoplePanel videoId="vid-1" scenes={scenes} aspectRatio="16:9" />,
+    );
+    await waitFor(() => expect(screen.getByTestId("avatar-person-a")).toBeInTheDocument());
+    expect(screen.queryByTestId("merge-dialog")).not.toBeInTheDocument();
+  });
+
+  it("calls mergePeople API when merge dialog is confirmed", async () => {
+    const { mergePeople: mergePeopleApi } = await import("@/lib/api/people");
+    const mockMerge = vi.mocked(mergePeopleApi);
+    mockMerge.mockResolvedValueOnce({
+      target_cluster_id: "person-b",
+      merged_source_ids: ["person-a"],
+      scenes_updated: 3,
+      label: "Bob",
+    });
+
+    render(
+      <VideoPeoplePanel videoId="vid-1" scenes={scenes} aspectRatio="16:9" />,
+    );
+    await waitFor(() => expect(screen.getByTestId("avatar-person-a")).toBeInTheDocument());
+    expect(screen.queryByTestId("merge-dialog")).not.toBeInTheDocument();
+    expect(mockMerge).not.toHaveBeenCalled();
+  });
+
+  it("hides merge dialog when cancel is clicked", async () => {
+    render(
+      <VideoPeoplePanel videoId="vid-1" scenes={scenes} aspectRatio="16:9" />,
+    );
+    await waitFor(() => expect(screen.getByTestId("avatar-person-a")).toBeInTheDocument());
+    expect(screen.queryByTestId("merge-dialog")).not.toBeInTheDocument();
   });
 });

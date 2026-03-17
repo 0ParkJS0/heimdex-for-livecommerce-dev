@@ -2,11 +2,22 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { useAgent } from "@/features/search/hooks/useAgent";
 import { useVideoPeople } from "../hooks/useVideoPeople";
 import { VideoPersonAvatar } from "./VideoPersonAvatar";
 import { PersonSceneGrid } from "./PersonSceneGrid";
 import { DeletePersonDialog } from "@/features/people/components/DeletePersonDialog";
+import { MergeConfirmDialog } from "@/features/people/components/MergeConfirmDialog";
+import { AvatarThumbnail } from "@/components/people/AvatarThumbnail";
 import { getFaceThumbnailUrl, getCloudThumbnailUrl } from "@/lib/agent";
 import { PersonIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
@@ -61,7 +72,6 @@ function InlinePersonDetail({
       : null;
   const thumbnailUrl = !useFallback ? faceUrl : sceneUrl;
 
-  // Reset edit state when person changes
   useEffect(() => {
     setIsEditing(false);
     setEditValue(person.label ?? "");
@@ -180,12 +190,23 @@ export function VideoPeoplePanel({
     isRenaming,
     deletePerson,
     isDeleting,
+    mergePeople,
+    isMerging,
   } = useVideoPeople(videoId);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
-  // Clear selection when people list changes (e.g. after delete)
+  const [activeDragPerson, setActiveDragPerson] = useState<PersonResponse | null>(null);
+  const [mergeSource, setMergeSource] = useState<PersonResponse | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<PersonResponse | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
+
   useEffect(() => {
     if (selectedId && !people.find((p) => p.person_cluster_id === selectedId)) {
       setSelectedId(null);
@@ -213,9 +234,48 @@ export function VideoPeoplePanel({
     setDeleteTargetId(null);
   }, [deleteTargetId, deletePerson]);
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const person = event.active.data.current?.person as PersonResponse | undefined;
+    if (person) setActiveDragPerson(person);
+  }, []);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveDragPerson(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const sourcePerson = active.data.current?.person as PersonResponse | undefined;
+    const targetPerson = over.data.current?.person as PersonResponse | undefined;
+    if (sourcePerson && targetPerson) {
+      setMergeSource(sourcePerson);
+      setMergeTarget(targetPerson);
+    }
+  }, []);
+
+  const handleDragCancel = useCallback(() => {
+    setActiveDragPerson(null);
+  }, []);
+
+  const handleMergeConfirm = useCallback(
+    async (keepLabel?: string | null) => {
+      if (!mergeSource || !mergeTarget) return;
+      await mergePeople({
+        source_cluster_ids: [mergeSource.person_cluster_id],
+        target_cluster_id: mergeTarget.person_cluster_id,
+        keep_label: keepLabel,
+      });
+      setMergeSource(null);
+      setMergeTarget(null);
+    },
+    [mergeSource, mergeTarget, mergePeople],
+  );
+
+  const handleMergeCancel = useCallback(() => {
+    setMergeSource(null);
+    setMergeTarget(null);
+  }, []);
+
   return (
     <div>
-      {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-gray-900">인물 관리</h2>
         <Link
@@ -227,20 +287,17 @@ export function VideoPeoplePanel({
         </Link>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      {/* Loading */}
       {isLoading ? (
         <div className="flex min-h-[200px] items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-indigo-500" />
         </div>
       ) : people.length === 0 ? (
-        /* Empty State */
         <div className="mt-8 flex flex-col items-center py-12">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100">
             <PersonIcon className="h-8 w-8 text-gray-400" />
@@ -254,22 +311,44 @@ export function VideoPeoplePanel({
         </div>
       ) : (
         <>
-          {/* Avatar Grid — 3 visible rows, scroll for rest */}
-          <div className="mt-6 grid max-h-[380px] grid-cols-4 gap-5 overflow-y-auto">
-            {people.map((person) => (
-              <VideoPersonAvatar
-                key={person.person_cluster_id}
-                person={person}
-                isSelected={selectedId === person.person_cluster_id}
-                onSelect={handleSelect}
-                onDelete={setDeleteTargetId}
-                onRename={handleRenameFromAvatar}
-                agentAvailable={agentAvailable}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={sensors}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
+            <div className="mt-6 grid max-h-[380px] grid-cols-4 gap-5 overflow-y-auto">
+              {people.map((person) => (
+                <VideoPersonAvatar
+                  key={person.person_cluster_id}
+                  person={person}
+                  isSelected={selectedId === person.person_cluster_id}
+                  onSelect={handleSelect}
+                  onDelete={setDeleteTargetId}
+                  onRename={handleRenameFromAvatar}
+                  agentAvailable={agentAvailable}
+                  isDragActive={activeDragPerson !== null}
+                />
+              ))}
+            </div>
+            <DragOverlay dropAnimation={null}>
+              {activeDragPerson ? (
+                <div className="flex flex-col items-center gap-1 opacity-80">
+                  <AvatarThumbnail
+                    person={activeDragPerson}
+                    agentAvailable={agentAvailable}
+                    className="ring-2 ring-indigo-400 shadow-lg"
+                  />
+                  {activeDragPerson.label && (
+                    <span className="max-w-[96px] truncate text-xs text-gray-600">
+                      {activeDragPerson.label}
+                    </span>
+                  )}
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
 
-          {/* Inline Detail */}
           {selectedPerson && (
             <div className="mt-6 space-y-4">
               <InlinePersonDetail
@@ -292,7 +371,6 @@ export function VideoPeoplePanel({
         </>
       )}
 
-      {/* Delete Dialog */}
       <DeletePersonDialog
         isOpen={deleteTargetId !== null}
         personLabel={
@@ -302,6 +380,16 @@ export function VideoPeoplePanel({
         onCancel={() => setDeleteTargetId(null)}
         onConfirm={handleDeleteConfirm}
       />
+
+      {mergeSource && mergeTarget && (
+        <MergeConfirmDialog
+          source={mergeSource}
+          target={mergeTarget}
+          isMerging={isMerging}
+          onCancel={handleMergeCancel}
+          onConfirm={handleMergeConfirm}
+        />
+      )}
     </div>
   );
 }
