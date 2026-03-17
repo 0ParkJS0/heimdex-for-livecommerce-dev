@@ -87,7 +87,20 @@ function AgentStatusBadge() {
   );
 }
 
-export function TopHeader() {
+interface TopHeaderProps {
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
+}
+
+function HamburgerIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+    </svg>
+  );
+}
+
+export function TopHeader({ sidebarCollapsed, onToggleSidebar }: TopHeaderProps) {
   const { user, logout } = useAuth();
   const displayName = user?.name || user?.email || "User";
   const displayEmail = user?.email || "";
@@ -109,7 +122,19 @@ export function TopHeader() {
   }, []);
 
   return (
-    <header className="flex h-[60px] items-center justify-end px-6">
+    <header className="flex h-[60px] items-center justify-between px-6">
+      <div className="flex items-center">
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+            aria-label="사이드바 열기"
+          >
+            <HamburgerIcon />
+          </button>
+        )}
+      </div>
       <div className="flex items-center gap-4">
         <AgentStatusBadge />
 

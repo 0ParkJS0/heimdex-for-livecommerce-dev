@@ -1,21 +1,41 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { Sidebar } from "./Sidebar";
 import { TopHeader } from "./TopHeader";
+import { cn } from "@/lib/utils";
 
 interface AppLayoutProps {
   children: React.ReactNode;
 }
 
 const NO_LAYOUT_ROUTES = ["/login", "/auth/"];
+const SIDEBAR_STORAGE_KEY = "heimdex-sidebar-collapsed";
+
+function readSidebarState(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarState(collapsed: boolean): void {
+  try {
+    localStorage.setItem(SIDEBAR_STORAGE_KEY, String(collapsed));
+  } catch {
+    /* localStorage unavailable */
+  }
+}
 
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarState);
 
   const skipLayout = NO_LAYOUT_ROUTES.some((route) =>
     route.endsWith("/") ? pathname.startsWith(route) : pathname === route
@@ -26,6 +46,14 @@ export function AppLayout({ children }: AppLayoutProps) {
       router.replace("/login");
     }
   }, [skipLayout, isLoading, isAuthenticated, router]);
+
+  useEffect(() => {
+    writeSidebarState(sidebarCollapsed);
+  }, [sidebarCollapsed]);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => !prev);
+  }, []);
 
   if (skipLayout) {
     return <>{children}</>;
@@ -41,9 +69,17 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar />
-      <div className="ml-[200px] flex flex-1 flex-col">
-        <TopHeader />
+      <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+      <div
+        className={cn(
+          "flex flex-1 flex-col transition-[margin-left] duration-300 ease-in-out",
+          sidebarCollapsed ? "ml-0" : "ml-[200px]",
+        )}
+      >
+        <TopHeader
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={toggleSidebar}
+        />
         <main className="flex-1 px-6 pb-6">{children}</main>
       </div>
     </div>
