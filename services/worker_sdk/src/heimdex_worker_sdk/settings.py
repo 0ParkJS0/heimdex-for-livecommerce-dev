@@ -37,6 +37,9 @@ class WorkerSettings(BaseSettings):
     drive_connector_enabled: bool = False
     drive_enrichment_enabled: bool = False
 
+    # --- Image processing ---
+    image_processing_enabled: bool = False
+
     # --- Drive worker ---
     drive_worker_poll_interval_seconds: int = 30
     drive_worker_global_concurrency: int = 2
