@@ -167,6 +167,12 @@ def get_shorts_render_service(
     return ShortsRenderService(repo, scene_search)
 
 
+def get_text_template_repository(db: AsyncSession = Depends(get_db_session)):
+    """Text template repository factory."""
+    from app.modules.text_templates.repository import TextTemplateRepository
+    return TextTemplateRepository(db)
+
+
 def get_pairing_code_repository(db: AsyncSession = Depends(get_db_session)):
     """Pairing code repository factory."""
     from app.modules.devices.pairing import PairingCodeRepository
