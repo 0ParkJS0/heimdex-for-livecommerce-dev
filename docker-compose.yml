@@ -676,6 +676,7 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-heimdex_dev_password}
       - MINIO_SECURE=false
       - DRIVE_S3_BUCKET=${DRIVE_S3_BUCKET:-heimdex-drive}
+      - FONT_DIR=/usr/share/fonts/heimdex
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       api:
