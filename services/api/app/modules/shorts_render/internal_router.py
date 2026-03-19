@@ -57,10 +57,26 @@ async def update_render_status(
             detail="Render job not found",
         )
 
-    logger.info(
-        "render_status_updated",
-        extra={"job_id": str(job_id), "status": payload.status},
-    )
+    if payload.status == "completed":
+        logger.info(
+            "render_job_completed",
+            extra={
+                "job_id": str(job_id),
+                "render_time_ms": payload.render_time_ms,
+                "output_size_bytes": payload.output_size_bytes,
+                "output_duration_ms": payload.output_duration_ms,
+            },
+        )
+    elif payload.status == "failed":
+        logger.warning(
+            "render_job_failed",
+            extra={"job_id": str(job_id), "error": payload.error},
+        )
+    else:
+        logger.info(
+            "render_status_updated",
+            extra={"job_id": str(job_id), "status": payload.status},
+        )
     return {"ok": True, "job_id": str(job_id), "status": payload.status}
 
 

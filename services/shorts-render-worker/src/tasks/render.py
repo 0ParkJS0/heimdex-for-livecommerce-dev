@@ -134,11 +134,6 @@ def process_render_job(*, api_client, settings, render_job: RenderJobMessage) ->
     job_id = render_job.job_id
     org_id = render_job.org_id
 
-    logger.info(
-        "render_job_started",
-        extra={"job_id": job_id, "org_id": org_id},
-    )
-
     work_dir = tempfile.mkdtemp(prefix=f"shorts_render_{job_id}_")
 
     try:
@@ -148,20 +143,49 @@ def process_render_job(*, api_client, settings, render_job: RenderJobMessage) ->
         # 2. Parse composition spec
         spec = CompositionSpec(**render_job.input_spec)
 
+        logger.info(
+            "render_started",
+            extra={
+                "job_id": job_id,
+                "org_id": org_id,
+                "clip_count": len(spec.scene_clips),
+                "subtitle_count": len(spec.subtitles),
+            },
+        )
+
         # 3. Download media for each unique video_id
         s3_client = S3Client(bucket=settings.drive_s3_bucket)
 
         media_paths: dict[str, str] = {}
-        for clip in spec.scene_clips:
+        for i, clip in enumerate(spec.scene_clips):
             if clip.video_id not in media_paths:
                 media_paths[clip.video_id] = _download_media(
                     api_client, s3_client, org_id, clip.video_id, work_dir,
+                )
+                logger.info(
+                    "clip_extracted",
+                    extra={
+                        "job_id": job_id,
+                        "clip_index": i,
+                        "video_id": clip.video_id,
+                        "duration_ms": clip.end_ms - clip.start_ms,
+                    },
                 )
 
         # 4. Render composition
         font_dir = os.environ.get("FONT_DIR", _DEFAULT_FONT_DIR)
         use_gpu = getattr(settings, "use_gpu", False)
         output_path = os.path.join(work_dir, "output.mp4")
+
+        logger.info(
+            "ffmpeg_encode_started",
+            extra={
+                "job_id": job_id,
+                "clip_count": len(spec.scene_clips),
+                "subtitle_count": len(spec.subtitles),
+                "use_gpu": use_gpu,
+            },
+        )
 
         result = render_composition(
             spec=spec,
@@ -189,18 +213,22 @@ def process_render_job(*, api_client, settings, render_job: RenderJobMessage) ->
         )
 
         logger.info(
-            "render_job_completed",
+            "render_completed",
             extra={
                 "job_id": job_id,
                 "s3_key": s3_key,
                 "duration_ms": result.duration_ms,
-                "size_bytes": result.size_bytes,
+                "output_size": result.size_bytes,
                 "render_time_ms": result.render_time_ms,
             },
         )
 
     except Exception as exc:
-        logger.exception("render_job_failed", extra={"job_id": job_id})
+        logger.error(
+            "render_failed",
+            extra={"job_id": job_id, "error": str(exc)},
+            exc_info=True,
+        )
         try:
             _report_status(
                 api_client,

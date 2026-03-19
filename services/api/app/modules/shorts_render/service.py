@@ -67,6 +67,16 @@ class ShortsRenderService:
             expires_at=expires_at,
         )
 
+        logger.info(
+            "render_job_created",
+            job_id=str(job.id),
+            org_id=str(org_id),
+            user_id=str(user_id),
+            video_id=payload.video_id,
+            clip_count=len(payload.composition.scene_clips),
+            subtitle_count=len(payload.composition.subtitles),
+        )
+
         # 3. Publish SQS (fire-and-forget)
         try:
             from app.sqs_producer import publish_shorts_render_job
