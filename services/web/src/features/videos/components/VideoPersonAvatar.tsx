@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { AvatarThumbnail } from "@/components/people/AvatarThumbnail";
 import type { PersonResponse } from "@/lib/types";
@@ -20,6 +21,7 @@ export interface VideoPersonAvatarProps {
   onDelete: (personClusterId: string) => void;
   onRename: (personClusterId: string) => void;
   agentAvailable: boolean;
+  isDragActive?: boolean;
 }
 
 export function VideoPersonAvatar({
@@ -29,7 +31,31 @@ export function VideoPersonAvatar({
   onDelete,
   onRename,
   agentAvailable,
+  isDragActive = false,
 }: VideoPersonAvatarProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `person-${person.person_cluster_id}`,
+    data: { person },
+  });
+
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `person-${person.person_cluster_id}`,
+    data: { person },
+  });
+
+  const setNodeRef = useCallback(
+    (node: HTMLElement | null) => {
+      setDragRef(node);
+      setDropRef(node);
+    },
+    [setDragRef, setDropRef],
+  );
+
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +84,16 @@ export function VideoPersonAvatar({
   }, [onSelect, person.person_cluster_id]);
 
   return (
-    <div className="group relative flex flex-col items-center gap-1">
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "group relative flex flex-col items-center gap-1 transition-opacity",
+        isDragging && "opacity-30",
+        isDragActive && !isDragging && !isOver && "opacity-60",
+      )}
+      {...attributes}
+      {...listeners}
+    >
       <button
         type="button"
         onClick={handleSelect}
@@ -69,13 +104,15 @@ export function VideoPersonAvatar({
           agentAvailable={agentAvailable}
           className={cn(
             isSelected && "ring-2 ring-indigo-500 ring-offset-2",
-            !isSelected && "hover:bg-gray-200",
+            !isSelected && !isOver && "hover:bg-gray-200",
+            isOver && "ring-2 ring-indigo-500 scale-105",
           )}
         />
       </button>
       <div className="absolute -right-1 -top-1 z-10">
         <button
           type="button"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); setMenuOpen((prev) => !prev); }}
           className="hidden group-hover:flex items-center justify-center w-6 h-6 rounded-full bg-white shadow-md border border-gray-200 text-gray-600 hover:text-gray-900"
         >

@@ -257,6 +257,13 @@ def _process_single_file(
 ) -> None:
     mime_type = getattr(claimed_file, "mime_type", "")
     if is_image(mime_type):
+        if not getattr(settings, "image_processing_enabled", False):
+            logger.info("image_processing_skipped", extra={
+                "file_id": str(claimed_file.id),
+                "file_name": claimed_file.file_name,
+                "reason": "image_processing_disabled",
+            })
+            return
         return _process_image(api_client, settings, claimed_file)
 
     from heimdex_worker_sdk.drive_keys import (

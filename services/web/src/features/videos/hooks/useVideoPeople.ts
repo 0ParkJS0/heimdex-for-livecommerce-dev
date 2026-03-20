@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
 import { getVideoPeople } from "@/lib/api/videos";
-import { renamePerson as renamePersonApi, deletePerson as deletePersonApi } from "@/lib/api/people";
-import type { PersonResponse } from "@/lib/types";
+import { renamePerson as renamePersonApi, deletePerson as deletePersonApi, mergePeople as mergePeopleApi } from "@/lib/api/people";
+import type { PersonResponse, MergePersonRequest, MergePersonResponse } from "@/lib/types";
 import { ApiError } from "@/lib/types";
 
 export interface UseVideoPeopleReturn {
@@ -15,6 +15,8 @@ export interface UseVideoPeopleReturn {
   isRenaming: boolean;
   deletePerson: (personClusterId: string) => Promise<void>;
   isDeleting: boolean;
+  mergePeople: (request: MergePersonRequest) => Promise<MergePersonResponse | null>;
+  isMerging: boolean;
   refetch: () => Promise<void>;
 }
 
@@ -26,6 +28,7 @@ export function useVideoPeople(videoId: string): UseVideoPeopleReturn {
   const [error, setError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
 
   const fetchPeople = useCallback(async () => {
     setIsLoading(true);
@@ -108,6 +111,34 @@ export function useVideoPeople(videoId: string): UseVideoPeopleReturn {
     [getAccessToken],
   );
 
+  const merge = useCallback(
+    async (request: MergePersonRequest): Promise<MergePersonResponse | null> => {
+      setIsMerging(true);
+      setError(null);
+      try {
+        const response = await mergePeopleApi(request, getAccessToken);
+        const sourceIds = new Set(response.merged_source_ids);
+        setPeople((prev) => {
+          const filtered = prev.filter((p) => !sourceIds.has(p.person_cluster_id));
+          return filtered.map((p) =>
+            p.person_cluster_id === response.target_cluster_id
+              ? { ...p, label: response.label }
+              : p,
+          );
+        });
+        fetchPeople().catch(() => {});
+        return response;
+      } catch (err) {
+        const msg = err instanceof ApiError ? err.detail : "인물 병합에 실패했습니다.";
+        setError(msg);
+        return null;
+      } finally {
+        setIsMerging(false);
+      }
+    },
+    [getAccessToken, fetchPeople],
+  );
+
   return {
     people,
     isLoading,
@@ -116,6 +147,8 @@ export function useVideoPeople(videoId: string): UseVideoPeopleReturn {
     isRenaming,
     deletePerson: remove,
     isDeleting,
+    mergePeople: merge,
+    isMerging,
     refetch: fetchPeople,
   };
 }

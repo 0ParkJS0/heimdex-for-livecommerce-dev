@@ -29,6 +29,7 @@ from app.modules.thumbnails.router import public_router as thumbnails_public_rou
 from app.modules.thumbnails.router import upload_router as thumbnails_upload_router
 from app.modules.videos.router import router as videos_router
 from app.modules.videos.internal_router import router as videos_internal_router
+from app.modules.grouping.router import router as grouping_router
 from app.modules.youtube.router import router as youtube_router
 
 setup_logging()
@@ -338,6 +339,7 @@ app.include_router(internal_shorts_render_router)
 app.include_router(basket_router, prefix="/api")
 app.include_router(thumbnails_public_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")
+app.include_router(grouping_router, prefix="/api")
 
 if get_settings().youtube_enabled:
     app.include_router(youtube_router, prefix="/api")
@@ -352,6 +354,9 @@ if get_settings().drive_connector_enabled:
     from app.modules.drive.oauth_router import oauth_router as drive_oauth_router
     from app.modules.export.router import router as export_router
     app.include_router(drive_router, prefix="/api")
+    if get_settings().folder_sync_v2_enabled:
+        from app.modules.drive.watched_folder_router import router as watched_folder_router
+        app.include_router(watched_folder_router, prefix="/api")
     app.include_router(drive_oauth_router, prefix="/api")
     app.include_router(playback_router, prefix="/api")
     app.include_router(export_router, prefix="/api")

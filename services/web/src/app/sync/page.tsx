@@ -14,6 +14,10 @@ import {
   createFolderConnection,
   getDriveConnectionProgress,
   deleteDriveConnection,
+  getWatchedFolders,
+  enumerateFolders,
+  toggleFolderSync,
+  updateFolderContentTypes,
 } from "@/lib/api/drive";
 import { DriveSyncProgress as DriveSyncProgressComponent } from "@/components/sync/DriveSyncProgress";
 import {
@@ -33,7 +37,11 @@ import { UploadProgress } from "@/components/sync/UploadProgress";
 import { StopConfirmDialog } from "@/components/sync/StopConfirmDialog";
 import { DriveFolderBrowser } from "@/components/sync/DriveFolderBrowser";
 import { DeleteConnectionDialog } from "@/components/sync/DeleteConnectionDialog";
+import { OAuthExpiredDialog } from "@/components/sync/OAuthExpiredDialog";
+import { FolderSyncTree } from "@/components/sync/FolderSyncTree";
 import type { DeviceListItem, DriveStatusResponse, DriveFolderInfo, DriveConnectionResponse, DriveOAuthStatus, DriveSyncProgress } from "@/lib/types";
+import type { FolderTreeResponse, ContentType } from "@/lib/types/drive";
+import { ApiError } from "@/lib/types/api";
 
 type UploadState = "hidden" | "uploading" | "paused" | "complete" | "error";
 
@@ -137,6 +145,9 @@ function SyncContent() {
   const [syncProgress, setSyncProgress] = useState<DriveSyncProgress | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DriveConnectionResponse | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [folderTree, setFolderTree] = useState<FolderTreeResponse | null>(null);
+  const [isEnumerating, setIsEnumerating] = useState(false);
+  const [showReauthDialog, setShowReauthDialog] = useState(false);
   const syncProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollingRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -188,6 +199,57 @@ function SyncContent() {
     }
   }, [getAccessToken]);
 
+  const loadFolderTree = useCallback(async () => {
+    try {
+      const tree = await getWatchedFolders(getAccessToken);
+      setFolderTree(tree);
+    } catch {
+      // First load may fail if not enumerated yet
+    }
+  }, [getAccessToken]);
+
+  const handleEnumerate = useCallback(async () => {
+    setIsEnumerating(true);
+    try {
+      const tree = await enumerateFolders(getAccessToken);
+      setFolderTree(tree);
+    } catch (err) {
+      if (err instanceof ApiError && err.detail.includes("만료")) {
+        setShowReauthDialog(true);
+      } else {
+        console.error("Failed to enumerate folders:", err);
+      }
+    } finally {
+      setIsEnumerating(false);
+    }
+  }, [getAccessToken]);
+
+  const handleFolderToggle = useCallback(async (folderId: string, enabled: boolean) => {
+    const result = await toggleFolderSync(folderId, enabled, getAccessToken);
+    setFolderTree((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        folders: prev.folders.map((f) =>
+          f.id === folderId ? result.folder : f,
+        ),
+      };
+    });
+  }, [getAccessToken]);
+
+  const handleContentTypeChange = useCallback(async (folderId: string, types: ContentType[]) => {
+    const updated = await updateFolderContentTypes(folderId, types, getAccessToken);
+    setFolderTree((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        folders: prev.folders.map((f) =>
+          f.id === folderId ? updated : f,
+        ),
+      };
+    });
+  }, [getAccessToken]);
+
   const loadSyncProgress = useCallback(async () => {
     const activeConn = driveConnections.find(c => c.status === "active");
     if (!activeConn) return;
@@ -220,9 +282,10 @@ function SyncContent() {
     loadDriveStatus();
     loadDriveConnections();
     loadOAuthStatus();
+    loadFolderTree();
     const id = setInterval(() => { loadDevices(); loadSources(); loadDriveStatus(); loadDriveConnections(); loadOAuthStatus(); }, DEVICE_POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [loadDevices, loadSources, loadDriveStatus, loadDriveConnections, loadOAuthStatus]);
+  }, [loadDevices, loadSources, loadDriveStatus, loadDriveConnections, loadOAuthStatus, loadFolderTree]);
 
   useEffect(() => {
     if (showDriveFolders) {
@@ -423,14 +486,17 @@ function SyncContent() {
   }, [getAccessToken, loadDriveConnections]);
 
   const handleFolderSelected = useCallback(async (folderId: string, folderName: string, folderPath: string) => {
-    // library_id is optional — API auto-selects the org's default library if not provided
     const libraryId = driveConnections[0]?.library_id ?? null;
     try {
       await createFolderConnection(libraryId, folderId, folderName, folderPath, getAccessToken);
       setShowFolderBrowser(false);
       loadDriveConnections();
     } catch (err) {
-      console.error("Failed to create folder connection:", err);
+      if (err instanceof ApiError && err.detail.includes("만료")) {
+        setShowReauthDialog(true);
+      } else {
+        console.error("Failed to create folder connection:", err);
+      }
     }
   }, [driveConnections, getAccessToken, loadDriveConnections]);
 
@@ -557,10 +623,38 @@ function SyncContent() {
                 onFolderSelected={handleFolderSelected}
                 onClose={() => setShowFolderBrowser(false)}
                 getAccessToken={getAccessToken}
+                onAuthExpired={() => {
+                  setShowFolderBrowser(false);
+                  setShowReauthDialog(true);
+                }}
               />
             )}
+          </div>
+        ) : (
+          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-white p-6 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M5.5 16a3.5 3.5 0 01-.369-6.98 4 4 0 117.753-1.977A4.5 4.5 0 1113.5 16h-8z" />
+              </svg>
+            </div>
+            <h3 className="mt-3 text-sm font-semibold text-gray-900">Google 드라이브 연결</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Google 계정을 연결하여 드라이브 폴더를 동기화하세요.
+            </p>
+            <button
+              onClick={handleConnectGoogle}
+              disabled={oauthLoading}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
+            >
+              {oauthLoading ? "연결 중..." : "Google 드라이브 연결하기"}
+            </button>
+          </div>
+        )}
 
-            {/* Connected drive connections */}
+        {/* Connection list — always visible regardless of OAuth status so users can delete disconnected connections */}
+        {driveConnections.length > 0 && (
+          <div className={oauthStatus?.connected ? "" : "mt-4 rounded-xl border border-gray-200 bg-white p-6"}>
+            {/* Drive connections */}
             {driveConnections.filter((c) => c.scope_type === "drive").length > 0 && (
               <div className="mt-4 space-y-2">
                 <h4 className="text-xs font-medium text-gray-500">공유 드라이브</h4>
@@ -598,7 +692,7 @@ function SyncContent() {
               </div>
             )}
 
-            {/* Connected folder connections */}
+            {/* Folder connections */}
             {driveConnections.filter((c) => c.scope_type === "folder").length > 0 && (
               <div className="mt-4 space-y-2">
                 <h4 className="text-xs font-medium text-gray-500">동기화 폴더</h4>
@@ -639,28 +733,22 @@ function SyncContent() {
               </div>
             )}
 
-            {driveConnections.length > 0 && (
-              <DriveSyncProgressComponent progress={syncProgress} />
+            <DriveSyncProgressComponent progress={syncProgress} />
+
+            {folderTree && (
+              <div className="my-4 border-t border-gray-200" />
             )}
-          </div>
-        ) : (
-          <div className="rounded-xl border-2 border-dashed border-gray-200 bg-white p-6 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M5.5 16a3.5 3.5 0 01-.369-6.98 4 4 0 117.753-1.977A4.5 4.5 0 1113.5 16h-8z" />
-              </svg>
-            </div>
-            <h3 className="mt-3 text-sm font-semibold text-gray-900">Google 드라이브 연결</h3>
-            <p className="mt-1 text-xs text-gray-500">
-              Google 계정을 연결하여 드라이브 폴더를 동기화하세요.
-            </p>
-            <button
-              onClick={handleConnectGoogle}
-              disabled={oauthLoading}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
-            >
-              {oauthLoading ? "연결 중..." : "Google 드라이브 연결하기"}
-            </button>
+
+            {folderTree && (
+              <FolderSyncTree
+                folders={folderTree.folders}
+                drives={folderTree.drives}
+                onToggle={handleFolderToggle}
+                onContentTypeChange={handleContentTypeChange}
+                onRefresh={handleEnumerate}
+                isRefreshing={isEnumerating}
+              />
+            )}
           </div>
         )}
       </div>
@@ -704,6 +792,17 @@ function SyncContent() {
         isDeleting={isDeleting}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDeleteConnection}
+      />
+
+      <OAuthExpiredDialog
+        isOpen={showReauthDialog}
+        googleEmail={oauthStatus?.google_email ?? null}
+        isLoading={oauthLoading}
+        onReconnect={() => {
+          setShowReauthDialog(false);
+          handleConnectGoogle();
+        }}
+        onClose={() => setShowReauthDialog(false)}
       />
     </div>
   );
