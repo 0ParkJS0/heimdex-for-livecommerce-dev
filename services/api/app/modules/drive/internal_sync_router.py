@@ -287,9 +287,15 @@ async def get_connection_token(
 
     _enforce_connection_lease(connection, request.lease_token)
 
-    if connection.scope_type == "drive":
+    # Map scope_type to the credential type used for Google Drive API access.
+    # "drive" and "shared_drive" use SA when available, falling back to OAuth.
+    # "folder" and "my_drive" always use OAuth (user-scoped access).
+    _SA_SCOPE_TYPES = {"drive", "shared_drive"}
+    _OAUTH_SCOPE_TYPES = {"folder", "my_drive"}
+
+    if connection.scope_type in _SA_SCOPE_TYPES:
         secret_type = "service_account_key"
-    elif connection.scope_type == "folder":
+    elif connection.scope_type in _OAUTH_SCOPE_TYPES:
         secret_type = "oauth_token"
     else:
         raise HTTPException(
@@ -316,7 +322,7 @@ async def get_connection_token(
     plaintext = aesgcm.decrypt(secret.nonce, secret.encrypted_value, None)
     secret_data = json.loads(plaintext.decode())
 
-    if connection.scope_type == "drive":
+    if connection.scope_type in _SA_SCOPE_TYPES:
         credentials = service_account.Credentials.from_service_account_info(
             secret_data,
             scopes=["https://www.googleapis.com/auth/drive.readonly"],
