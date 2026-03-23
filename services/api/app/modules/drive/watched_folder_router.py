@@ -1,7 +1,9 @@
+import json
 import logging
 from typing import Annotated, Any
 from uuid import UUID
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.auth.exceptions import RefreshError
 
@@ -143,6 +145,56 @@ def _build_drive_infos(connections: list[DriveConnection]) -> list[DriveInfoResp
     return results
 
 
+async def _get_drive_client_for_org(
+    org_id: UUID,
+    secret_repo: DriveSecretRepository,
+    encryption_key_hex: str,
+) -> tuple[DriveClient, str]:
+    """Resolve a DriveClient from the best available credential.
+
+    Returns (client, auth_type) where auth_type is "oauth" or "sa".
+    Prefers OAuth when both exist (user-scoped access is more granular).
+    """
+    secret = await secret_repo.get_by_org(org_id, secret_type="oauth_token")
+    if secret is not None:
+        token_data = _decrypt_oauth_token_data(secret, encryption_key_hex)
+        try:
+            client = DriveClient.from_oauth_token(
+                refresh_token=token_data["refresh_token"],
+                client_id=token_data["client_id"],
+                client_secret=token_data["client_secret"],
+            )
+        except RefreshError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google 연결이 만료되었습니다. 설정에서 다시 연결해 주세요.",
+            )
+        return client, "oauth"
+
+    secret = await secret_repo.get_by_org(org_id, secret_type="service_account_key")
+    if secret is not None:
+        key = bytes.fromhex(encryption_key_hex)
+        aesgcm = AESGCM(key)
+        plaintext = aesgcm.decrypt(secret.nonce, secret.encrypted_value, None)
+        secret_data = json.loads(plaintext.decode())
+        try:
+            client = DriveClient(
+                sa_key_info=secret_data,
+                impersonate_email=secret.impersonate_email,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Service Account 인증에 실패했습니다: {exc}",
+            )
+        return client, "sa"
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Google Drive is not connected. Please connect via OAuth or configure a Service Account.",
+    )
+
+
 @router.post("/enumerate-folders", response_model=FolderTreeResponse)
 async def enumerate_folders(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
@@ -152,25 +204,9 @@ async def enumerate_folders(
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
     settings = get_settings()
-    secret = await secret_repo.get_by_org(org_ctx.org_id, secret_type="oauth_token")
-    if secret is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google Drive is not connected. Please connect via OAuth first.",
-        )
-
-    token_data = _decrypt_oauth_token_data(secret, settings.drive_sa_encryption_key)
-    try:
-        drive_client = DriveClient.from_oauth_token(
-            refresh_token=token_data["refresh_token"],
-            client_id=token_data["client_id"],
-            client_secret=token_data["client_secret"],
-        )
-    except RefreshError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Google 연결이 만료되었습니다. 설정에서 다시 연결해 주세요.",
-        )
+    drive_client, auth_type = await _get_drive_client_for_org(
+        org_ctx.org_id, secret_repo, settings.drive_sa_encryption_key
+    )
 
     shared_drives = drive_client.list_shared_drives()
     connections = await conn_repo.list_by_org(org_ctx.org_id)
@@ -181,22 +217,23 @@ async def enumerate_folders(
             detail="No library found. Please connect Google Drive first.",
         )
 
-    my_drive_conn = next((c for c in connections if c.scope_type == "my_drive"), None)
-    if my_drive_conn is None:
-        my_drive_conn = DriveConnection(
-            org_id=org_ctx.org_id,
-            library_id=library_id,
-            scope_type="my_drive",
-            drive_id=None,
-            drive_name="My Drive",
-        )
-        conn_repo.session.add(my_drive_conn)
-        await conn_repo.session.flush()
-        connections.append(my_drive_conn)
+    if auth_type == "oauth":
+        my_drive_conn = next((c for c in connections if c.scope_type == "my_drive"), None)
+        if my_drive_conn is None:
+            my_drive_conn = DriveConnection(
+                org_id=org_ctx.org_id,
+                library_id=library_id,
+                scope_type="my_drive",
+                drive_id=None,
+                drive_name="My Drive",
+            )
+            conn_repo.session.add(my_drive_conn)
+            await conn_repo.session.flush()
+            connections.append(my_drive_conn)
 
-    my_drive_folders = drive_client.list_all_folders(None)
-    my_drive_inputs = _build_folder_inputs(my_drive_folders)
-    await folder_repo.bulk_upsert(org_ctx.org_id, my_drive_conn.id, my_drive_inputs)
+        my_drive_folders = drive_client.list_all_folders(None)
+        my_drive_inputs = _build_folder_inputs(my_drive_folders)
+        await folder_repo.bulk_upsert(org_ctx.org_id, my_drive_conn.id, my_drive_inputs)
 
     for shared_drive in shared_drives:
         drive_id = str(shared_drive.get("id") or "")
