@@ -782,7 +782,17 @@ function SearchVideoCard({ video, aspectRatio }: { video: VideoResult; aspectRat
 // ---------------------------------------------------------------------------
 // DashboardContent (main export)
 // ---------------------------------------------------------------------------
-export default function DashboardContent() {
+interface DashboardContentProps {
+  /** Lock content type filter — disables the user toggle */
+  defaultContentType?: ContentTypeFilter;
+  /** Hide the all/video/image toggle buttons */
+  hideContentTypeToggle?: boolean;
+}
+
+export default function DashboardContent({
+  defaultContentType,
+  hideContentTypeToggle = false,
+}: DashboardContentProps = {}) {
   const { getAccessToken } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -790,12 +800,15 @@ export default function DashboardContent() {
   const aspectRatio = settings.thumbnail_aspect_ratio as ThumbnailAspectRatio;
 
   // ── Initialize state from URL params ───────────────────────────────────
-  const initialState = useMemo(
-    () => deserializeSearchState(searchParams),
+  const initialState = useMemo(() => {
+    const state = deserializeSearchState(searchParams);
+    if (defaultContentType) {
+      state.contentType = defaultContentType;
+    }
+    return state;
     // Only compute on mount — URL is synced *from* state, not the other way
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+  }, []);
   const hadSearchParamsOnMount = useMemo(
     () => hasSearchParams(searchParams),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -837,7 +850,14 @@ export default function DashboardContent() {
 
   const [groupBy, setGroupBy] = useState<GroupBy>(initialState.groupBy);
   const [searchMode, setSearchMode] = useState<SearchMode>(initialState.searchMode);
-  const [contentType, setContentType] = useState<ContentTypeFilter>(initialState.contentType);
+  const [contentType, _setContentType] = useState<ContentTypeFilter>(initialState.contentType);
+  const setContentType = useCallback(
+    (ct: ContentTypeFilter) => {
+      if (defaultContentType) return;
+      _setContentType(ct);
+    },
+    [defaultContentType],
+  );
   const [sourceFilters, setSourceFilters] = useState<Set<SourceType>>(
     () => new Set(initialState.sourceFilters as ReadonlySet<SourceType>),
   );
@@ -859,14 +879,18 @@ export default function DashboardContent() {
       searchMode,
       groupBy,
       sortBy,
-      contentType,
+      contentType: defaultContentType ?? contentType,
       referenceMode,
       currentPage,
       sourceFilters,
       dateStart,
       dateEnd,
     };
-    const params = serializeSearchState(state);
+    // When content type is locked via prop, don't write it to the URL
+    const stateForUrl: DashboardSearchState = defaultContentType
+      ? { ...state, contentType: "all" }
+      : state;
+    const params = serializeSearchState(stateForUrl);
     const paramString = params.toString();
     const newUrl = paramString ? `/?${paramString}` : "/";
     router.replace(newUrl, { scroll: false });
@@ -1207,23 +1231,25 @@ export default function DashboardContent() {
           <div className="flex items-center gap-2">
             <SearchModeToggle value={searchMode} onChange={setSearchMode} />
             <GroupByToggle value={groupBy} onChange={setGroupBy} />
-            <div className="ml-1 flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5">
-              {(["all", "video", "image"] as const).map((ct) => (
-                <button
-                  key={ct}
-                  type="button"
-                  onClick={() => setContentType(ct)}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                    contentType === ct
-                      ? "bg-white text-gray-900 shadow-sm"
-                      : "text-gray-500 hover:text-gray-700",
-                  )}
-                >
-                  {ct === "all" ? "전체" : ct === "video" ? "동영상" : "이미지"}
-                </button>
-              ))}
-            </div>
+            {!hideContentTypeToggle && (
+              <div className="ml-1 flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                {(["all", "video", "image"] as const).map((ct) => (
+                  <button
+                    key={ct}
+                    type="button"
+                    onClick={() => setContentType(ct)}
+                    className={cn(
+                      "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                      contentType === ct
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-500 hover:text-gray-700",
+                    )}
+                  >
+                    {ct === "all" ? "전체" : ct === "video" ? "동영상" : "이미지"}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div ref={sourceDropdownRef} className="relative">
             <button
