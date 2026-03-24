@@ -105,7 +105,7 @@ def _process_image(
         thumbnail_s3_prefix,
     )
     from heimdex_worker_sdk.s3 import S3Client
-    from tasks.image_metadata import extract_image_metadata, parse_filename
+    from src.tasks.image_metadata import extract_image_metadata, parse_filename
 
     org_id_str = str(claimed_file.org_id)
     video_id = claimed_file.video_id
