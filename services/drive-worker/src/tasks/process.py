@@ -198,6 +198,18 @@ def _process_image(
             video_height=meta.height,
         )
 
+        if getattr(settings, "drive_enrichment_enabled", False):
+            _upload_scene_manifest(
+                s3=s3,
+                org_id_str=org_id_str,
+                video_id=video_id,
+                video_title=claimed_file.file_name,
+                library_id=claimed_file.library_id,
+                duration_ms=0,
+                scenes=[scene],
+                temp_dir=temp_dir,
+            )
+
         api_client.update_processing_status(
             claimed_file.id,
             status="indexed",
