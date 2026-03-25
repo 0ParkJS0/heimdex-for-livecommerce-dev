@@ -158,7 +158,8 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
             ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
           },
         });
-        const res = await fetch("/api/auth/me", {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+        const res = await fetch(`${apiUrl}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
