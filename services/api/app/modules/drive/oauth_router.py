@@ -21,6 +21,8 @@ from app.dependencies import (
 from app.db.base import get_db_session
 from app.modules.drive.repository import DriveConnectionRepository, DriveSecretRepository
 from app.modules.drive.schemas import DriveOAuthStatusResponse
+from app.modules.auth.dependencies import require_role
+from app.modules.users.models import User, UserRole
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
 
@@ -81,6 +83,7 @@ def _verify_state(state: str, encryption_key: str) -> str:
 @oauth_router.get("/authorize")
 async def authorize(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     _: Annotated[None, Depends(_require_oauth_configured)],
 ):
     settings = get_settings()
@@ -203,6 +206,7 @@ async def oauth_status(
 @oauth_router.delete("/disconnect", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     db: Annotated[AsyncSession, Depends(get_db_session)],
     secret_repo: Annotated[DriveSecretRepository, Depends(get_drive_secret_repository)],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],

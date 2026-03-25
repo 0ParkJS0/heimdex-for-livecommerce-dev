@@ -8,6 +8,7 @@ interface FolderRowProps {
   hasChildren: boolean;
   isExpanded: boolean;
   isToggling: boolean;
+  disabled?: boolean;
   onToggle: () => void;
   onExpand: () => void;
   onContentTypeChange: (types: ContentType[]) => void;
@@ -31,6 +32,7 @@ export function FolderRow({
   hasChildren,
   isExpanded,
   isToggling,
+  disabled = false,
   onToggle,
   onExpand,
   onContentTypeChange,
@@ -67,7 +69,7 @@ export function FolderRow({
           type="checkbox"
           checked={folder.sync_enabled}
           onChange={onToggle}
-          disabled={isToggling}
+          disabled={isToggling || disabled}
           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
         />
       </label>
@@ -84,7 +86,8 @@ export function FolderRow({
         <select
           value={contentTypeValue(folder.content_types as ContentType[])}
           onChange={(e) => onContentTypeChange(parseContentTypes(e.target.value))}
-          className="shrink-0 rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-600 focus:border-blue-400 focus:outline-none"
+          disabled={disabled}
+          className="shrink-0 rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-600 focus:border-blue-400 focus:outline-none disabled:opacity-50"
         >
           <option value="video">동영상</option>
           <option value="image">이미지</option>

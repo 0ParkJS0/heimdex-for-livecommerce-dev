@@ -33,6 +33,8 @@ from app.modules.drive.watched_folder_schemas import (
     WatchedFolderToggleRequest,
 )
 from app.modules.search.scene_client import SceneSearchClient
+from app.modules.auth.dependencies import require_role
+from app.modules.users.models import User, UserRole
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
 
@@ -198,6 +200,7 @@ async def _get_drive_client_for_org(
 @router.post("/enumerate-folders", response_model=FolderTreeResponse)
 async def enumerate_folders(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],
     folder_repo: Annotated[WatchedFolderRepository, Depends(get_watched_folder_repository)],
     secret_repo: Annotated[DriveSecretRepository, Depends(get_drive_secret_repository)],
@@ -292,6 +295,7 @@ async def toggle_folder_sync(
     folder_id: UUID,
     body: WatchedFolderToggleRequest,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     folder_repo: Annotated[WatchedFolderRepository, Depends(get_watched_folder_repository)],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],
     file_repo: Annotated[DriveFileRepository, Depends(get_drive_file_repository)],
@@ -332,6 +336,7 @@ async def update_content_types(
     folder_id: UUID,
     body: WatchedFolderContentTypesRequest,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     folder_repo: Annotated[WatchedFolderRepository, Depends(get_watched_folder_repository)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):

@@ -12,6 +12,7 @@ interface FolderSyncTreeProps {
   onContentTypeChange: (folderId: string, types: ContentType[]) => Promise<void>;
   onRefresh: () => Promise<void>;
   isRefreshing: boolean;
+  disabled?: boolean;
 }
 
 interface TreeNode {
@@ -64,6 +65,7 @@ export function FolderSyncTree({
   onContentTypeChange,
   onRefresh,
   isRefreshing,
+  disabled = false,
 }: FolderSyncTreeProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedDrives, setExpandedDrives] = useState<Set<string>>(
@@ -159,6 +161,7 @@ export function FolderSyncTree({
             hasChildren={hasChildren}
             isExpanded={isExpanded}
             isToggling={togglingIds.has(node.folder.id)}
+            disabled={disabled}
             onToggle={() => handleToggle(node.folder)}
             onExpand={() => toggleExpand(node.folder.google_folder_id)}
             onContentTypeChange={(types) => handleContentTypeChange(node.folder.id, types)}

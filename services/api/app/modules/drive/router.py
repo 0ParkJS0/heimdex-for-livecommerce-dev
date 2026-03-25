@@ -40,6 +40,8 @@ from app.modules.drive.schemas import (
     DriveStatusResponse,
     SyncTriggerResponse,
 )
+from app.modules.auth.dependencies import require_role
+from app.modules.users.models import User, UserRole
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
 
@@ -119,6 +121,7 @@ async def list_connections(
 async def create_connection(
     body: DriveConnectionCreate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
@@ -142,6 +145,7 @@ async def get_connection(
 async def trigger_sync(
     connection_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
@@ -175,6 +179,7 @@ async def update_connection(
     connection_id: UUID,
     body: DriveConnectionUpdate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
@@ -188,6 +193,7 @@ async def update_connection(
 async def delete_connection(
     connection_id: UUID,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     conn_repo: Annotated[DriveConnectionRepository, Depends(get_drive_connection_repository)],
     file_repo: Annotated[DriveFileRepository, Depends(get_drive_file_repository)],
     scene_client: Annotated[SceneSearchClient, Depends(get_scene_opensearch_client)],
@@ -252,6 +258,7 @@ async def get_file(
 async def upsert_secret(
     body: DriveSecretCreate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     secret_repo: Annotated[DriveSecretRepository, Depends(get_drive_secret_repository)],
     _: Annotated[None, Depends(_require_drive_enabled)],
 ):
@@ -343,6 +350,7 @@ async def get_connection_progress(
 async def create_folder_connection(
     body: DriveFolderConnectionCreate,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    _admin: Annotated[User, Depends(require_role(UserRole.ADMIN))],
     db: Annotated[AsyncSession, Depends(get_db_session)],
     secret_repo: Annotated[DriveSecretRepository, Depends(get_drive_secret_repository)],
     _: Annotated[None, Depends(_require_drive_enabled)],

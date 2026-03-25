@@ -120,7 +120,8 @@ function mapAgentState(agentState: AgentState): UploadState {
 }
 
 function SyncContent() {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [uploadState, setUploadState] = useState<UploadState>("hidden");
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState<string | undefined>();
@@ -545,6 +546,12 @@ function SyncContent() {
         </div>
       )}
 
+      {!isAdmin && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-2 text-sm text-amber-700 mb-6">
+          동기화 설정은 관리자만 변경할 수 있습니다.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <SyncSourceCard
           title="클라우드"
@@ -607,13 +614,14 @@ function SyncContent() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowFolderBrowser((prev) => !prev)}
-                  className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
+                  disabled={!isAdmin}
+                  className="rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
                 >
                   폴더 추가
                 </button>
                 <button
                   onClick={handleDisconnectGoogle}
-                  disabled={oauthLoading}
+                  disabled={oauthLoading || !isAdmin}
                   className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                 >
                   연결 해제
@@ -646,7 +654,7 @@ function SyncContent() {
             </p>
             <button
               onClick={handleConnectGoogle}
-              disabled={oauthLoading}
+              disabled={oauthLoading || !isAdmin}
               className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
             >
               {oauthLoading ? "연결 중..." : "Google 드라이브 연결하기"}
@@ -686,7 +694,8 @@ function SyncContent() {
                       <button
                         type="button"
                         onClick={() => setDeleteTarget(conn)}
-                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                        disabled={!isAdmin}
+                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                       >
                         삭제
                       </button>
@@ -727,7 +736,8 @@ function SyncContent() {
                       <button
                         type="button"
                         onClick={() => setDeleteTarget(conn)}
-                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                        disabled={!isAdmin}
+                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                       >
                         삭제
                       </button>
@@ -746,7 +756,7 @@ function SyncContent() {
                 <button
                   type="button"
                   onClick={handleEnumerate}
-                  disabled={isEnumerating}
+                  disabled={isEnumerating || !isAdmin}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                 >
                   <svg
@@ -768,6 +778,7 @@ function SyncContent() {
                   onContentTypeChange={handleContentTypeChange}
                   onRefresh={handleEnumerate}
                   isRefreshing={isEnumerating}
+                  disabled={!isAdmin}
                 />
               ) : (
                 <p className="text-xs text-gray-400">

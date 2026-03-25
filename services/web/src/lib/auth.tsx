@@ -126,6 +126,7 @@ function parseJwtUser(token: string): User | null {
     return {
       email: payload.email,
       name: payload.email?.split("@")[0],
+      role: payload.role === "admin" ? "admin" : "member",
     };
   } catch {
     return null;
@@ -196,6 +197,7 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
           email: user.email,
           name: user.name,
           picture: user.picture,
+          role: (user["https://heimdex.co/role"] ?? user.role) === "admin" ? "admin" : "member",
         }
       : null,
     error: error || null,
