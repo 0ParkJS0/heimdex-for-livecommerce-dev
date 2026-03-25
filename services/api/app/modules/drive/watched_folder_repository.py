@@ -179,6 +179,40 @@ class WatchedFolderRepository:
             for row in rows
         }
 
+    async def get_descendant_folder_names(
+        self, org_id: UUID, connection_id: UUID, google_folder_id: str
+    ) -> set[str]:
+        """Get folder_name for the target folder and all its descendants.
+
+        Walks the parent_folder_id tree in the watched_folders table
+        to collect all descendant folders. Returns folder_name values
+        for drive_path prefix matching against DriveFile.drive_path.
+        """
+        # Get the target folder's name
+        target = await self.get_by_google_folder_id(org_id, google_folder_id)
+        if target is None:
+            return set()
+
+        names = {target.folder_name.strip()}
+
+        # Get ALL folders for this connection (small table, typically <200 rows)
+        all_folders = await self.list_by_connection(connection_id)
+        by_parent: dict[str, list[DriveWatchedFolder]] = {}
+        for f in all_folders:
+            pid = f.parent_folder_id
+            if pid:
+                by_parent.setdefault(pid, []).append(f)
+
+        # BFS to collect descendants
+        queue = [google_folder_id]
+        while queue:
+            current = queue.pop(0)
+            for child in by_parent.get(current, []):
+                names.add(child.folder_name.strip())
+                queue.append(child.google_folder_id)
+
+        return names
+
     async def update_file_counts(self, org_id: UUID, counts: dict[str, int]) -> None:
         if not counts:
             return

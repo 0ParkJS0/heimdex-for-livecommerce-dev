@@ -3,7 +3,9 @@
 interface DisableFolderConfirmDialogProps {
   isOpen: boolean;
   folderName: string | null;
-  fileCount: number;
+  videoCount: number;
+  imageCount: number;
+  isLoading: boolean;
   isDisabling: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -12,7 +14,9 @@ interface DisableFolderConfirmDialogProps {
 export function DisableFolderConfirmDialog({
   isOpen,
   folderName,
-  fileCount,
+  videoCount,
+  imageCount,
+  isLoading,
   isDisabling,
   onCancel,
   onConfirm,
@@ -39,7 +43,18 @@ export function DisableFolderConfirmDialog({
         </h2>
         <p className="mt-2 text-sm text-gray-600">
           <span className="font-medium text-gray-900">&quot;{displayName}&quot;</span> 폴더의
-          동기화를 해제하면 색인된 파일({fileCount.toLocaleString()}개)이 삭제됩니다.
+          동기화를 해제하면 다음 파일이 삭제됩니다:
+        </p>
+        {isLoading ? (
+          <p className="mt-1 text-sm text-gray-500">파일 수를 확인하는 중...</p>
+        ) : (
+          <ul className="mt-1 list-inside list-disc text-sm text-gray-600">
+            {videoCount > 0 && <li>동영상 {videoCount.toLocaleString()}개</li>}
+            {imageCount > 0 && <li>이미지 {imageCount.toLocaleString()}개</li>}
+            {videoCount === 0 && imageCount === 0 && <li>영향받는 파일 없음</li>}
+          </ul>
+        )}
+        <p className="mt-2 text-sm text-gray-500">
           다시 동기화하려면 파일을 재처리해야 하며, 추가 크레딧이 소요될 수 있습니다.
         </p>
         <div className="mt-6 flex items-center justify-end gap-3">
@@ -54,7 +69,7 @@ export function DisableFolderConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={isDisabling}
+            disabled={isDisabling || isLoading}
             className="rounded-lg bg-red-500 px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:opacity-50"
           >
             {isDisabling ? (

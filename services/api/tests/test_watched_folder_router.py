@@ -11,11 +11,22 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.dependencies import get_db_session, get_scene_opensearch_client, get_watched_folder_repository
+from app.modules.auth.service import get_current_user
 from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository
 from app.modules.drive.watched_folder_router import _get_drive_client_for_org, router as watched_folder_router
 from app.modules.drive.watched_folder_schemas import FolderTreeResponse, ToggleFolderResponse, WatchedFolderResponse
 from app.modules.tenancy.context import OrgContext
 from app.modules.tenancy.middleware import get_current_org
+from app.modules.users.models import UserRole
+
+
+def _mock_admin():
+    user = MagicMock()
+    user.id = uuid4()
+    user.org_id = uuid4()
+    user.email = "admin@test.com"
+    user.role = UserRole.ADMIN.value
+    return user
 
 
 @dataclass
@@ -50,6 +61,7 @@ class _FolderRepoMock:
         self.update_toggle: AsyncMock = AsyncMock(return_value=None)
         self.update_content_types: AsyncMock = AsyncMock(return_value=None)
         self.get_by_id: AsyncMock = AsyncMock(return_value=None)
+        self.get_descendant_folder_names: AsyncMock = AsyncMock(return_value=[])
 
 
 def _build_watched_folder_app(
@@ -73,6 +85,7 @@ def _build_watched_folder_app(
     async def _mock_scene_client() -> object:
         return scene_client or _SceneClientMock(delete_scenes_by_video_id=AsyncMock())
 
+    app.dependency_overrides[get_current_user] = lambda: _mock_admin()
     app.dependency_overrides[get_db_session] = _mock_get_db_session
     app.dependency_overrides[get_current_org] = _mock_get_current_org
     app.dependency_overrides[get_watched_folder_repository] = _mock_get_watched_folder_repository
@@ -275,6 +288,8 @@ def test_toggle_off_calls_scene_deletion():
     scene_client = _SceneClientMock(delete_scenes_by_video_id=delete_scenes_by_video_id)
     app = _build_watched_folder_app(db, org_ctx, folder_repo, scene_client=scene_client)
 
+    folder_names = [updated_folder.google_folder_id, 'child-folder-id']
+    folder_repo.get_descendant_folder_names = AsyncMock(return_value=folder_names)
     video_ids = ['vid-1', 'vid-2']
     with patch('app.modules.drive.router.get_settings', return_value=SimpleNamespace(drive_connector_enabled=True)), patch.object(
         DriveFileRepository,
@@ -292,7 +307,7 @@ def test_toggle_off_calls_scene_deletion():
     payload = ToggleFolderResponse.model_validate(response.json())
     assert payload.folder.sync_enabled is False
     assert payload.deleted_file_count == 2
-    mock_soft_delete.assert_awaited_once_with(org_ctx.org_id, updated_folder.google_folder_id)
+    mock_soft_delete.assert_awaited_once_with(org_ctx.org_id, updated_folder.connection_id, folder_names)
     assert delete_scenes_by_video_id.await_count == 2
     scene_calls = [call.args for call in delete_scenes_by_video_id.await_args_list]
     assert scene_calls == [
@@ -526,6 +541,7 @@ def _build_enumerate_app(
     def _mock_folder_repo():
         return folder_repo_mock
 
+    app.dependency_overrides[get_current_user] = lambda: _mock_admin()
     app.dependency_overrides[get_current_org] = _mock_get_current_org
     app.dependency_overrides[get_drive_connection_repository] = _mock_conn_repo
     app.dependency_overrides[get_drive_secret_repository] = _mock_secret_repo

@@ -141,3 +141,9 @@ export interface ToggleFolderResponse {
   folder: WatchedFolder;
   deleted_file_count: number;
 }
+
+export interface FolderDisableImpact {
+  video_count: number;
+  image_count: number;
+  total_count: number;
+}

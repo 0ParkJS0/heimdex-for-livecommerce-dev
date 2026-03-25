@@ -8,6 +8,22 @@ import { FolderRow } from "@/components/sync/FolderRow";
 import { FolderSyncTree } from "@/components/sync/FolderSyncTree";
 import type { WatchedFolder, DriveInfo, ContentType } from "@/lib/types/drive";
 
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ getAccessToken: vi.fn().mockResolvedValue("token") }),
+}));
+
+vi.mock("@/lib/api/drive", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/drive")>();
+  return {
+    ...actual,
+    getFolderDisableImpact: vi.fn().mockResolvedValue({
+      video_count: 5,
+      image_count: 3,
+      total_count: 8,
+    }),
+  };
+});
+
 function makeFolder(overrides?: Partial<WatchedFolder>): WatchedFolder {
   return {
     id: "folder-1",
@@ -39,7 +55,9 @@ describe("DisableFolderConfirmDialog", () => {
       <DisableFolderConfirmDialog
         isOpen={false}
         folderName="Test Folder"
-        fileCount={100}
+        videoCount={10}
+        imageCount={5}
+        isLoading={false}
         isDisabling={false}
         onCancel={vi.fn()}
         onConfirm={vi.fn()}
@@ -53,7 +71,9 @@ describe("DisableFolderConfirmDialog", () => {
       <DisableFolderConfirmDialog
         isOpen={true}
         folderName="My Videos"
-        fileCount={50}
+        videoCount={50}
+        imageCount={0}
+        isLoading={false}
         isDisabling={false}
         onCancel={vi.fn()}
         onConfirm={vi.fn()}
@@ -72,7 +92,9 @@ describe("DisableFolderConfirmDialog", () => {
       <DisableFolderConfirmDialog
         isOpen={true}
         folderName="Test Folder"
-        fileCount={100}
+        videoCount={10}
+        imageCount={5}
+        isLoading={false}
         isDisabling={false}
         onCancel={vi.fn()}
         onConfirm={onConfirm}
@@ -91,7 +113,9 @@ describe("DisableFolderConfirmDialog", () => {
       <DisableFolderConfirmDialog
         isOpen={true}
         folderName="Test Folder"
-        fileCount={100}
+        videoCount={10}
+        imageCount={5}
+        isLoading={false}
         isDisabling={false}
         onCancel={onCancel}
         onConfirm={vi.fn()}
@@ -107,7 +131,9 @@ describe("DisableFolderConfirmDialog", () => {
       <DisableFolderConfirmDialog
         isOpen={true}
         folderName="Test Folder"
-        fileCount={100}
+        videoCount={10}
+        imageCount={5}
+        isLoading={false}
         isDisabling={true}
         onCancel={vi.fn()}
         onConfirm={vi.fn()}
@@ -127,7 +153,9 @@ describe("DisableFolderConfirmDialog", () => {
       <DisableFolderConfirmDialog
         isOpen={true}
         folderName={null}
-        fileCount={25}
+        videoCount={0}
+        imageCount={0}
+        isLoading={false}
         isDisabling={false}
         onCancel={vi.fn()}
         onConfirm={vi.fn()}

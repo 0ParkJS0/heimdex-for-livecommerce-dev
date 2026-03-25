@@ -3,7 +3,7 @@ from typing import Optional, TypedDict
 from uuid import UUID
 
 import sqlalchemy as sa
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.drive.models import DriveConnection, DriveFile, DriveSecret
@@ -222,11 +222,75 @@ class DriveFileRepository:
     async def soft_delete_by_watched_folder(
         self,
         org_id: UUID,
-        google_folder_id: str,
+        connection_id: UUID,
+        folder_names: set[str],
     ) -> list[str]:
-        _ = org_id
-        _ = google_folder_id
-        return []
+        """Soft-delete files whose drive_path starts with any of the given folder names.
+
+        Returns list of video_ids for OpenSearch scene cleanup.
+        """
+        if not folder_names:
+            return []
+
+        # Build OR conditions: drive_path LIKE 'FolderName/%' for each folder
+        conditions = [DriveFile.drive_path.like(f"{name}/%") for name in folder_names]
+        # Also match files directly in the folder root (no subfolder)
+        conditions.extend([DriveFile.drive_path == name for name in folder_names])
+
+        result = await self.session.execute(
+            select(DriveFile).where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.is_deleted.is_(False),
+                or_(*conditions),
+            )
+        )
+        files = result.scalars().all()
+
+        if not files:
+            return []
+
+        video_ids = list({f.video_id for f in files})
+        file_ids = [f.id for f in files]
+
+        await self.session.execute(
+            update(DriveFile)
+            .where(DriveFile.id.in_(file_ids))
+            .values(is_deleted=True, deleted_at=func.now(), processing_status="deleted")
+        )
+        await self.session.flush()
+
+        return video_ids
+
+    async def count_by_folder_names(
+        self,
+        org_id: UUID,
+        connection_id: UUID,
+        folder_names: set[str],
+    ) -> dict[str, int]:
+        """Count active files matching folder names, grouped by content type (video/image).
+
+        Returns {"video": N, "image": M}.
+        """
+        if not folder_names:
+            return {"video": 0, "image": 0}
+
+        conditions = [DriveFile.drive_path.like(f"{name}/%") for name in folder_names]
+        conditions.extend([DriveFile.drive_path == name for name in folder_names])
+
+        result = await self.session.execute(
+            select(
+                func.count().filter(DriveFile.mime_type.like("video/%")).label("video"),
+                func.count().filter(~DriveFile.mime_type.like("video/%")).label("image"),
+            ).where(
+                DriveFile.connection_id == connection_id,
+                DriveFile.org_id == org_id,
+                DriveFile.is_deleted.is_(False),
+                or_(*conditions),
+            )
+        )
+        row = result.one()
+        return {"video": row.video, "image": row.image}
 
     async def count_by_status(self, org_id: UUID) -> dict[str, int]:
         """Return {processing_status: count} for non-deleted files in this org."""

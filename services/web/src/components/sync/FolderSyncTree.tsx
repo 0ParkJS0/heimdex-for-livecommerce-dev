@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import type { WatchedFolder, DriveInfo, ContentType } from "@/lib/types/drive";
+import type { WatchedFolder, DriveInfo, ContentType, FolderDisableImpact } from "@/lib/types/drive";
+import { getFolderDisableImpact } from "@/lib/api/drive";
+import { useAuth } from "@/lib/auth";
 import { FolderRow } from "./FolderRow";
 import { DisableFolderConfirmDialog } from "./DisableFolderConfirmDialog";
 
@@ -67,6 +69,7 @@ export function FolderSyncTree({
   isRefreshing,
   disabled = false,
 }: FolderSyncTreeProps) {
+  const { getAccessToken } = useAuth();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [expandedDrives, setExpandedDrives] = useState<Set<string>>(
     new Set(drives.map((d) => d.connection_id)),
@@ -74,6 +77,8 @@ export function FolderSyncTree({
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [disableTarget, setDisableTarget] = useState<WatchedFolder | null>(null);
   const [isDisabling, setIsDisabling] = useState(false);
+  const [impact, setImpact] = useState<FolderDisableImpact | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
 
   const trees = useMemo(() => {
     const result: { drive: DriveInfo; nodes: TreeNode[]; enabledCount: number }[] = [];
@@ -91,6 +96,16 @@ export function FolderSyncTree({
     async (folder: WatchedFolder) => {
       if (folder.sync_enabled) {
         setDisableTarget(folder);
+        setImpactLoading(true);
+        setImpact(null);
+        try {
+          const result = await getFolderDisableImpact(folder.id, getAccessToken);
+          setImpact(result);
+        } catch {
+          setImpact({ video_count: 0, image_count: 0, total_count: 0 });
+        } finally {
+          setImpactLoading(false);
+        }
         return;
       }
       setTogglingIds((prev) => new Set(prev).add(folder.id));
@@ -104,7 +119,7 @@ export function FolderSyncTree({
         });
       }
     },
-    [onToggle],
+    [onToggle, getAccessToken],
   );
 
   const handleDisableConfirm = useCallback(async () => {
@@ -114,6 +129,7 @@ export function FolderSyncTree({
     try {
       await onToggle(disableTarget.id, false);
       setDisableTarget(null);
+      setImpact(null);
     } finally {
       setIsDisabling(false);
       setTogglingIds((prev) => {
@@ -254,9 +270,11 @@ export function FolderSyncTree({
       <DisableFolderConfirmDialog
         isOpen={disableTarget !== null}
         folderName={disableTarget?.folder_name ?? null}
-        fileCount={disableTarget?.file_count_cached ?? 0}
+        videoCount={impact?.video_count ?? 0}
+        imageCount={impact?.image_count ?? 0}
+        isLoading={impactLoading}
         isDisabling={isDisabling}
-        onCancel={() => setDisableTarget(null)}
+        onCancel={() => { setDisableTarget(null); setImpact(null); }}
         onConfirm={handleDisableConfirm}
       />
     </div>

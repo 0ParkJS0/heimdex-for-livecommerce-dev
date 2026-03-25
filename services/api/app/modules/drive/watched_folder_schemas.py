@@ -50,3 +50,9 @@ class WatchedFolderForWorkerResponse(BaseModel):
 
 class WatchedFoldersForWorkerResponse(BaseModel):
     folders: list[WatchedFolderForWorkerResponse]
+
+
+class FolderDisableImpactResponse(BaseModel):
+    video_count: int
+    image_count: int
+    total_count: int

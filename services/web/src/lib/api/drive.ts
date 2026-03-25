@@ -8,7 +8,7 @@ import {
   SyncTriggerResponse,
   DriveSyncProgress,
 } from "@/lib/types";
-import type { FolderTreeResponse, ToggleFolderResponse, WatchedFolder } from "@/lib/types/drive";
+import type { FolderTreeResponse, ToggleFolderResponse, WatchedFolder, FolderDisableImpact } from "@/lib/types/drive";
 import { API_BASE_URL } from "./utils";
 
 type TokenGetter = () => Promise<string | null>;
@@ -434,6 +434,27 @@ export async function updateFolderContentTypes(
         headers,
         body: JSON.stringify({ content_types: types }),
       },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw ApiError.fromResponse(response.status, body);
+    }
+    return response.json();
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError("network", 0, "Network error.");
+  }
+}
+
+export async function getFolderDisableImpact(
+  folderId: string,
+  getToken?: TokenGetter,
+): Promise<FolderDisableImpact> {
+  const headers = await _buildHeaders(getToken);
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/drive/watched-folders/${folderId}/impact`,
+      { method: "GET", headers },
     );
     if (!response.ok) {
       const body = await response.json().catch(() => null);

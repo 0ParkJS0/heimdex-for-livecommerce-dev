@@ -26,6 +26,7 @@ from app.modules.drive.router import _decrypt_oauth_token_data, _require_drive_e
 from app.modules.drive.watched_folder_repository import WatchedFolderInput, WatchedFolderRepository
 from app.modules.drive.watched_folder_schemas import (
     DriveInfoResponse,
+    FolderDisableImpactResponse,
     FolderTreeResponse,
     ToggleFolderResponse,
     WatchedFolderContentTypesRequest,
@@ -290,6 +291,32 @@ async def get_watched_folders(
     )
 
 
+@router.get("/{folder_id}/impact", response_model=FolderDisableImpactResponse)
+async def get_folder_disable_impact(
+    folder_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    folder_repo: Annotated[WatchedFolderRepository, Depends(get_watched_folder_repository)],
+    file_repo: Annotated[DriveFileRepository, Depends(get_drive_file_repository)],
+    _: Annotated[None, Depends(_require_drive_enabled)],
+):
+    """Preview the impact of disabling a folder — how many files would be affected."""
+    folder = await folder_repo.get_by_id(folder_id, org_ctx.org_id)
+    if folder is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder not found")
+
+    folder_names = await folder_repo.get_descendant_folder_names(
+        org_ctx.org_id, folder.connection_id, folder.google_folder_id
+    )
+    counts = await file_repo.count_by_folder_names(
+        org_ctx.org_id, folder.connection_id, folder_names
+    )
+    return FolderDisableImpactResponse(
+        video_count=counts["video"],
+        image_count=counts["image"],
+        total_count=counts["video"] + counts["image"],
+    )
+
+
 @router.patch("/{folder_id}/toggle", response_model=ToggleFolderResponse)
 async def toggle_folder_sync(
     folder_id: UUID,
@@ -310,7 +337,12 @@ async def toggle_folder_sync(
     if body.sync_enabled:
         await conn_repo.set_sync_requested(folder.connection_id, org_ctx.org_id)
     else:
-        video_ids = await file_repo.soft_delete_by_watched_folder(org_ctx.org_id, folder.google_folder_id)
+        folder_names = await folder_repo.get_descendant_folder_names(
+            org_ctx.org_id, folder.connection_id, folder.google_folder_id
+        )
+        video_ids = await file_repo.soft_delete_by_watched_folder(
+            org_ctx.org_id, folder.connection_id, folder_names
+        )
         deleted_file_count = len(video_ids)
         for vid in video_ids:
             try:
