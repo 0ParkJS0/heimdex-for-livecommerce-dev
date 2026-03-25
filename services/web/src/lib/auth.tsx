@@ -164,10 +164,13 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
         });
         if (res.ok) {
           const data = await res.json();
+          console.info("[Heimdex] /api/auth/me role:", data.role);
           setDbRole(data.role === "admin" ? "admin" : "member");
+        } else {
+          console.warn("[Heimdex] /api/auth/me failed:", res.status, res.statusText);
         }
-      } catch {
-        // Fallback to member on error
+      } catch (err) {
+        console.error("[Heimdex] Failed to fetch user role:", err);
       }
     })();
   }, [isAuthenticated, isLoading, getAccessTokenSilently]);
