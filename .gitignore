@@ -131,6 +131,9 @@ temp/
 _reports/
 
 # AI coding assistants
+.omc/
+.claude/
+AGENTS.md
 .opencode/
 .aider*/
 .sisyphus/

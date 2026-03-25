@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"git add services/api/app/modules/drive/router.py services/api/app/modules/drive/oauth_router.py services/api/app/modules/drive/watched_folder_router.py services/api/tests/test_drive_rbac.p...",
-  "error": "Exit code 128\nwarning: could not open directory 'services/api/services/': No such file or directory\nfatal: pathspec 'services/api/app/modules/drive/router.py' did not match any files",
-  "timestamp": "2026-03-25T01:31:25.582Z",
-  "retry_count": 1
-}
