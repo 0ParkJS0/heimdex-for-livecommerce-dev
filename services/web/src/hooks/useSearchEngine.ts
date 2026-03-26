@@ -198,7 +198,6 @@ export function useSearchEngine(
       if (!query.trim()) return;
       if (!isSearchMode) {
         sortBeforeSearchRef.current = sortBy;
-        setSortBy("relevance");
       }
       await performSearch(query, referenceMode);
     },
