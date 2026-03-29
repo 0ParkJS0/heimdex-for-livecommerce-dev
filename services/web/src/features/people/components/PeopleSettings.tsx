@@ -804,6 +804,7 @@ export function PeopleSettings() {
   const { getAccessToken } = useAuth();
   const { isAvailable: agentAvailable } = useAgent();
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"label" | "scenes" | "date">("label");
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [bulkMergeOpen, setBulkMergeOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -841,9 +842,20 @@ export function PeopleSettings() {
   }, [searchQuery, fetchPeople]);
 
   const sortedPeople = useMemo(() => {
+    if (sortBy === "scenes") {
+      return [...people].sort((a, b) => b.face_count - a.face_count);
+    }
+    if (sortBy === "date") {
+      return [...people].sort((a, b) => {
+        const ta = a.last_seen_scene_time ? new Date(a.last_seen_scene_time).getTime() : 0;
+        const tb = b.last_seen_scene_time ? new Date(b.last_seen_scene_time).getTime() : 0;
+        return tb - ta;
+      });
+    }
+    // Default: label — labelled first, then unlabelled
     const { labelled, unlabelled } = splitByLabel(people);
     return [...labelled, ...unlabelled];
-  }, [people]);
+  }, [people, sortBy]);
 
   const totalPages = Math.ceil(sortedPeople.length / PAGE_SIZE);
   const paginatedPeople = sortedPeople.slice(
@@ -854,7 +866,7 @@ export function PeopleSettings() {
   const labelledTotal = sortedPeople.filter((p) => p.label).length;
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const separatorIndex = labelledTotal - pageStart;
-  const showSeparator = separatorIndex > 0 && separatorIndex < paginatedPeople.length;
+  const showSeparator = sortBy === "label" && separatorIndex > 0 && separatorIndex < paginatedPeople.length;
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(sortedPeople.length / PAGE_SIZE));
@@ -1048,6 +1060,25 @@ export function PeopleSettings() {
                   검색
                 </button>
               </form>
+
+              <div className="mb-4 flex items-center gap-2">
+                <span className="text-xs text-gray-500">정렬</span>
+                {(["label", "scenes", "date"] as const).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => { setSortBy(key); setCurrentPage(1); }}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                      sortBy === key
+                        ? "bg-indigo-100 text-indigo-700"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200",
+                    )}
+                  >
+                    {key === "label" ? "라벨순" : key === "scenes" ? "등장 장면 수" : "업로드 날짜"}
+                  </button>
+                ))}
+              </div>
 
               {!hasPeople ? (
                 <div className="flex flex-col items-center py-16">
