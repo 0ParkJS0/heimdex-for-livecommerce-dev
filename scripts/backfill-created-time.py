@@ -1,50 +1,46 @@
-"""Backfill google_created_time for drive_files missing it.
+"""Backfill capture_time in OpenSearch for videos missing google_created_time.
 
-Fetches createdTime from Google Drive API for each affected file,
-updates the DB, then updates capture_time in OpenSearch scenes.
+For files where google_created_time is NULL, uses google_modified_time
+as the best available fallback. Updates both the DB and OpenSearch.
 
-Usage (run inside drive-worker container on staging):
-    docker compose exec drive-worker python /workspace/scripts/backfill-created-time.py
-
-Or from host via SSH:
-    ssh -i ~/.ssh/heimdex-staging.pem ec2-user@3.34.75.63 \
-        "cd /opt/heimdex/dev-heimdex-for-livecommerce && \
-         docker compose exec -T drive-worker python /workspace/scripts/backfill-created-time.py"
+Usage (pipe into API container on staging):
+    cat scripts/backfill-created-time.py | ssh -i ~/.ssh/heimdex-staging.pem \
+        ec2-user@3.34.75.63 "cd /opt/heimdex/dev-heimdex-for-livecommerce && \
+        docker compose exec -T api python -"
 """
 
 import logging
 import os
 import sys
-import time
 
 import psycopg2
 import requests
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build as build_google_service
-from googleapiclient.errors import HttpError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-API_BASE = os.environ.get("INTERNAL_API_URL", "http://api:8000")
+API_BASE = os.environ.get("INTERNAL_API_URL", "http://localhost:8000")
 API_KEY = os.environ.get("DRIVE_INTERNAL_API_KEY", "")
 
 
-def get_files_missing_created_time(db_url: str) -> list[dict]:
-    """Query drive_files where google_created_time IS NULL."""
-    conn = psycopg2.connect(db_url)
+def _sync_db_url(db_url: str) -> str:
+    """Convert async SQLAlchemy URL to psycopg2-compatible URL."""
+    return db_url.replace("postgresql+asyncpg://", "postgresql://")
+
+
+def get_files_needing_backfill(db_url: str) -> list[dict]:
+    """Find files where google_created_time is NULL but google_modified_time exists."""
+    conn = psycopg2.connect(_sync_db_url(db_url))
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT df.google_file_id, df.video_id, df.file_name,
-                       df.org_id::text as org_id,
-                       dc.id as connection_id,
-                       dc.access_token, dc.refresh_token, dc.drive_id
-                FROM drive_files df
-                JOIN drive_connections dc ON df.connection_id = dc.id
-                WHERE df.google_created_time IS NULL
-                  AND df.is_deleted = false
-                ORDER BY df.created_at DESC
+                SELECT video_id, file_name, org_id::text,
+                       google_modified_time
+                FROM drive_files
+                WHERE google_created_time IS NULL
+                  AND google_modified_time IS NOT NULL
+                  AND is_deleted = false
+                ORDER BY created_at DESC
             """)
             columns = [desc[0] for desc in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
@@ -52,32 +48,16 @@ def get_files_missing_created_time(db_url: str) -> list[dict]:
         conn.close()
 
 
-def fetch_created_time_from_drive(
-    google_file_id: str,
-    credentials: Credentials,
-) -> str | None:
-    """Fetch createdTime for a single file from Google Drive API."""
-    service = build_google_service("drive", "v3", credentials=credentials)
-    try:
-        file_meta = service.files().get(
-            fileId=google_file_id,
-            fields="createdTime",
-            supportsAllDrives=True,
-        ).execute()
-        return file_meta.get("createdTime")
-    except HttpError as e:
-        logger.warning(f"  DRIVE_ERROR {google_file_id}: {e}")
-        return None
-
-
-def update_db(video_id: str, created_time: str, db_url: str) -> bool:
-    """Update google_created_time in drive_files."""
-    conn = psycopg2.connect(db_url)
+def update_db_created_time(video_id: str, modified_time: str, db_url: str) -> bool:
+    """Set google_created_time = google_modified_time as fallback."""
+    conn = psycopg2.connect(_sync_db_url(db_url))
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE drive_files SET google_created_time = %s WHERE video_id = %s AND google_created_time IS NULL",
-                (created_time, video_id),
+                """UPDATE drive_files
+                   SET google_created_time = google_modified_time
+                   WHERE video_id = %s AND google_created_time IS NULL""",
+                (video_id,),
             )
             updated = cur.rowcount
             conn.commit()
@@ -86,7 +66,7 @@ def update_db(video_id: str, created_time: str, db_url: str) -> bool:
         conn.close()
 
 
-def update_opensearch(video_id: str, capture_time: str, org_id: str) -> bool:
+def update_opensearch(video_id: str, capture_time: str, org_id: str) -> int:
     """Update capture_time in OpenSearch scenes via internal API."""
     url = f"{API_BASE}/internal/drive/sync/backfill-capture-time"
     headers = {
@@ -105,14 +85,12 @@ def update_opensearch(video_id: str, capture_time: str, org_id: str) -> bool:
         )
         if resp.status_code == 404:
             logger.warning(f"  OS_SKIP {video_id} — endpoint not found")
-            return False
+            return 0
         resp.raise_for_status()
-        data = resp.json()
-        logger.info(f"  OS_OK {video_id} — {data.get('updated', 0)} scenes updated")
-        return True
+        return resp.json().get("updated", 0)
     except Exception as e:
         logger.warning(f"  OS_ERROR {video_id}: {e}")
-        return False
+        return 0
 
 
 def main():
@@ -121,66 +99,37 @@ def main():
         logger.error("DATABASE_URL not set")
         sys.exit(1)
 
-    logger.info("Fetching files missing google_created_time...")
-    files = get_files_missing_created_time(db_url)
+    logger.info("Finding files missing google_created_time...")
+    files = get_files_needing_backfill(db_url)
 
     if not files:
-        logger.info("No files missing google_created_time — nothing to do")
+        logger.info("No files need backfill")
         return
 
     logger.info(f"Found {len(files)} files to backfill")
 
-    # Group by connection for credential reuse
-    by_connection: dict[str, list[dict]] = {}
+    db_count = 0
+    os_count = 0
+
     for f in files:
-        conn_id = str(f["connection_id"])
-        by_connection.setdefault(conn_id, []).append(f)
+        video_id = f["video_id"]
+        file_name = f["file_name"]
+        org_id = f["org_id"]
+        modified_time = f["google_modified_time"].isoformat()
 
-    db_updated = 0
-    os_updated = 0
-    failed = 0
+        # 1. Update DB: set google_created_time = google_modified_time
+        if update_db_created_time(video_id, modified_time, db_url):
+            db_count += 1
 
-    for conn_id, conn_files in by_connection.items():
-        first = conn_files[0]
-        creds = Credentials(
-            token=first["access_token"],
-            refresh_token=first["refresh_token"],
-        )
+        # 2. Update OpenSearch capture_time
+        scenes = update_opensearch(video_id, modified_time, org_id)
+        if scenes > 0:
+            os_count += 1
+            logger.info(f"  OK {video_id} ({file_name}) → {modified_time} ({scenes} scenes)")
+        else:
+            logger.info(f"  DB_ONLY {video_id} ({file_name}) → {modified_time} (no scenes in index)")
 
-        for f in conn_files:
-            google_file_id = f["google_file_id"]
-            video_id = f["video_id"]
-            file_name = f["file_name"]
-            org_id = f["org_id"]
-
-            # 1. Fetch createdTime from Google Drive
-            created_time = fetch_created_time_from_drive(google_file_id, creds)
-            if not created_time:
-                logger.warning(f"  SKIP {video_id} ({file_name}) — no createdTime from Drive")
-                failed += 1
-                continue
-
-            # 2. Update DB
-            if update_db(video_id, created_time, db_url):
-                logger.info(f"  DB_OK {video_id} ({file_name}) → {created_time}")
-                db_updated += 1
-            else:
-                logger.info(f"  DB_SKIP {video_id} ({file_name}) — already set")
-
-            # 3. Update OpenSearch scenes
-            if update_opensearch(video_id, created_time, org_id):
-                os_updated += 1
-
-            # Rate limit: Google Drive API quota
-            time.sleep(0.1)
-
-    logger.info(
-        f"Backfill complete: "
-        f"DB={db_updated} updated, "
-        f"OpenSearch={os_updated} updated, "
-        f"{failed} failed, "
-        f"{len(files)} total"
-    )
+    logger.info(f"Backfill complete: {db_count} DB rows, {os_count} videos in OpenSearch, {len(files)} total")
 
 
 if __name__ == "__main__":
