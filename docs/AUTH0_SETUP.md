@@ -8,13 +8,13 @@
 2. Type: **Single Page Application**
 3. Settings:
 
-| Field | Staging Value |
-|-------|---------------|
-| Allowed Callback URLs | `https://*.app.heimdexdemo.dev/auth/callback` |
-| Allowed Logout URLs | `https://*.app.heimdexdemo.dev` |
-| Allowed Web Origins | `https://*.app.heimdexdemo.dev` |
+| Field | Staging | Production |
+|-------|---------|------------|
+| Allowed Callback URLs | `https://*.app.heimdexdemo.dev/auth/callback` | `https://*.app.heimdex.co/auth/callback` |
+| Allowed Logout URLs | `https://*.app.heimdexdemo.dev` | `https://*.app.heimdex.co` |
+| Allowed Web Origins | `https://*.app.heimdexdemo.dev` | `https://*.app.heimdex.co` |
 
-For local testing, add `http://localhost:3000/auth/callback` and `http://localhost:3000` as well.
+For local testing (staging app only), add `http://localhost:3000/auth/callback` and `http://localhost:3000`.
 
 4. Advanced Settings → Grant Types: Ensure **Authorization Code** is enabled (PKCE is automatic).
 
@@ -23,11 +23,11 @@ For local testing, add `http://localhost:3000/auth/callback` and `http://localho
 1. Auth0 Dashboard → Applications → APIs → Create API
 2. Settings:
 
-| Field | Value |
-|-------|-------|
-| Name | Heimdex API |
-| Identifier (audience) | `https://api.heimdex.io` |
-| Signing Algorithm | RS256 |
+| Field | Staging | Production |
+|-------|---------|------------|
+| Name | heimdex api | Heimdex |
+| Identifier (audience) | `https://api.staging.heimdexdemo.dev` | `https://api.heimdex.co` |
+| Signing Algorithm | RS256 | RS256 |
 
 ### Auth0 Organizations (Recommended)
 
@@ -74,19 +74,19 @@ exports.onExecutePostLogin = async (event, api) => {
 
 ```bash
 NEXT_PUBLIC_AUTH0_ENABLED=true
-NEXT_PUBLIC_AUTH0_DOMAIN=heimdex-staging.auth0.com
-NEXT_PUBLIC_AUTH0_CLIENT_ID=<SPA client ID from step 1>
-NEXT_PUBLIC_AUTH0_AUDIENCE=https://api.heimdex.io
+NEXT_PUBLIC_AUTH0_DOMAIN=heimdex.jp.auth0.com
+NEXT_PUBLIC_AUTH0_CLIENT_ID=<SPA client ID from Auth0 Dashboard>
+NEXT_PUBLIC_AUTH0_AUDIENCE=<audience matching your Auth0 API identifier>
 ```
 
 ### Backend (services/api)
 
 ```bash
 AUTH0_ENABLED=true
-AUTH0_DOMAIN=heimdex-staging.auth0.com
-AUTH0_AUDIENCE=https://api.heimdex.io
+AUTH0_DOMAIN=heimdex.jp.auth0.com
+AUTH0_AUDIENCE=<audience matching your Auth0 API identifier>
 AUTH0_ORG_CLAIM=https://heimdex.io/org_id   # optional
-ENVIRONMENT=staging
+ENVIRONMENT=staging  # or production
 ```
 
 Note: `AUTH0_ALGORITHMS` defaults to `RS256` and does not need to be set.
