@@ -8,8 +8,8 @@ detection with the result.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "039"
-down_revision = "038"
+revision = "039_add_stt_split_columns"
+down_revision = "038_add_text_templates_table"
 branch_labels = None
 depends_on = None
 
