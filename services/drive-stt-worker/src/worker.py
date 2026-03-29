@@ -1,5 +1,6 @@
 import asyncio
 import importlib
+import json
 import logging
 import os
 import signal
@@ -32,12 +33,19 @@ def _make_sqs_callback(api_client, settings, stt_processor, diarizer=None):
 
     def callback(message):
         claimed_file = sqs_to_claimed_file(message)
+        # Extract callback_mode from raw SQS body (not part of ClaimedFile
+        # to avoid breaking the shared adapter used by playground + other workers)
+        body = message.body
+        if isinstance(body, str):
+            body = json.loads(body)
+        callback_mode = body.get("callback_mode", "enrich") if isinstance(body, dict) else "enrich"
         _process_single_stt(
             api_client=api_client,
             settings=settings,
             claimed_file=claimed_file,
             stt_processor=stt_processor,
             diarizer=diarizer,
+            callback_mode=callback_mode,
         )
 
     return callback
