@@ -14,7 +14,7 @@ dependencies = [
     "Pillow>=9.0",
     "einops>=0.7",
     "timm>=0.9",
-    "heimdex-media-contracts>=0.8.0",
+    "heimdex-media-contracts>=0.7.0",
     "heimdex-media-pipelines[vision]>=0.7.0",
 ]
 
