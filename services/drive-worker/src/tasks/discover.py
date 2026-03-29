@@ -316,7 +316,7 @@ def _incremental_sync_drive(
             driveId=conn.drive_id,
             includeItemsFromAllDrives=True,
             supportsAllDrives=True,
-            fields="nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,size,md5Checksum,modifiedTime,trashed,parents,webViewLink))",
+            fields="nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,trashed,parents,webViewLink))",
             spaces="drive",
         ).execute()
 

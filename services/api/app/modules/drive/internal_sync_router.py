@@ -717,6 +717,36 @@ async def delete_files(
     )
 
 
+@router.post("/backfill-capture-time")
+async def backfill_capture_time(
+    request: Request,
+    _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
+    scene_client=Depends(get_scene_opensearch_client),
+):
+    """Update capture_time in OpenSearch scenes for a video after DB backfill.
+
+    Body: { "video_id": "gd_xxx", "capture_time": "2026-03-17T06:04:42Z" }
+    """
+    body = await request.json()
+    video_id = body.get("video_id")
+    capture_time = body.get("capture_time")
+    org_id = request.headers.get("X-Heimdex-Org-Id", "")
+
+    if not video_id or not capture_time or not org_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="video_id, capture_time, and X-Heimdex-Org-Id required")
+
+    scene_ids = await scene_client.find_scene_ids_by_video_id(org_id, video_id)
+    if not scene_ids:
+        return {"updated": 0, "video_id": video_id}
+
+    partial_updates = [(sid, {"capture_time": capture_time}) for sid in scene_ids]
+    await scene_client.bulk_partial_update_scenes(partial_updates)
+
+    return {"updated": len(scene_ids), "video_id": video_id}
+
+
 @router.get("/connections/{connection_id}/watched-folders")
 async def get_connection_watched_folders(
     connection_id: UUID,
