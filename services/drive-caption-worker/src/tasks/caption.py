@@ -268,38 +268,95 @@ def _process_single_scene_caption(
                 use_gpu=settings.use_gpu,
             )
 
-        # Generate caption for this keyframe
+        # Determine prompt: VLM tags or standard caption
+        vlm_tags_enabled = getattr(scene_job, "vlm_tags_enabled", False)
+        transcript_raw = getattr(scene_job, "transcript_raw", None)
+
         caption_started = time.monotonic()
-        result = engine.caption(str(keyframe_path))
 
-        if not result.caption:
-            logger.info(
-                "scene_caption_empty",
-                extra={"scene_id": scene_id, "video_id": video_id},
-            )
-            return  # No caption to enrich — message consumed successfully
+        if vlm_tags_enabled:
+            # VLM tag extraction: enhanced prompt with transcript context
+            tagging_mod = importlib.import_module("heimdex_media_pipelines.vision.tagging")
+            tag_parser_mod = importlib.import_module("heimdex_media_contracts.tags.parser")
 
-        caption_text = result.caption[:5_000]
+            tag_prompt = tagging_mod.build_tag_prompt(transcript_raw or "")
+            max_tokens = tagging_mod.get_tag_max_tokens()
+            result = engine.caption(str(keyframe_path), prompt=tag_prompt)
 
-        # Enrich single scene via API
-        _post_enrich_to_api(
-            settings=settings,
-            org_id=org_id,
-            video_id=video_id,
-            scenes=[{"scene_id": scene_id, "scene_caption": caption_text}],
-        )
+            if not result.caption:
+                logger.info(
+                    "scene_caption_empty",
+                    extra={"scene_id": scene_id, "video_id": video_id, "vlm_tags": True},
+                )
+                return
 
-        logger.info(
-            "scene_caption_complete",
-            extra={
-                "org_id": org_id_str,
-                "video_id": video_id,
+            vlm_result = tag_parser_mod.parse_vlm_tag_output(result.caption)
+
+            enrich_scene: dict[str, Any] = {
                 "scene_id": scene_id,
-                "scene_index": scene_job.scene_index,
-                "caption_chars": len(caption_text),
-                "duration_ms": int((time.monotonic() - caption_started) * 1000),
-            },
-        )
+                "scene_caption": vlm_result.caption[:5_000],
+            }
+            if vlm_result.keyword_tags:
+                enrich_scene["keyword_tags"] = vlm_result.keyword_tags
+            if vlm_result.product_tags:
+                enrich_scene["product_tags"] = vlm_result.product_tags
+            if vlm_result.product_entities:
+                enrich_scene["product_entities"] = vlm_result.product_entities
+
+            _post_enrich_to_api(
+                settings=settings,
+                org_id=org_id,
+                video_id=video_id,
+                scenes=[enrich_scene],
+            )
+
+            logger.info(
+                "scene_caption_vlm_tags_complete",
+                extra={
+                    "org_id": org_id_str,
+                    "video_id": video_id,
+                    "scene_id": scene_id,
+                    "scene_index": scene_job.scene_index,
+                    "caption_chars": len(vlm_result.caption),
+                    "keyword_tags": vlm_result.keyword_tags,
+                    "product_tags": vlm_result.product_tags,
+                    "product_entities": vlm_result.product_entities,
+                    "parse_success": vlm_result.parse_success,
+                    "has_transcript": bool(transcript_raw),
+                    "duration_ms": int((time.monotonic() - caption_started) * 1000),
+                },
+            )
+        else:
+            # Standard caption (existing behavior)
+            result = engine.caption(str(keyframe_path))
+
+            if not result.caption:
+                logger.info(
+                    "scene_caption_empty",
+                    extra={"scene_id": scene_id, "video_id": video_id},
+                )
+                return
+
+            caption_text = result.caption[:5_000]
+
+            _post_enrich_to_api(
+                settings=settings,
+                org_id=org_id,
+                video_id=video_id,
+                scenes=[{"scene_id": scene_id, "scene_caption": caption_text}],
+            )
+
+            logger.info(
+                "scene_caption_complete",
+                extra={
+                    "org_id": org_id_str,
+                    "video_id": video_id,
+                    "scene_id": scene_id,
+                    "scene_index": scene_job.scene_index,
+                    "caption_chars": len(caption_text),
+                    "duration_ms": int((time.monotonic() - caption_started) * 1000),
+                },
+            )
     except Exception:
         logger.exception(
             "scene_caption_failed",
