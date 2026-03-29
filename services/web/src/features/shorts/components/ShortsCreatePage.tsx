@@ -10,7 +10,6 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { cn } from "@/lib/utils";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 import type { VideoScene, VideoScenesResponse } from "@/lib/types";
-import { FEATURES } from "@/lib/feature-flags";
 
 const SPEAKER_BADGE_COLORS = ["bg-red-500", "bg-blue-500", "bg-green-500", "bg-amber-500"];
 
@@ -155,7 +154,7 @@ export function SceneCard({
               : scene.transcript_raw}
           </p>
         ) : null}
-        {FEATURES.TAGS_ENABLED && tags.length > 0 && (
+        {tags.length > 0 && (
           <div className="mt-2 flex flex-wrap justify-end gap-1.5">
             {tags.map((tag) => (
               <span

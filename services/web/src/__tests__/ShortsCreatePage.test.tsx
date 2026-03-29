@@ -9,9 +9,6 @@ import type { VideoScene, VideoScenesResponse } from "@/lib/types";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
-vi.mock("@/lib/feature-flags", () => ({
-  FEATURES: { TAGS_ENABLED: true },
-}));
 
 vi.mock("@/components/SceneThumbnail", () => ({
   SceneThumbnail: () => <div data-testid="scene-thumbnail" />,

@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 import { useOrgSettings } from "@/lib/orgSettings";
 import { getVideoCardThumbnailClass, type ThumbnailAspectRatio } from "@/lib/thumbnailUtils";
-import { FEATURES } from "@/lib/feature-flags";
 
 interface VideoCardProps {
   video: VideoSummary;
@@ -101,7 +100,7 @@ export function VideoCard({ video, onSelect, agentAvailable }: VideoCardProps) {
             )}
           </div>
 
-          {FEATURES.TAGS_ENABLED && allTags.length > 0 && (
+          {allTags.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {allTags.map((tag) => (
                 <span

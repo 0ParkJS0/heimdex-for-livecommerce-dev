@@ -15,9 +15,6 @@ import type {
   VideoFacets,
 } from "@/lib/types";
 
-vi.mock("@/lib/feature-flags", () => ({
-  FEATURES: { TAGS_ENABLED: true },
-}));
 
 vi.mock("@/lib/auth", () => ({
   useAuth: () => ({
