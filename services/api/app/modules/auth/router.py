@@ -12,6 +12,17 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+@router.get("/org-info")
+async def org_info(
+    org_ctx: OrgContext = Depends(get_current_org),
+):
+    """Return Auth0 org ID for the current subdomain. Unauthenticated."""
+    return {
+        "org_slug": org_ctx.org_slug,
+        "auth0_org_id": org_ctx.auth0_org_id,
+    }
+
+
 @router.post("/dev-login", response_model=DevLoginResponse)
 async def dev_login(
     request: DevLoginRequest,

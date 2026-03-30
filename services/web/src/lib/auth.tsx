@@ -9,7 +9,43 @@ const AUTH0_ENABLED = process.env.NEXT_PUBLIC_AUTH0_ENABLED === "true";
 const AUTH0_DOMAIN = process.env.NEXT_PUBLIC_AUTH0_DOMAIN || "";
 const AUTH0_CLIENT_ID = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID || "";
 const AUTH0_AUDIENCE = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE || "";
-const AUTH0_ORGANIZATION = process.env.NEXT_PUBLIC_AUTH0_ORGANIZATION || "";
+// Auth0 organization is resolved dynamically from the subdomain via
+// /api/auth/org-info. Falls back to NEXT_PUBLIC_AUTH0_ORGANIZATION env var
+// during SSR or if the API call fails.
+const AUTH0_ORGANIZATION_FALLBACK = process.env.NEXT_PUBLIC_AUTH0_ORGANIZATION || "";
+
+function getInitialAuth0Org(): string {
+  if (typeof window === "undefined") return AUTH0_ORGANIZATION_FALLBACK;
+  // Invitation URL has organization= param — use it directly
+  const params = new URLSearchParams(window.location.search);
+  const orgParam = params.get("organization");
+  if (orgParam) return orgParam;
+  return AUTH0_ORGANIZATION_FALLBACK;
+}
+
+// Mutable — updated after /api/auth/org-info fetch completes
+let _resolvedAuth0Org = getInitialAuth0Org();
+let _orgInfoFetched = false;
+
+async function fetchAuth0OrgId(): Promise<string> {
+  if (_orgInfoFetched) return _resolvedAuth0Org;
+  try {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+    const resp = await fetch(`${apiUrl}/api/auth/org-info`);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.auth0_org_id) {
+        _resolvedAuth0Org = data.auth0_org_id;
+      }
+    }
+  } catch {
+    // Fallback to env var
+  }
+  _orgInfoFetched = true;
+  return _resolvedAuth0Org;
+}
+
+const AUTH0_ORGANIZATION = getInitialAuth0Org();
 
 // Validate Auth0 configuration
 if (AUTH0_ENABLED && (!AUTH0_DOMAIN || !AUTH0_CLIENT_ID)) {
@@ -155,7 +191,7 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
         const token = await getAccessTokenSilently({
           authorizationParams: {
             audience: AUTH0_AUDIENCE,
-            ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+            ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
           },
         });
         const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -175,11 +211,12 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, [isAuthenticated, isLoading, getAccessTokenSilently]);
 
-  const login = useCallback(() => {
+  const login = useCallback(async () => {
+    await fetchAuth0OrgId();
     loginWithRedirect({
       authorizationParams: {
         audience: AUTH0_AUDIENCE,
-        ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+        ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
       },
     });
   }, [loginWithRedirect]);
@@ -189,7 +226,7 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
       await loginWithRedirect({
         authorizationParams: {
           audience: AUTH0_AUDIENCE,
-          ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+          ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
         },
       });
     },
@@ -209,7 +246,7 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
       const token = await getAccessTokenSilently({
         authorizationParams: {
           audience: AUTH0_AUDIENCE,
-          ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+          ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
         },
       });
       return token;
@@ -247,7 +284,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the dev provider (which returns a safe loading state) to avoid the SDK
   // throwing null when window/document are unavailable.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    fetchAuth0OrgId().then(() => setMounted(true));
+  }, []);
 
   if (!AUTH0_ENABLED || !mounted) {
     return <DevAuthProvider>{children}</DevAuthProvider>;
@@ -259,7 +298,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     redirect_uri: redirectUri,
     audience: AUTH0_AUDIENCE,
     scope: "openid profile email",
-    ...(AUTH0_ORGANIZATION ? { organization: AUTH0_ORGANIZATION } : {}),
+    ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
   };
 
   return (
