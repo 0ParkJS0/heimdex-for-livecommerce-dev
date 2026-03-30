@@ -190,14 +190,15 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated || isLoading) return;
     (async () => {
       try {
+        // Don't pass organization to getAccessTokenSilently — the token
+        // already has the org from the login flow. Passing a mismatched
+        // org here causes silent failures.
         const token = await getAccessTokenSilently({
           authorizationParams: {
             audience: AUTH0_AUDIENCE,
-            ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
           },
         });
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
-        const res = await fetch(`${apiUrl}/api/auth/me`, {
+        const res = await fetch("/api/auth/me", {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
@@ -248,7 +249,6 @@ function Auth0AuthProvider({ children }: { children: ReactNode }) {
       const token = await getAccessTokenSilently({
         authorizationParams: {
           audience: AUTH0_AUDIENCE,
-          ...(_resolvedAuth0Org ? { organization: _resolvedAuth0Org } : {}),
         },
       });
       return token;
