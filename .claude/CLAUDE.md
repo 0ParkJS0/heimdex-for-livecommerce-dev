@@ -142,6 +142,10 @@ Each org has its own Auth0 Organization. The frontend resolves the correct org v
 
 Local dev requires `/etc/hosts` entry: `127.0.0.1 devorg.app.heimdex.local`
 
+### Google Drive Folder Sync
+
+Watched folders support **nested subfolders** — files at any depth are discovered and ingested. The `_expand_watched_folder_ids()` helper in `discover.py` recursively enumerates subfolders via `_list_subfolders()` (BFS) and adds them to the watched set. Subfolders inherit the ancestor's `content_types` setting.
+
 ## Docker Services
 
 | Service | Port | Profile | Status |
