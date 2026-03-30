@@ -118,6 +118,28 @@ volumes:
 
 Subdomain-based: `{org-slug}.app.heimdex.co`. API extracts org from `Host` header. All data is org-scoped.
 
+### Frontend API Routing
+
+`getApiBaseUrl()` in `services/web/src/lib/api/utils.ts` resolves the API base URL dynamically:
+- `NEXT_PUBLIC_API_URL` env var if set (local dev: `http://devorg.app.heimdex.local:8000`)
+- `window.location.origin` in browser (production: each subdomain calls its own API)
+- Empty string during SSR (safety fallback)
+
+**Never hardcode a subdomain URL in frontend code.** All API modules use `getApiBaseUrl()`. The docker-compose uses `${NEXT_PUBLIC_API_URL-default}` (single dash) so empty values in staging/production configs are respected.
+
+### Auth0 Multi-Tenant
+
+Each org has its own Auth0 Organization. The frontend resolves the correct org via `/api/auth/org-info` (unauthenticated, returns `auth0_org_id` from the Host header subdomain). `NEXT_PUBLIC_AUTH0_ORGANIZATION` env var is a fallback only.
+
+### New Customer Onboarding
+
+1. **Auth0**: Create organization, enable Username-Password + Google OAuth connections, invite users
+2. **Database**: Insert org record with `auth0_org_id` + create admin user
+3. **DNS**: Add A record in Squarespace for `{slug}.app.heimdex.co` → production EC2 IP
+4. **SSL**: Expand Let's Encrypt cert: `sudo certbot certonly --nginx --cert-name livenow.app.heimdex.co -d livenow.app.heimdex.co -d {slug}.app.heimdex.co -d app.heimdex.co`
+5. **Nginx**: Already configured for `*.app.heimdex.co` — no changes needed
+6. **No web rebuild needed** — `getApiBaseUrl()` resolves dynamically
+
 Local dev requires `/etc/hosts` entry: `127.0.0.1 devorg.app.heimdex.local`
 
 ## Docker Services
@@ -235,7 +257,9 @@ When fixing data that lives in both PostgreSQL and OpenSearch:
 - Workers importing from `app.db` or `app.models` (coupling check will catch this)
 - Running `docker compose up -d` without `--no-deps` on production
 - Confusing `heimdex-*` (staging) and `livenow-*` (production) SQS queue prefixes
-- Changing `NEXT_PUBLIC_*` vars without rebuilding the web container
+- Changing `NEXT_PUBLIC_*` vars without rebuilding the web container (they are baked at build time)
+- Hardcoding subdomain URLs (e.g., `livenow.app.heimdex.co`) in frontend code — use `getApiBaseUrl()` instead
+- Using `${VAR:-default}` (colon-dash) for `NEXT_PUBLIC_API_URL` in docker-compose — must use `${VAR-default}` (single dash) so empty values are respected
 - Setting `AUTH0_ENABLED=false` with `ENVIRONMENT=staging` or `production` (crashes API)
 - Setting `heimdex-media-contracts>=X.Y.Z` where X.Y.Z is not on PyPI (breaks Docker build)
 - Updating DB without updating OpenSearch (stale search results / dates)
