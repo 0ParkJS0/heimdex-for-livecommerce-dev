@@ -208,7 +208,7 @@ services:
       context: ./services/web
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://devorg.app.heimdex.local:8000}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL-http://devorg.app.heimdex.local:8000}
         - NEXT_PUBLIC_AUTH0_ENABLED=${NEXT_PUBLIC_AUTH0_ENABLED:-false}
         - NEXT_PUBLIC_AUTH0_DOMAIN=${NEXT_PUBLIC_AUTH0_DOMAIN:-}
         - NEXT_PUBLIC_AUTH0_CLIENT_ID=${NEXT_PUBLIC_AUTH0_CLIENT_ID:-}
