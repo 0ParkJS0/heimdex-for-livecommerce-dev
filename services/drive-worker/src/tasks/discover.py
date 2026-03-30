@@ -14,10 +14,12 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build as build_google_service
 from googleapiclient.errors import HttpError
 
-from heimdex_worker_sdk.content_type import is_image, is_supported_mime
+from heimdex_worker_sdk.content_type import IMAGE_MIME_TYPES, is_image, is_supported_mime
 from heimdex_worker_sdk.internal_api import InternalAPIClient
 
-MAX_IMAGE_BATCH = 200
+# Build the Drive API mimeType filter from the canonical set
+_IMAGE_MIME_FILTER = " or ".join(f"mimeType='{m}'" for m in sorted(IMAGE_MIME_TYPES))
+_MIME_QUERY = f"(mimeType contains 'video/' or {_IMAGE_MIME_FILTER})"
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,7 @@ def _should_ingest_file(
 
 def _is_image_mime(mime_type: str) -> bool:
     """Check if MIME type is a supported image type."""
-    return mime_type in {
-        "image/jpeg", "image/png", "image/webp",
-        "image/gif", "image/bmp", "image/tiff",
-    }
+    return is_image(mime_type)
 
 
 def _expand_watched_folder_ids(
@@ -277,7 +276,6 @@ def _full_scan_drive(
     items: list[dict[str, Any]] = []
     scanned_google_file_ids: set[str] = set()
     page_token: str | None = None
-    image_count = 0
 
     while True:
         kwargs: dict[str, Any] = {
@@ -285,7 +283,7 @@ def _full_scan_drive(
             "driveId": conn.drive_id,
             "includeItemsFromAllDrives": True,
             "supportsAllDrives": True,
-            "q": "(mimeType contains 'video/' or mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp') and trashed = false",
+            "q": f"{_MIME_QUERY} and trashed = false",
             "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents,webViewLink)",
             "pageSize": 100,
         }
@@ -318,11 +316,6 @@ def _full_scan_drive(
             google_file_id = file.get("id")
             if not google_file_id:
                 continue
-            mime_type = file.get("mimeType", "")
-            if is_image(mime_type) and image_count >= MAX_IMAGE_BATCH:
-                continue
-            if is_image(mime_type):
-                image_count += 1
             scanned_google_file_ids.add(google_file_id)
             items.append(_file_to_upsert_item(file, path_map.get(google_file_id)))
 
@@ -564,13 +557,12 @@ def _full_scan_folder(api_client: InternalAPIClient, service: Any, conn: Any) ->
     folder_path_prefix = conn.folder_path or conn.folder_name or ""
     items: list[dict[str, Any]] = []
     scanned_google_file_ids: set[str] = set()
-    image_count = 0
 
     for current_folder_id in all_folder_ids:
         page_token: str | None = None
         while True:
             kwargs: dict[str, Any] = {
-                "q": f"'{current_folder_id}' in parents and (mimeType contains 'video/' or mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp') and trashed = false",
+                "q": f"'{current_folder_id}' in parents and {_MIME_QUERY} and trashed = false",
                 "fields": "nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,createdTime,parents,webViewLink)",
                 "pageSize": 100,
                 "supportsAllDrives": True,
@@ -586,11 +578,6 @@ def _full_scan_folder(api_client: InternalAPIClient, service: Any, conn: Any) ->
                 google_file_id = file.get("id")
                 if not google_file_id:
                     continue
-                mime_type = file.get("mimeType", "")
-                if is_image(mime_type) and image_count >= MAX_IMAGE_BATCH:
-                    continue
-                if is_image(mime_type):
-                    image_count += 1
                 scanned_google_file_ids.add(google_file_id)
                 file_name = file.get("name", "")
                 drive_path = f"{folder_path_prefix}/{file_name}" if folder_path_prefix else file_name

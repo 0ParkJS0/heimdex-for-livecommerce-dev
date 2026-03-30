@@ -13,6 +13,8 @@ IMAGE_MIME_TYPES: frozenset[str] = frozenset({
     "image/jpeg",
     "image/png",
     "image/webp",
+    "image/heic",
+    "image/heif",
 })
 
 VIDEO_MIME_PREFIX: str = "video/"
