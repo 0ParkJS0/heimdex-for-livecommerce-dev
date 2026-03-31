@@ -303,6 +303,10 @@ def _process_single_scene_caption(
             if vlm_result.product_entities:
                 enrich_scene["product_entities"] = vlm_result.product_entities
 
+            ai_tags_enabled = getattr(scene_job, "ai_tags_enabled", False)
+            if ai_tags_enabled and vlm_result.ai_tags:
+                enrich_scene["ai_tags"] = vlm_result.ai_tags
+
             _post_enrich_to_api(
                 settings=settings,
                 org_id=org_id,
@@ -321,6 +325,8 @@ def _process_single_scene_caption(
                     "keyword_tags": vlm_result.keyword_tags,
                     "product_tags": vlm_result.product_tags,
                     "product_entities": vlm_result.product_entities,
+                    "ai_tags": vlm_result.ai_tags,
+                    "ai_tags_enabled": getattr(scene_job, "ai_tags_enabled", False),
                     "parse_success": vlm_result.parse_success,
                     "has_transcript": bool(transcript_raw),
                     "duration_ms": int((time.monotonic() - caption_started) * 1000),
