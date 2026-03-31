@@ -19,14 +19,16 @@ export function AvatarThumbnail({
   cacheBuster?: number;
 }) {
   const [imgError, setImgError] = useState(false);
-  const faceThumbnailUrl = getFaceThumbnailUrl(person.person_cluster_id, cacheBuster);
+  const isCustom = person.thumbnail_source && person.thumbnail_source !== "auto";
+  // When thumbnail_source is custom, always cache-bust to avoid stale browser cache
+  const bust = cacheBuster || (isCustom ? 1 : undefined);
+  const faceThumbnailUrl = getFaceThumbnailUrl(person.person_cluster_id, bust);
   const sceneThumbnailUrl =
     person.representative_video_id && person.representative_scene_id
       ? getCloudThumbnailUrl(person.representative_video_id, person.representative_scene_id)
       : null;
   const [useFallback, setUseFallback] = useState(false);
   const thumbnailUrl = !useFallback ? faceThumbnailUrl : sceneThumbnailUrl;
-  const isCustom = person.thumbnail_source && person.thumbnail_source !== "auto";
 
   return (
     <div
