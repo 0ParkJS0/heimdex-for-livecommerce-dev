@@ -140,9 +140,17 @@ async def get_exemplar_thumbnail(
     _validate_path_component(exemplar_id, "exemplar_id")
 
     settings = get_settings()
+    org_id_str = str(org_ctx.org_id)
     root = Path(settings.thumbnail_storage_dir)
-    thumbnail_path = root / str(org_ctx.org_id) / "faces" / "exemplars" / f"{exemplar_id}.jpg"
+    thumbnail_path = root / org_id_str / "faces" / "exemplars" / f"{exemplar_id}.jpg"
     _validate_resolved_path(thumbnail_path, root)
+
+    if settings.face_thumbnail_s3_primary:
+        return await _serve_face_s3_primary(
+            org_id_str, exemplar_id, thumbnail_path,
+            is_exemplar=True, cache_max_age=604800,
+        )
+
     if thumbnail_path.exists():
         return FileResponse(
             path=thumbnail_path,
@@ -152,7 +160,7 @@ async def get_exemplar_thumbnail(
 
     # Fallback to S3
     return await _get_s3_face_thumbnail(
-        str(org_ctx.org_id), exemplar_id, is_exemplar=True,
+        org_id_str, exemplar_id, is_exemplar=True,
         cache_max_age=604800,
     )
 
@@ -165,9 +173,17 @@ async def get_face_thumbnail(
     _validate_path_component(person_cluster_id, "person_cluster_id")
 
     settings = get_settings()
+    org_id_str = str(org_ctx.org_id)
     root = Path(settings.thumbnail_storage_dir)
-    thumbnail_path = root / str(org_ctx.org_id) / "faces" / f"{person_cluster_id}.jpg"
+    thumbnail_path = root / org_id_str / "faces" / f"{person_cluster_id}.jpg"
     _validate_resolved_path(thumbnail_path, root)
+
+    if settings.face_thumbnail_s3_primary:
+        return await _serve_face_s3_primary(
+            org_id_str, person_cluster_id, thumbnail_path,
+            is_exemplar=False, cache_max_age=60,
+        )
+
     if thumbnail_path.exists():
         return FileResponse(
             path=thumbnail_path,
@@ -177,7 +193,7 @@ async def get_face_thumbnail(
 
     # Fallback to S3
     return await _get_s3_face_thumbnail(
-        str(org_ctx.org_id), person_cluster_id, is_exemplar=False,
+        org_id_str, person_cluster_id, is_exemplar=False,
         cache_max_age=60,
     )
 
@@ -206,6 +222,52 @@ async def get_thumbnail(
         return await _get_s3_thumbnail(str(org_ctx.org_id), video_id, scene_id)
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail not found")
+
+
+async def _serve_face_s3_primary(
+    org_id: str, identifier: str, disk_path: Path,
+    *, is_exemplar: bool, cache_max_age: int,
+):
+    """S3-primary mode: try S3 first, fall back to disk."""
+    from fastapi.responses import Response
+
+    from app.config import get_settings as _get_settings
+    from app.modules.drive.keys import face_thumbnail_s3_key, exemplar_thumbnail_s3_key
+    from app.storage.s3 import S3Client
+
+    try:
+        settings = _get_settings()
+        s3 = S3Client(bucket=settings.drive_s3_bucket)
+        s3_key = (
+            exemplar_thumbnail_s3_key(org_id, identifier)
+            if is_exemplar
+            else face_thumbnail_s3_key(org_id, identifier)
+        )
+        data = await s3.get_object_bytes_async(s3_key)
+        if data:
+            return Response(
+                content=data,
+                media_type="image/jpeg",
+                headers={"Cache-Control": f"public, max-age={cache_max_age}"},
+            )
+    except Exception:
+        logger.warning(
+            "face_thumbnail_s3_primary_read_failed",
+            org_id=org_id,
+            identifier=identifier,
+            exc_info=True,
+        )
+
+    # Fall back to disk
+    if disk_path.exists():
+        return FileResponse(
+            path=disk_path,
+            media_type="image/jpeg",
+            headers={"Cache-Control": f"public, max-age={cache_max_age}"},
+        )
+
+    label = "Exemplar thumbnail" if is_exemplar else "Thumbnail"
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} not found")
 
 
 async def _get_s3_face_thumbnail(
