@@ -37,6 +37,7 @@ heimdex-media-contracts = { path = "../../../heimdex-media-contracts" }
 [project.optional-dependencies]
 analytics = [
     "pyarrow>=14.0.0",
+    "google-cloud-bigquery>=3.25.0",
 ]
 dev = [
     "pytest>=7.4.4",
