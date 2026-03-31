@@ -23,7 +23,7 @@ export function ThumbnailGalleryModal({
   onClose,
   onThumbnailChanged,
 }: ThumbnailGalleryModalProps) {
-  const [exemplars, setExemplars] = useState<ExemplarResponse[]>([]);
+  const [availableExemplars, setAvailableExemplars] = useState<ExemplarResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +34,20 @@ export function ThumbnailGalleryModal({
     setLoading(true);
     setError(null);
     getExemplars(personClusterId, getToken)
-      .then((res) => setExemplars(res.exemplars))
+      .then(async (res) => {
+        // Filter to only exemplars that have crop files on disk
+        const checks = await Promise.all(
+          res.exemplars.map(async (e) => {
+            try {
+              const resp = await fetch(e.thumbnail_url, { method: "HEAD" });
+              return resp.ok ? e : null;
+            } catch {
+              return null;
+            }
+          })
+        );
+        setAvailableExemplars(checks.filter((e): e is ExemplarResponse => e !== null));
+      })
       .catch(() => setError("갤러리를 불러올 수 없습니다"))
       .finally(() => setLoading(false));
   }, [isOpen, personClusterId, getToken]);
@@ -115,9 +128,9 @@ export function ThumbnailGalleryModal({
           <div className="mt-6 flex items-center justify-center py-12">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
           </div>
-        ) : exemplars.length > 0 ? (
+        ) : availableExemplars.length > 0 ? (
           <div className="mt-4 grid grid-cols-4 gap-2">
-            {exemplars.map((e) => (
+            {availableExemplars.map((e) => (
               <button
                 key={e.exemplar_id}
                 type="button"
@@ -136,7 +149,7 @@ export function ThumbnailGalleryModal({
           </div>
         ) : (
           <div className="mt-6 py-8 text-center text-sm text-gray-400">
-            감지된 얼굴이 없습니다. 새 영상을 처리하면 갤러리가 채워집니다.
+            갤러리에 사용 가능한 얼굴이 없습니다. 새 영상을 처리하면 갤러리가 채워집니다.
           </div>
         )}
 
