@@ -3,12 +3,14 @@ import {
   BulkDeleteRequest,
   BulkDeleteResponse,
   ExcludePreferencesResponse,
+  ExemplarListResponse,
   MergePersonRequest,
   MergePersonResponse,
   PeopleListResponse,
   PersonTimelineResponse,
   PersonVideosResponse,
   RenamePersonResponse,
+  ThumbnailResponse,
   VideoExclusionsResponse,
 } from "@/lib/types";
 import { getApiBaseUrl } from "./utils";
@@ -212,4 +214,75 @@ export async function mergePeople(
     getToken,
     request,
   );
+}
+
+export async function getExemplars(
+  personClusterId: string,
+  getToken?: TokenGetter,
+): Promise<ExemplarListResponse> {
+  return apiRequest<ExemplarListResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/exemplars`,
+    "GET",
+    getToken,
+  );
+}
+
+export async function selectThumbnailFromExemplar(
+  personClusterId: string,
+  exemplarId: string,
+  getToken?: TokenGetter,
+): Promise<ThumbnailResponse> {
+  return apiRequest<ThumbnailResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/thumbnail`,
+    "PATCH",
+    getToken,
+    { exemplar_id: exemplarId },
+  );
+}
+
+export async function uploadCustomThumbnail(
+  personClusterId: string,
+  file: File,
+  getToken?: TokenGetter,
+): Promise<ThumbnailResponse> {
+  const headers: Record<string, string> = {};
+  if (getToken) {
+    const token = await getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/people/${encodeURIComponent(personClusterId)}/thumbnail`,
+    { method: "POST", headers, body: formData },
+  );
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw ApiError.fromResponse(response.status, body);
+  }
+  return response.json();
+}
+
+export async function resetThumbnail(
+  personClusterId: string,
+  getToken?: TokenGetter,
+): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (getToken) {
+    const token = await getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(
+    `${getApiBaseUrl()}/api/people/${encodeURIComponent(personClusterId)}/thumbnail`,
+    { method: "DELETE", headers },
+  );
+
+  if (!response.ok && response.status !== 204) {
+    const body = await response.json().catch(() => null);
+    throw ApiError.fromResponse(response.status, body);
+  }
 }

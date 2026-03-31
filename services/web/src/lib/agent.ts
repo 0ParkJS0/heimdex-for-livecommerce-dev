@@ -102,8 +102,9 @@ export function getCloudThumbnailUrl(videoId: string, sceneId: string): string {
   return `/api/thumbnails/${encodeURIComponent(videoId)}/${encodeURIComponent(sceneId)}`;
 }
 
-export function getFaceThumbnailUrl(personClusterId: string): string {
-  return `/api/thumbnails/faces/${encodeURIComponent(personClusterId)}`;
+export function getFaceThumbnailUrl(personClusterId: string, cacheBuster?: number): string {
+  const suffix = cacheBuster ? `?v=${cacheBuster}` : "";
+  return `/api/thumbnails/faces/${encodeURIComponent(personClusterId)}${suffix}`;
 }
 
 export interface AgentSource {

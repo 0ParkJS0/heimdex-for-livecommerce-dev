@@ -30,6 +30,7 @@ import { ScenePreviewTooltip } from "@/components/ScenePreviewTooltip";
 import { AvatarThumbnail } from "@/components/people/AvatarThumbnail";
 import { DeletePersonDialog } from "./DeletePersonDialog";
 import { MergeConfirmDialog } from "./MergeConfirmDialog";
+import { ThumbnailGalleryModal } from "./ThumbnailGalleryModal";
 import { SelectionTray } from "./SelectionTray";
 import { TimelineBar } from "./TimelineBar";
 import { splitByLabel } from "@/lib/people-utils";
@@ -140,16 +141,20 @@ function PersonAvatar({
   onToggle,
   onDelete,
   onRename,
+  onGalleryOpen,
   agentAvailable,
   isDragActive,
+  thumbnailVersion,
 }: {
   person: PersonResponse;
   isSelected: boolean;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
   onRename?: () => void;
+  onGalleryOpen?: (id: string) => void;
   agentAvailable: boolean;
   isDragActive: boolean;
+  thumbnailVersion?: number;
 }) {
   const {
     attributes,
@@ -226,6 +231,8 @@ function PersonAvatar({
           <AvatarThumbnail
             person={person}
             agentAvailable={agentAvailable}
+            cacheBuster={thumbnailVersion}
+            onClick={onGalleryOpen ? () => onGalleryOpen(person.person_cluster_id) : undefined}
             className={cn(
               isSelected && "ring-2 ring-indigo-500 ring-offset-2",
               !isSelected && !isOver && "hover:bg-gray-200",
@@ -806,6 +813,8 @@ export function PeopleSettings() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"label" | "scenes" | "date">("label");
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [galleryTargetId, setGalleryTargetId] = useState<string | null>(null);
+  const [thumbnailVersion, setThumbnailVersion] = useState(0);
   const [bulkMergeOpen, setBulkMergeOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
@@ -1118,8 +1127,10 @@ export function PeopleSettings() {
                           onToggle={toggleSelection}
                           onDelete={setDeleteTargetId}
                           onRename={() => toggleSelection(person.person_cluster_id)}
+                          onGalleryOpen={setGalleryTargetId}
                           agentAvailable={agentAvailable}
                           isDragActive={activeDragPerson !== null}
+                          thumbnailVersion={thumbnailVersion}
                         />
                       </Fragment>
                     ))}
@@ -1203,6 +1214,18 @@ export function PeopleSettings() {
           onConfirm={handleBulkDelete}
         />
       )}
+      <ThumbnailGalleryModal
+        isOpen={galleryTargetId !== null}
+        personClusterId={galleryTargetId ?? ""}
+        personLabel={people.find((p) => p.person_cluster_id === galleryTargetId)?.label ?? null}
+        thumbnailSource={people.find((p) => p.person_cluster_id === galleryTargetId)?.thumbnail_source ?? "auto"}
+        getToken={getAccessToken}
+        onClose={() => setGalleryTargetId(null)}
+        onThumbnailChanged={() => {
+          setThumbnailVersion((v) => v + 1);
+          fetchPeople();
+        }}
+      />
     </div>
   );
 }

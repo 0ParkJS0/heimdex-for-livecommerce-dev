@@ -5,6 +5,7 @@ export interface PersonResponse {
   last_seen_scene_time: string | null;
   representative_video_id: string | null;
   representative_scene_id: string | null;
+  thumbnail_source?: string;
   is_excluded: boolean;
   matched_video_titles?: string[] | null;
 }
@@ -86,4 +87,22 @@ export interface VideoPeopleResponse {
   video_id: string;
   people: PersonResponse[];
   total: number;
+}
+
+export interface ExemplarResponse {
+  exemplar_id: string;
+  video_id: string;
+  scene_id: string;
+  quality: number;
+  thumbnail_url: string;
+}
+
+export interface ExemplarListResponse {
+  exemplars: ExemplarResponse[];
+  total: number;
+}
+
+export interface ThumbnailResponse {
+  person_cluster_id: string;
+  thumbnail_source: string;
 }
