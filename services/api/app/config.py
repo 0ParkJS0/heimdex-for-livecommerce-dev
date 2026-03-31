@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     people_enabled: bool = True
     face_match_threshold: float = 0.55
     face_thumbnail_s3_primary: bool = False
+    highlight_reel_enabled: bool = False
 
     # --- Google Drive connector ---
     drive_connector_enabled: bool = False

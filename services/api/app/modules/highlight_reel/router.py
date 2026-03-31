@@ -44,8 +44,8 @@ async def generate_highlight_preview(
     video_excl_repo=Depends(get_people_video_exclusion_repository),
 ):
     settings = get_settings()
-    if not settings.people_enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="People feature is not enabled")
+    if not settings.people_enabled or not settings.highlight_reel_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight reel feature is not enabled")
 
     adapter = OpenSearchSceneDataAdapter(scene_client, video_excl_repo)
     service = HighlightReelService(adapter)
@@ -76,8 +76,8 @@ async def render_highlight_reel(
     db: AsyncSession = Depends(get_db_session),
 ):
     settings = get_settings()
-    if not settings.people_enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="People feature is not enabled")
+    if not settings.people_enabled or not settings.highlight_reel_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Highlight reel feature is not enabled")
 
     if not request.clips:
         raise HTTPException(

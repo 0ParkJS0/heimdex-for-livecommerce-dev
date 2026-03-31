@@ -61,6 +61,12 @@ def _mock_adapter(scenes, excluded=None, titles=None):
     return adapter
 
 
+_SETTINGS_PATCH = patch(
+    "app.modules.highlight_reel.router.get_settings",
+    return_value=MagicMock(people_enabled=True, highlight_reel_enabled=True),
+)
+
+
 def _setup_overrides():
     from app.dependencies import (
         get_db_session,
@@ -80,9 +86,11 @@ def _setup_overrides():
     app.dependency_overrides[get_db_session] = lambda: AsyncMock()
     app.dependency_overrides[get_scene_opensearch_client] = lambda: MagicMock()
     app.dependency_overrides[get_people_video_exclusion_repository] = lambda: MagicMock()
+    _SETTINGS_PATCH.start()
 
 
 def _clear_overrides():
+    _SETTINGS_PATCH.stop()
     app.dependency_overrides.clear()
 
 
