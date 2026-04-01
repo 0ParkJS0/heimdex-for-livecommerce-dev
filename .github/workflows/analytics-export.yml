@@ -26,19 +26,14 @@ jobs:
           host: ${{ secrets.STAGING_HOST }}
           username: ec2-user
           key: ${{ secrets.STAGING_SSH_KEY }}
-          script_stop: true
+          # script_stop: true breaks if/else — drone-ssh injects $? checks per-line
           command_timeout: 8m
           script: |
             set -euo pipefail
 
             APP_DIR=/opt/heimdex/dev-heimdex-for-livecommerce
-
             DATE_ARG="${{ github.event.inputs.date }}"
-            if [ -n "$DATE_ARG" ]; then
-              DATE_FLAG="--date $DATE_ARG"
-            else
-              DATE_FLAG=""
-            fi
+            DATE_FLAG="${DATE_ARG:+--date $DATE_ARG}"
 
             cd "$APP_DIR"
             docker compose exec -T api python -m app.cli.export_analytics $DATE_FLAG
