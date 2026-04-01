@@ -20,8 +20,9 @@ export function AvatarThumbnail({
 }) {
   const [imgError, setImgError] = useState(false);
   const isCustom = person.thumbnail_source && person.thumbnail_source !== "auto";
-  // When thumbnail_source is custom, always cache-bust to avoid stale browser cache
-  const bust = cacheBuster || (isCustom ? 1 : undefined);
+  // When thumbnail_source is custom, always cache-bust to avoid stale browser cache.
+  // Use ?? instead of || so that cacheBuster=0 is respected (0 is falsy but valid).
+  const bust = cacheBuster ?? (isCustom ? 1 : undefined);
   const faceThumbnailUrl = getFaceThumbnailUrl(person.person_cluster_id, bust);
   const sceneThumbnailUrl =
     person.representative_video_id && person.representative_scene_id

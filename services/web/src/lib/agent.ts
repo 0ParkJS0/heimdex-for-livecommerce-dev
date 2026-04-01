@@ -103,7 +103,7 @@ export function getCloudThumbnailUrl(videoId: string, sceneId: string): string {
 }
 
 export function getFaceThumbnailUrl(personClusterId: string, cacheBuster?: number): string {
-  const suffix = cacheBuster ? `?v=${cacheBuster}` : "";
+  const suffix = cacheBuster != null ? `?v=${cacheBuster}` : "";
   return `/api/thumbnails/faces/${encodeURIComponent(personClusterId)}${suffix}`;
 }
 
