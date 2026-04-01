@@ -548,13 +548,23 @@ export function SavedShortsPage() {
                       <p className="truncate text-xs text-red-500">{item.error ?? "렌더링 실패"}</p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(item)}
-                    className="ml-2 flex-shrink-0 text-xs text-gray-400 hover:text-red-500 transition-colors"
-                  >
-                    삭제
-                  </button>
+                  <div className="ml-2 flex flex-shrink-0 items-center gap-2">
+                    {item.type === "saved" && item.scene_ids && (
+                      <Link
+                        href={`/shorts/editor?shortId=${item.id}`}
+                        className="text-xs text-indigo-500 hover:text-indigo-600 transition-colors"
+                      >
+                        편집
+                      </Link>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(item)}
+                      className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                    >
+                      삭제
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

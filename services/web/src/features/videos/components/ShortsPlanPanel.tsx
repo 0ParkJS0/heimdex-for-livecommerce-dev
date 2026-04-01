@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { CandidateCard } from "./CandidateCard";
 import { ExportModal } from "@/features/basket/ExportModal";
 import type { BasketItem } from "@/features/basket/useSceneBasket";
@@ -132,6 +133,14 @@ export function ShortsPlanPanel({
           <div className="sticky bottom-0 mt-3 pt-3 border-t border-gray-100 bg-white flex items-center justify-between gap-3">
             <span className="text-xs text-gray-600">{selectedCount} selected</span>
             <div className="flex items-center gap-2">
+              {selectedCount > 0 && (
+                <Link
+                  href={`/shorts/editor?videoId=${videoId}&sceneIds=${selectedCandidates.flatMap((c) => c.scene_ids).join(",")}`}
+                  className="text-sm px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 font-medium hover:bg-indigo-100 transition-colors"
+                >
+                  Edit in Timeline
+                </Link>
+              )}
               <button
                 type="button"
                 className="btn-primary text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"

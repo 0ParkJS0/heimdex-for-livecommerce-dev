@@ -354,9 +354,18 @@ export function ShortsCreatePage() {
 
           {selectedScenes.length > 0 && (
             <div className="rounded-xl border border-gray-200 bg-white p-6">
-              <h2 className="text-lg font-bold text-gray-900 mb-3">
-                선택된 장면 ({selectedScenes.length})
-              </h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold text-gray-900">
+                  선택된 장면 ({selectedScenes.length})
+                </h2>
+                <Link
+                  href={`/shorts/editor?videoId=${videoId}&sceneIds=${selectedScenes.map((s) => s.scene_id).join(",")}`}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                >
+                  타임라인에서 편집
+                  <ChevronRightIcon />
+                </Link>
+              </div>
               <div className="space-y-2">
                 {selectedScenes.map((scene, i) => (
                   <div key={scene.scene_id} className="flex items-center gap-2 text-sm text-gray-600">
