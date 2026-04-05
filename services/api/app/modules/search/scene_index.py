@@ -17,6 +17,7 @@ class SceneIndexMixin:
     index_name: str = ""
     EMBEDDING_DIMENSION: int = 0
     VISUAL_EMBEDDING_DIMENSION: int = 0
+    COLOR_EMBEDDING_DIMENSION: int = 0
     INDEX_VERSION: str = ""
 
     async def _check_nori_available(self) -> bool:
@@ -203,6 +204,17 @@ class SceneIndexMixin:
                         "parameters": {"ef_construction": 128, "m": 16},
                     },
                 },
+                "color_embedding": {
+                    "type": "knn_vector",
+                    "dimension": self.COLOR_EMBEDDING_DIMENSION,
+                    "method": {
+                        "name": "hnsw",
+                        "space_type": "cosinesimil",
+                        "engine": "lucene",
+                        "parameters": {"ef_construction": 128, "m": 16},
+                    },
+                },
+                "dominant_colors": {"type": "keyword", "index": False},
                 "people_cluster_ids": {"type": "keyword"},
                 "keyword_tags": {"type": "keyword"},
                 "product_tags": {"type": "keyword"},

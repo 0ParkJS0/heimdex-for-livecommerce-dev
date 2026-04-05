@@ -45,16 +45,25 @@ def _make_sqs_callback(api_client, settings):
     ve_mod = importlib.import_module("src.tasks.visual_embed")
     _process_single_visual_embed = ve_mod._process_single_visual_embed
     _process_single_scene_visual_embed = ve_mod._process_single_scene_visual_embed
+    _process_single_scene_color_extract = ve_mod._process_single_scene_color_extract
 
     def callback(message):
         version = get_message_version(message)
         if version == "2":
             scene_job = sqs_to_scene_job(message)
-            _process_single_scene_visual_embed(
-                api_client=api_client,
-                settings=settings,
-                scene_job=scene_job,
-            )
+            job_type = message.body.get("job_type", "visual_embed")
+            if job_type == "color_extract":
+                _process_single_scene_color_extract(
+                    api_client=api_client,
+                    settings=settings,
+                    scene_job=scene_job,
+                )
+            else:
+                _process_single_scene_visual_embed(
+                    api_client=api_client,
+                    settings=settings,
+                    scene_job=scene_job,
+                )
         else:
             claimed_file = sqs_to_claimed_file(message)
             _process_single_visual_embed(

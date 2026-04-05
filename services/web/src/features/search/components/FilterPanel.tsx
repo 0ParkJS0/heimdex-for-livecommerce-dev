@@ -2,6 +2,7 @@
 
 import { Facets, SearchFilters } from "@/lib/api";
 import { hasTagFilters } from "@/lib/types/search";
+import ColorPicker from "./ColorPicker";
 import { TagFilters } from "./TagFilters";
 
 interface FilterPanelProps {
@@ -68,6 +69,7 @@ export function FilterPanel({
     (filters.library_ids?.length ?? 0) > 0 ||
     (filters.person_cluster_ids?.length ?? 0) > 0 ||
     (filters.person_cluster_ids_not_in?.length ?? 0) > 0 ||
+    filters.color_hex != null ||
     hasTagFilters(filters);
 
   return (
@@ -85,6 +87,13 @@ export function FilterPanel({
       </div>
 
       <div className="space-y-3">
+        <ColorPicker
+          value={filters.color_hex}
+          onChange={(hex) =>
+            onFiltersChange({ ...filters, color_hex: hex })
+          }
+        />
+
         <div>
           <h4 className="text-sm font-medium text-gray-700 mb-2">Source Type</h4>
           <div className="space-y-1">

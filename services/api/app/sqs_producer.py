@@ -44,6 +44,7 @@ _QUEUE_URL_ATTRS = {
     "transcode": "sqs_transcode_queue_url",
     "face": "sqs_face_queue_url",
     "visual_embed": "sqs_visual_embed_queue_url",
+    "color_extract": "sqs_visual_embed_queue_url",
     "export": "sqs_export_queue_url",
     "shorts_render": "sqs_shorts_render_queue_url",
 }

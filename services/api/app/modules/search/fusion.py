@@ -26,9 +26,12 @@ class RankedItem:
     vector_score: float | None = None
     visual_rank: int | None = None
     visual_score: float | None = None
+    color_rank: int | None = None
+    color_score: float | None = None
     lexical_contribution: float = 0.0
     vector_contribution: float = 0.0
     visual_contribution: float = 0.0
+    color_contribution: float = 0.0
     quality_factor: float = 1.0
     fused_score: float = 0.0
     adjusted_score: float = 0.0
@@ -109,19 +112,17 @@ def compute_weighted_rrf(
     bm25_weight: float,
     text_knn_weight: float,
     visual_weight: float,
+    color_results: list[dict[str, Any]] | None = None,
+    color_weight: float = 0.0,
 ) -> list[RankedItem]:
-    """Compute 3-way weighted Reciprocal Rank Fusion.
+    """Compute weighted Reciprocal Rank Fusion across 3 or 4 signals.
 
-    Merges up to three ranked result lists (BM25, text kNN, visual kNN)
-    using the RRF formula: score = weight * 1/(k + rank).  Documents absent
-    from a list contribute 0 for that signal — they are not penalized, just
-    not boosted.
+    Merges ranked result lists (BM25, text kNN, visual kNN, and optionally
+    color kNN) using the RRF formula: score = weight * 1/(k + rank).
+    Documents absent from a list contribute 0 for that signal.
 
-    The three weights should sum to 1.0.  When a signal is disabled (e.g.
-    visual search off), its weight should be 0.0 and its results list empty.
-
-    After RRF scoring, a quality factor (0.85–1.0) based on content length
-    (transcript + OCR + caption) is multiplied in to demote very-short scenes.
+    When color_results is None or color_weight is 0.0, this behaves
+    identically to the original 3-way fusion.
 
     Args:
         lexical_results: BM25 hits from OpenSearch.
@@ -130,6 +131,8 @@ def compute_weighted_rrf(
         bm25_weight: Weight for BM25 signal (0.0–1.0).
         text_knn_weight: Weight for text kNN signal (0.0–1.0).
         visual_weight: Weight for visual kNN signal (0.0–1.0).
+        color_results: Color kNN hits (color histogram embedding). Optional.
+        color_weight: Weight for color kNN signal (0.0–1.0). Default 0.0.
 
     Returns:
         Ranked list of RankedItem sorted by adjusted_score descending.
@@ -199,15 +202,37 @@ def compute_weighted_rrf(
             float(vis_score) if isinstance(vis_score, (int, float)) else 0.0
         )
 
+    # --- Pass 4: Color kNN results (optional) ---
+    for rank, hit in enumerate(color_results or [], start=1):
+        doc_id = str(hit.get("_id", ""))
+        source_raw = hit.get("_source", {})
+        source = source_raw if isinstance(source_raw, dict) else {}
+        video_id = str(source.get("video_id", ""))
+
+        if doc_id not in items:
+            items[doc_id] = RankedItem(
+                doc_id=doc_id,
+                video_id=video_id,
+                source=source,
+            )
+
+        items[doc_id].color_rank = rank
+        clr_score = hit.get("_score", 0.0)
+        items[doc_id].color_score = (
+            float(clr_score) if isinstance(clr_score, (int, float)) else 0.0
+        )
+
     # --- Compute weighted RRF scores ---
     for item in items.values():
         lex_contribution = bm25_weight * rrf_score(item.lexical_rank, k)
         vec_contribution = text_knn_weight * rrf_score(item.vector_rank, k)
         vis_contribution = visual_weight * rrf_score(item.visual_rank, k)
+        clr_contribution = color_weight * rrf_score(item.color_rank, k)
         item.lexical_contribution = lex_contribution
         item.vector_contribution = vec_contribution
         item.visual_contribution = vis_contribution
-        item.fused_score = lex_contribution + vec_contribution + vis_contribution
+        item.color_contribution = clr_contribution
+        item.fused_score = lex_contribution + vec_contribution + vis_contribution + clr_contribution
 
         item.quality_factor = compute_quality_factor(item.source)
         item.adjusted_score = item.fused_score * item.quality_factor
@@ -220,9 +245,11 @@ def compute_weighted_rrf(
         lexical_count=len(lexical_results),
         vector_count=len(vector_results),
         visual_count=len(visual_results),
+        color_count=len(color_results or []),
         bm25_weight=bm25_weight,
         text_knn_weight=text_knn_weight,
         visual_weight=visual_weight,
+        color_weight=color_weight,
     )
 
     return ranked

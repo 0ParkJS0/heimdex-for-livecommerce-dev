@@ -61,6 +61,7 @@ class _SearchContext:
         "query", "org_id", "org_id_str", "filter_dict",
         "matched_person_cluster_ids", "people_label_map",
         "library_map", "facet_data", "include_ocr", "group_by",
+        "color_hex",
     )
 
     def __init__(
@@ -75,6 +76,7 @@ class _SearchContext:
         facet_data: dict[str, list[dict[str, Any]]],
         include_ocr: bool | None,
         group_by: str,
+        color_hex: str | None = None,
     ):
         self.query = query
         self.org_id = org_id
@@ -86,6 +88,7 @@ class _SearchContext:
         self.facet_data = facet_data
         self.include_ocr = include_ocr
         self.group_by = group_by
+        self.color_hex = color_hex
 
 
 class SceneSearchService:
@@ -112,6 +115,7 @@ class SceneSearchService:
         user_id: UUID | None = None,
         group_by: str = "scene",
         search_mode: Literal["metadata", "lexical", "semantic"] = "lexical",
+        color_hex: str | None = None,
     ) -> SceneSearchResponse | VideoSearchResponse:
         """Route to mode-specific search implementation.
 
@@ -134,6 +138,7 @@ class SceneSearchService:
             include_ocr=include_ocr,
             user_id=user_id,
             group_by=group_by,
+            color_hex=color_hex,
         )
 
         match search_mode:
@@ -247,12 +252,13 @@ class SceneSearchService:
         ctx: _SearchContext,
         alpha: float,
     ) -> SceneSearchResponse | VideoSearchResponse:
-        """Semantic mode: meaning-based search via 3-way weighted RRF.
+        """Semantic mode: meaning-based search via weighted RRF.
 
         Uses intent classification to determine per-signal weights:
         - BM25 (lexical): exact Korean term matching on transcript/OCR/caption
         - Text kNN (E5): semantic meaning via text embeddings
         - Visual kNN (SigLIP2): visual similarity via cross-modal embeddings
+        - Color kNN (histogram): color similarity (activated by color_hex param)
 
         Visual kNN is gated by ``visual_embedding_enabled``.  When disabled,
         the visual weight is redistributed proportionally to BM25 and text kNN
@@ -264,7 +270,7 @@ class SceneSearchService:
         intent = classify_intent(ctx.query)
         settings = self.settings
 
-        # --- Determine effective 3-way weights ---
+        # --- Determine effective weights ---
         visual_enabled = settings.visual_embedding_enabled
 
         if visual_enabled and intent.visual_weight > 0:
@@ -282,6 +288,20 @@ class SceneSearchService:
                 text_w = 0.5
             vis_w = 0.0
 
+        # --- Color weight (activated by color picker) ---
+        color_w = 0.0
+        color_query_vec: list[float] | None = None
+        if ctx.color_hex:
+            from app.modules.search.color_extraction import hex_to_color_histogram
+
+            color_query_vec = hex_to_color_histogram(ctx.color_hex)
+            color_w = 0.40
+            # Redistribute: scale down other weights to fit within remaining 0.60
+            scale = 1.0 - color_w
+            bm25_w *= scale
+            text_w *= scale
+            vis_w *= scale
+
         logger.info(
             "semantic_search_with_intent",
             query=ctx.query[:50],
@@ -290,6 +310,8 @@ class SceneSearchService:
             bm25_weight=round(bm25_w, 3),
             text_knn_weight=round(text_w, 3),
             visual_weight=round(vis_w, 3),
+            color_weight=round(color_w, 3),
+            color_hex=ctx.color_hex,
             matched_patterns=intent.matched_patterns,
         )
 
@@ -329,6 +351,18 @@ class SceneSearchService:
                 )
             )
 
+        # Color kNN — only when color picker is active
+        if color_w > 0 and color_query_vec is not None:
+            search_keys.append("color_knn")
+            search_coros.append(
+                self.scene_opensearch.search_color_vector(
+                    color_embedding=color_query_vec,
+                    org_id=ctx.org_id_str,
+                    filters=ctx.filter_dict,
+                    size=settings.search_vector_top_k,
+                )
+            )
+
         # BM25 — only when weight > 0
         if bm25_w > 0:
             search_keys.append("bm25")
@@ -349,8 +383,9 @@ class SceneSearchService:
         vector_results = result_map["text_knn"]
         visual_results = result_map.get("visual_knn", [])
         lexical_results = result_map.get("bm25", [])
+        color_results = result_map.get("color_knn", [])
 
-        # --- 3-way weighted RRF fusion ---
+        # --- Weighted RRF fusion ---
         ranked_items = compute_weighted_rrf(
             lexical_results=lexical_results,
             vector_results=vector_results,
@@ -358,6 +393,8 @@ class SceneSearchService:
             bm25_weight=bm25_w,
             text_knn_weight=text_w,
             visual_weight=vis_w,
+            color_results=color_results or None,
+            color_weight=color_w,
         )
 
         diversified = diversify_results(
@@ -391,6 +428,7 @@ class SceneSearchService:
         include_ocr: bool | None,
         user_id: UUID | None,
         group_by: str,
+        color_hex: str | None = None,
     ) -> _SearchContext:
         """Build the shared context used by all search modes.
 
@@ -496,6 +534,7 @@ class SceneSearchService:
             facet_data=facet_data,
             include_ocr=include_ocr,
             group_by=group_by,
+            color_hex=color_hex,
         )
 
     async def _backfill_web_view_links(
@@ -567,6 +606,7 @@ class SceneSearchService:
                     image_width=src.get("image_width"),
                     image_height=src.get("image_height"),
                     image_orientation=src.get("image_orientation"),
+                    dominant_colors=src.get("dominant_colors", []),
                     debug=DebugInfo(
                         lexical_rank=item.lexical_rank,
                         lexical_score=item.lexical_score,
@@ -574,9 +614,12 @@ class SceneSearchService:
                         vector_score=item.vector_score,
                         visual_rank=item.visual_rank,
                         visual_score=item.visual_score,
+                        color_rank=item.color_rank,
+                        color_score=item.color_score,
                         lexical_contribution=item.lexical_contribution,
                         vector_contribution=item.vector_contribution,
                         visual_contribution=item.visual_contribution,
+                        color_contribution=item.color_contribution,
                         ocr_contribution=0.0,
                         fused_score=item.fused_score,
                         quality_factor=item.quality_factor,

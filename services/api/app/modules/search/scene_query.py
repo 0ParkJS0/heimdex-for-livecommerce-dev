@@ -537,6 +537,37 @@ class SceneQueryMixin:
         response = await self.client.search(index=self.alias_name, body=body)
         return response["hits"]["hits"]
 
+    async def search_color_vector(
+        self,
+        color_embedding: list[float],
+        org_id: str,
+        filters: dict[str, Any],
+        size: int = 200,
+    ) -> list[dict[str, Any]]:
+        pos_clauses, must_not_clauses = self._build_filter_clauses(filters)
+        filter_clauses = [{"term": {"org_id": org_id}}] + pos_clauses
+
+        knn_filter: dict[str, Any] = {"bool": {"must": filter_clauses}}
+        if must_not_clauses:
+            knn_filter["bool"]["must_not"] = must_not_clauses
+
+        body: dict[str, Any] = {
+            "query": {
+                "knn": {
+                    "color_embedding": {
+                        "vector": color_embedding,
+                        "k": size,
+                        "filter": knn_filter,
+                    }
+                }
+            },
+            "size": size,
+            "_source": True,
+        }
+
+        response = await self.client.search(index=self.alias_name, body=body)
+        return response["hits"]["hits"]
+
     def _build_filter_clauses(
         self, filters: dict[str, Any],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

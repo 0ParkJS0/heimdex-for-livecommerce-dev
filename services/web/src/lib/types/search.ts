@@ -18,6 +18,7 @@ export interface SearchFilters {
   product_entities_not_in?: string[];
   ai_tags_in?: string[];
   ai_tags_not_in?: string[];
+  color_hex?: string;
 }
 
 // Mirrors backend validation: max 50 items/list, 64 chars/item
@@ -56,6 +57,7 @@ export interface SearchRequest {
   include_ocr?: boolean;
   group_by?: "video" | "scene";
   search_mode?: SearchMode;
+  color_hex?: string;
 }
 
 export interface DebugInfo {
@@ -63,8 +65,11 @@ export interface DebugInfo {
   lexical_score: number | null;
   vector_rank: number | null;
   vector_score: number | null;
+  color_rank?: number | null;
+  color_score?: number | null;
   lexical_contribution: number;
   vector_contribution: number;
+  color_contribution?: number;
   ocr_contribution: number;
   fused_score: number;
   quality_factor: number;
@@ -121,6 +126,7 @@ export interface SceneResult {
   image_width?: number;
   image_height?: number;
   image_orientation?: "landscape" | "portrait" | "square";
+  dominant_colors?: string[];
   debug: DebugInfo;
 }
 

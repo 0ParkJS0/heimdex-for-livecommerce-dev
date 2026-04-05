@@ -93,6 +93,15 @@ TARGETS: dict[str, BackfillTarget] = {
         needs_audio=False,
         needs_transcript=True,
     ),
+    "color": BackfillTarget(
+        name="color",
+        job_types=("color_extract",),
+        status_field=None,
+        skip_statuses=frozenset(),
+        needs_keyframes=True,
+        needs_audio=False,
+        needs_transcript=False,
+    ),
 }
 
 

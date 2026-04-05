@@ -241,13 +241,36 @@ def _process_single_visual_embed(
 
         embed_duration_ms = int((time.monotonic() - embed_started) * 1000)
 
-        # 5. Post visual embeddings to enrich API
+        # 5. Extract dominant colors from keyframes
+        from app.modules.search.color_extraction import (
+            colors_to_hex,
+            extract_dominant_colors,
+            rgb_to_hsl_histogram,
+        )
+        from PIL import Image as PILImage
+
+        color_data: list[tuple[list[float], list[str]]] = []
+        for path in ordered_paths:
+            try:
+                img = PILImage.open(path).convert("RGB")
+                colors, weights = extract_dominant_colors(img, k=5)
+                histogram = rgb_to_hsl_histogram(colors, weights)
+                hex_colors = colors_to_hex(colors[:5])
+                color_data.append((histogram, hex_colors))
+            except Exception:
+                color_data.append(([], []))
+
+        # 6. Post visual embeddings + color data to enrich API
         enrich_scenes: list[dict[str, Any]] = []
-        for scene_id, embedding in zip(ordered_scene_ids, embeddings):
-            enrich_scenes.append({
+        for i, (scene_id, embedding) in enumerate(zip(ordered_scene_ids, embeddings)):
+            scene_payload: dict[str, Any] = {
                 "scene_id": scene_id,
                 "visual_embedding": embedding,
-            })
+            }
+            if i < len(color_data) and color_data[i][0]:
+                scene_payload["color_embedding"] = color_data[i][0]
+                scene_payload["dominant_colors"] = color_data[i][1]
+            enrich_scenes.append(scene_payload)
 
         if not enrich_scenes:
             _safe_update_job_status(
@@ -414,5 +437,76 @@ def _process_single_scene_visual_embed(
             },
         )
         raise  # Re-raise so SQS consumer treats this as failure (retry)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _process_single_scene_color_extract(
+    api_client: Any,
+    settings: Any,
+    scene_job: Any,
+) -> None:
+    """Extract dominant colors from a single scene keyframe (for backfill).
+
+    Downloads the keyframe from S3, extracts dominant colors via k-means,
+    builds a 27-dim HSL histogram, and posts to the enrich API.
+    No GPU or vision model needed.
+    """
+    S3Client = importlib.import_module("heimdex_worker_sdk.s3").S3Client
+    from PIL import Image as PILImage
+
+    from app.modules.search.color_extraction import (
+        colors_to_hex,
+        extract_dominant_colors,
+        rgb_to_hsl_histogram,
+    )
+
+    org_id = scene_job.org_id
+    org_id_str = str(org_id)
+    video_id = scene_job.video_id
+    scene_id = scene_job.scene_id
+    keyframe_s3_key = scene_job.keyframe_s3_key
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"color_extract_{scene_id}_"))
+
+    try:
+        s3 = S3Client(bucket=settings.drive_s3_bucket)
+        keyframe_path = temp_dir / f"{scene_id}.jpg"
+        s3.download_file(keyframe_s3_key, keyframe_path)
+
+        img = PILImage.open(keyframe_path).convert("RGB")
+        colors, weights = extract_dominant_colors(img, k=5)
+        histogram = rgb_to_hsl_histogram(colors, weights)
+        hex_colors = colors_to_hex(colors[:5])
+
+        _post_enrich_to_api(
+            settings=settings,
+            org_id=org_id,
+            video_id=video_id,
+            scenes=[{
+                "scene_id": scene_id,
+                "color_embedding": histogram,
+                "dominant_colors": hex_colors,
+            }],
+        )
+
+        logger.info(
+            "scene_color_extract_complete",
+            extra={
+                "org_id": org_id_str,
+                "video_id": video_id,
+                "scene_id": scene_id,
+                "dominant_colors": hex_colors[:3],
+            },
+        )
+    except Exception:
+        logger.exception(
+            "scene_color_extract_failed",
+            extra={
+                "org_id": org_id_str,
+                "video_id": video_id,
+                "scene_id": scene_id,
+            },
+        )
+        raise
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

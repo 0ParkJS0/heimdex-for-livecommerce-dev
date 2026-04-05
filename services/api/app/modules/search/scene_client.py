@@ -14,6 +14,7 @@ class SceneSearchClient(
 ):
     EMBEDDING_DIMENSION: int = 1024
     VISUAL_EMBEDDING_DIMENSION: int = 768
+    COLOR_EMBEDDING_DIMENSION: int = 27
     INDEX_VERSION: str = "v4"
 
     def __init__(self) -> None:

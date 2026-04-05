@@ -78,6 +78,11 @@ class SearchRequest(BaseModel):
         default="scene",
         description="Result granularity. 'scene' returns individual scenes, 'video' groups by video.",
     )
+    color_hex: str | None = Field(
+        default=None,
+        pattern=r"^#[0-9a-fA-F]{6}$",
+        description="Hex color for color-based search (e.g. '#ff0000'). Activates color kNN signal.",
+    )
 
 
 class DebugInfo(BaseModel):
@@ -87,9 +92,12 @@ class DebugInfo(BaseModel):
     vector_score: float | None = None
     visual_rank: int | None = None
     visual_score: float | None = None
+    color_rank: int | None = None
+    color_score: float | None = None
     lexical_contribution: float = 0.0
     vector_contribution: float = 0.0
     visual_contribution: float = 0.0
+    color_contribution: float = 0.0
     ocr_contribution: float = 0.0
     fused_score: float
     quality_factor: float = 1.0
@@ -177,6 +185,7 @@ class SceneResult(BaseModel):
     image_width: int | None = None
     image_height: int | None = None
     image_orientation: str | None = None
+    dominant_colors: list[str] = Field(default_factory=list)
     debug: DebugInfo
 
 

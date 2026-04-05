@@ -120,6 +120,7 @@ async def search(
             user_id=user_id,
             group_by=request.group_by,
             search_mode=request.search_mode,
+            color_hex=request.color_hex,
         )
     else:
         result = await search_service.search(
@@ -179,6 +180,7 @@ async def search_scenes(
         user_id=user_id,
         group_by=request.group_by,
         search_mode=request.search_mode,
+        color_hex=request.color_hex,
     )
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)

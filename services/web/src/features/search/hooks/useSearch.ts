@@ -80,7 +80,7 @@ export function useSearch(): UseSearchReturn {
         let result: AnySearchResponse;
         if (searchMode === "scenes") {
           try {
-            const sceneResult = await searchScenes({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr, group_by: groupBy });
+            const sceneResult = await searchScenes({ q: query, alpha, filters: activeFilters, include_ocr: includeOcr, group_by: groupBy, color_hex: activeFilters.color_hex });
             result = sceneResult;
           } catch (err) {
             if (err instanceof ApiError && err.status === 404) {

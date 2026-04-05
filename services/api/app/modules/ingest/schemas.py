@@ -45,6 +45,8 @@ class EnrichSceneUpdate(BaseModel):
     ai_tags: list[str] | None = Field(default=None)
     people_cluster_ids: list[str] | None = Field(default=None)
     visual_embedding: list[float] | None = Field(default=None)
+    color_embedding: list[float] | None = Field(default=None)
+    dominant_colors: list[str] | None = Field(default=None)
 
 
 class EnrichScenesRequest(BaseModel):
