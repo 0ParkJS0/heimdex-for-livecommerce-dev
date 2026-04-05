@@ -565,8 +565,16 @@ class SceneQueryMixin:
             "_source": True,
         }
 
-        response = await self.client.search(index=self.alias_name, body=body)
-        return response["hits"]["hits"]
+        try:
+            response = await self.client.search(index=self.alias_name, body=body)
+            return response["hits"]["hits"]
+        except Exception:
+            # Graceful degradation: color kNN fails when no documents have
+            # color_embedding vectors yet (e.g., before backfill completes).
+            # Return empty results so RRF fusion proceeds without color signal.
+            from app.logging_config import get_logger
+            get_logger(__name__).warning("color_knn_query_failed", exc_info=True)
+            return []
 
     def _build_filter_clauses(
         self, filters: dict[str, Any],
