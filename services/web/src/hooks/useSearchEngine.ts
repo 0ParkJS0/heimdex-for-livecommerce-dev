@@ -56,6 +56,7 @@ export interface UseSearchEngineReturn {
   isSearchMode: boolean;
   activeQuery: string;
   performSearch: (query: string, isRefMode?: boolean) => Promise<void>;
+  performColorSearch: () => Promise<void>;
   handleSearch: (query: string) => Promise<void>;
   clearSearch: () => void;
   sortedResults: (SceneResult | VideoResult)[];
@@ -198,13 +199,61 @@ export function useSearchEngine(
   // ── handleSearch — takes a raw query string (slash commands parsed in component) ──
   const handleSearch = useCallback(
     async (query: string) => {
-      if (!query.trim() && !colorHex) return;
+      if (!query.trim()) return;
       if (!isSearchMode) {
         sortBeforeSearchRef.current = sortBy;
       }
       await performSearch(query, referenceMode);
     },
     [performSearch, isSearchMode, sortBy, referenceMode, setSortBy],
+  );
+
+  // ── Color-only search — dedicated path, no text query needed ─────────────
+  const performColorSearch = useCallback(
+    async () => {
+      if (!colorHex) return;
+      setIsLoading(true);
+      setCurrentPage(1);
+      try {
+        const tokenGetter = () => getAccessToken();
+        const filters: SearchFilters = {};
+
+        if (contentTypes.length === 1 && contentTypes[0] === "video") {
+          filters.content_types = ["video"];
+        } else if (contentTypes.length === 1 && contentTypes[0] === "image") {
+          filters.content_types = ["image"];
+        } else {
+          filters.content_types = ["video", "image"];
+        }
+
+        if (sourceFilters.size !== ALL_SOURCES.length) {
+          filters.source_types = Array.from(sourceFilters);
+        }
+
+        if (dateStart) filters.date_from = formatDateKr(dateStart);
+        if (dateEnd) filters.date_to = formatDateKr(dateEnd);
+
+        const res = await searchScenes(
+          { q: "", alpha: 0.5, filters, group_by: groupBy, search_mode: "semantic", color_hex: colorHex },
+          tokenGetter,
+        );
+        setSearchResponse(res);
+        setActiveQuery("");
+      } catch {
+        const emptyResponse: SceneSearchResponse = {
+          results: [],
+          total_candidates: 0,
+          facets: { libraries: [], source_types: [], people_cluster_ids: [], content_types: [] },
+          query: "",
+          alpha: 0.5,
+          result_type: "scene",
+        };
+        setSearchResponse(emptyResponse);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [getAccessToken, groupBy, contentTypes, sourceFilters, dateStart, dateEnd, colorHex, setIsLoading],
   );
 
   // ── Clear search ────────────────────────────────────────────────────────
@@ -227,8 +276,10 @@ export function useSearchEngine(
 
   // ── Auto re-search when filters change ──────────────────────────────────
   useEffect(() => {
-    if (activeQuery || colorHex) {
+    if (activeQuery) {
       performSearch(activeQuery);
+    } else if (colorHex) {
+      performColorSearch();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupBy, searchMode, contentTypes, sourceFilters, dateStart, dateEnd, colorHex]);
@@ -238,6 +289,7 @@ export function useSearchEngine(
     isSearchMode,
     activeQuery,
     performSearch,
+    performColorSearch,
     handleSearch,
     clearSearch,
     sortedResults,
