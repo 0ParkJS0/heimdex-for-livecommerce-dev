@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { GroupByToggle } from "@/features/search/components/GroupByToggle";
 import { SearchModeToggle } from "@/features/search/components/SearchModeToggle";
+import ColorPicker from "@/features/search/components/ColorPicker";
 import type { GroupBy } from "@/features/search/hooks/useSearch";
 import type { VideoSummary, SceneResult, VideoResult, SearchMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -850,6 +851,7 @@ export default function DashboardContent({
   const [sourceFilters, setSourceFilters] = useState<Set<SourceType>>(
     () => new Set(initialState.sourceFilters as ReadonlySet<SourceType>),
   );
+  const [colorHex, setColorHex] = useState<string | undefined>();
 
   // ── Search engine hook ──────────────────────────────────────────────────
   const [isSearchLoading, setIsSearchLoading] = useState(false);
@@ -885,6 +887,7 @@ export default function DashboardContent({
       getAccessToken,
       initialQuery: initialState.query,
       hadSearchParamsOnMount,
+      colorHex,
     },
     { setIsLoading: setIsSearchLoading, setSortBy },
   );
@@ -1085,6 +1088,9 @@ export default function DashboardContent({
           <div className="flex items-center gap-2">
             <SearchModeToggle value={searchMode} onChange={setSearchMode} />
             <GroupByToggle value={groupBy} onChange={setGroupBy} />
+            <div className="ml-1">
+              <ColorPicker value={colorHex} onChange={setColorHex} />
+            </div>
             {!hideContentTypeToggle && (
               <div className="ml-1 flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5">
                 {(["all", "video", "image"] as const).map((ct) => (

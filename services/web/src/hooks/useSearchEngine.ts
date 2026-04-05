@@ -47,6 +47,8 @@ export interface UseSearchEngineOptions {
   onCurrentPageChange?: (page: number) => void;
   /** Source filters as a Set for filtering */
   sourceFilters: Set<SourceType>;
+  /** Hex color for color-based search (e.g. '#ff0000') */
+  colorHex?: string;
 }
 
 export interface UseSearchEngineReturn {
@@ -87,6 +89,7 @@ export function useSearchEngine(
     initialQuery,
     hadSearchParamsOnMount,
     sourceFilters,
+    colorHex,
   } = options;
 
   const { setIsLoading, setSortBy } = deps;
@@ -169,7 +172,7 @@ export function useSearchEngine(
         if (dateEnd) filters.date_to = formatDateKr(dateEnd);
 
         const res = await searchScenes(
-          { q, alpha: 0.5, filters, group_by: groupBy, search_mode: searchMode },
+          { q, alpha: 0.5, filters, group_by: groupBy, search_mode: searchMode, color_hex: colorHex },
           tokenGetter,
         );
         setSearchResponse(res);
@@ -189,7 +192,7 @@ export function useSearchEngine(
         setIsLoading(false);
       }
     },
-    [getAccessToken, groupBy, searchMode, contentTypes, sourceFilters, dateStart, dateEnd, referenceMode, setIsLoading],
+    [getAccessToken, groupBy, searchMode, contentTypes, sourceFilters, dateStart, dateEnd, referenceMode, setIsLoading, colorHex],
   );
 
   // ── handleSearch — takes a raw query string (slash commands parsed in component) ──
@@ -228,7 +231,7 @@ export function useSearchEngine(
       performSearch(activeQuery);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupBy, searchMode, contentTypes, sourceFilters, dateStart, dateEnd]);
+  }, [groupBy, searchMode, contentTypes, sourceFilters, dateStart, dateEnd, colorHex]);
 
   return {
     searchResponse,
