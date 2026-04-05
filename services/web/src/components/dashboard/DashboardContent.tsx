@@ -845,6 +845,7 @@ export default function DashboardContent({
     (ct: ContentTypeFilter) => {
       if (defaultContentType) return;
       _setContentType(ct);
+      if (ct !== "image") setColorHex(undefined);
     },
     [defaultContentType],
   );
@@ -1088,9 +1089,11 @@ export default function DashboardContent({
           <div className="flex items-center gap-2">
             <SearchModeToggle value={searchMode} onChange={setSearchMode} />
             <GroupByToggle value={groupBy} onChange={setGroupBy} />
-            <div className="ml-1">
-              <ColorPicker value={colorHex} onChange={setColorHex} />
-            </div>
+            {contentType === "image" && (
+              <div className="ml-1">
+                <ColorPicker value={colorHex} onChange={setColorHex} />
+              </div>
+            )}
             {!hideContentTypeToggle && (
               <div className="ml-1 flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5">
                 {(["all", "video", "image"] as const).map((ct) => (

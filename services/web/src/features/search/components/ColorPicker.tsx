@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface ColorPickerProps {
@@ -9,46 +9,59 @@ interface ColorPickerProps {
 }
 
 const COLOR_SWATCHES = [
-  // Row 1: warm tones
-  { hex: "#ef4444", label: "Red" },
-  { hex: "#f97316", label: "Orange" },
-  { hex: "#eab308", label: "Yellow" },
-  { hex: "#f472b6", label: "Pink" },
-  { hex: "#a855f7", label: "Purple" },
-  // Row 2: cool tones
-  { hex: "#3b82f6", label: "Blue" },
-  { hex: "#06b6d4", label: "Cyan" },
-  { hex: "#22c55e", label: "Green" },
-  { hex: "#14b8a6", label: "Teal" },
-  { hex: "#6366f1", label: "Indigo" },
-  // Row 3: neutrals + earth
-  { hex: "#ffffff", label: "White" },
-  { hex: "#d1d5db", label: "Light gray" },
-  { hex: "#6b7280", label: "Gray" },
-  { hex: "#92400e", label: "Brown" },
-  { hex: "#000000", label: "Black" },
+  // Warm
+  { hex: "#ef4444", label: "빨강" },
+  { hex: "#f97316", label: "주황" },
+  { hex: "#eab308", label: "노랑" },
+  { hex: "#f472b6", label: "분홍" },
+  { hex: "#a855f7", label: "보라" },
+  // Cool
+  { hex: "#3b82f6", label: "파랑" },
+  { hex: "#06b6d4", label: "하늘" },
+  { hex: "#22c55e", label: "초록" },
+  { hex: "#14b8a6", label: "청록" },
+  { hex: "#6366f1", label: "남색" },
+  // Neutral
+  { hex: "#f5f5f4", label: "흰색" },
+  { hex: "#d1d5db", label: "밝은 회색" },
+  { hex: "#6b7280", label: "회색" },
+  { hex: "#92400e", label: "갈색" },
+  { hex: "#171717", label: "검정" },
 ];
 
 export default function ColorPicker({ value, onChange }: ColorPickerProps) {
-  const [showCustom, setShowCustom] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [isOpen]);
 
   return (
-    <div className="relative">
-      {/* Trigger button */}
+    <div className="relative" ref={panelRef}>
+      {/* Trigger */}
       <button
         type="button"
         onClick={() => {
           if (value) {
             onChange(undefined);
           } else {
-            setShowCustom((s) => !s);
+            setIsOpen((o) => !o);
           }
         }}
         className={cn(
           "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
           value
             ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200"
-            : showCustom
+            : isOpen
               ? "bg-white text-gray-900 shadow-sm"
               : "text-gray-500 hover:text-gray-700",
         )}
@@ -56,11 +69,11 @@ export default function ColorPicker({ value, onChange }: ColorPickerProps) {
         {value ? (
           <>
             <span
-              className="h-3 w-3 rounded-full border border-gray-300"
+              className="inline-block h-3 w-3 rounded-full ring-1 ring-inset ring-black/10"
               style={{ backgroundColor: value }}
             />
             색상
-            <span className="ml-0.5 text-gray-400 hover:text-gray-600">✕</span>
+            <span className="text-gray-400 hover:text-gray-600">✕</span>
           </>
         ) : (
           <>
@@ -70,11 +83,13 @@ export default function ColorPicker({ value, onChange }: ColorPickerProps) {
         )}
       </button>
 
-      {/* Dropdown panel */}
-      {showCustom && !value && (
-        <div className="absolute top-full left-0 z-50 mt-2 rounded-lg border border-gray-200 bg-white p-3 shadow-lg">
+      {/* Dropdown */}
+      {isOpen && !value && (
+        <div className="absolute left-0 top-full z-50 mt-1.5 w-[220px] rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+          <p className="mb-2 text-[11px] font-medium text-gray-400">색상 선택</p>
+
           {/* Swatch grid */}
-          <div className="grid grid-cols-5 gap-1.5">
+          <div className="grid grid-cols-5 gap-2">
             {COLOR_SWATCHES.map(({ hex, label }) => (
               <button
                 key={hex}
@@ -82,30 +97,30 @@ export default function ColorPicker({ value, onChange }: ColorPickerProps) {
                 title={label}
                 onClick={() => {
                   onChange(hex);
-                  setShowCustom(false);
+                  setIsOpen(false);
                 }}
-                className={cn(
-                  "h-7 w-7 rounded-md border transition-transform hover:scale-110",
-                  hex === "#ffffff"
-                    ? "border-gray-300"
-                    : "border-transparent",
-                )}
+                className="group relative h-8 w-8 rounded-lg transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-1"
                 style={{ backgroundColor: hex }}
-              />
+              >
+                <span
+                  className="absolute inset-0 rounded-lg ring-1 ring-inset ring-black/10"
+                />
+              </button>
             ))}
           </div>
 
-          {/* Custom color input */}
-          <div className="mt-2.5 flex items-center gap-2 border-t border-gray-100 pt-2.5">
+          {/* Divider + custom color */}
+          <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3">
             <input
               type="color"
-              className="h-7 w-7 cursor-pointer rounded border-0 p-0"
+              defaultValue="#6366f1"
+              className="h-8 w-8 shrink-0 cursor-pointer appearance-none rounded-lg border-0 bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-lg [&::-webkit-color-swatch]:border-0"
               onChange={(e) => {
                 onChange(e.target.value);
-                setShowCustom(false);
+                setIsOpen(false);
               }}
             />
-            <span className="text-xs text-gray-400">커스텀 색상</span>
+            <span className="text-xs text-gray-400">직접 선택</span>
           </div>
         </div>
       )}
