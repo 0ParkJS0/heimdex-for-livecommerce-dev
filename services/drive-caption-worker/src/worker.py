@@ -86,7 +86,11 @@ def main() -> None:
             api_key=getattr(settings, "llama_caption_api_key", ""),
         )
     else:
-        caption_engine = create_caption_engine(model=engine_key, use_gpu=settings.use_gpu)
+        caption_engine = create_caption_engine(
+            model=engine_key,
+            use_gpu=settings.use_gpu,
+            model_name=settings.drive_caption_model,
+        )
     logger.info("caption_engine_loaded_once", extra={"model": settings.drive_caption_model})
 
     # Initialize shared semaphore before starting any consumers
