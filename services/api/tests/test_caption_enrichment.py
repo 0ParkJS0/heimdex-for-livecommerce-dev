@@ -11,7 +11,7 @@ class TestCaptionConfig:
         settings = Settings(_env_file="")
         assert settings.scene_caption_enabled is False
         assert settings.drive_caption_concurrency == 1
-        assert settings.drive_caption_model == "Qwen/Qwen2-VL-2B-Instruct"
+        assert settings.drive_caption_model == "Qwen/Qwen2.5-VL-7B-Instruct"
 
     def test_caption_can_be_enabled(self):
         settings = Settings(_env_file="", scene_caption_enabled=True)

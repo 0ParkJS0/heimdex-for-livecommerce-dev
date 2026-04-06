@@ -60,7 +60,7 @@ class WorkerSettings(BaseSettings):
     # --- Caption enrichment ---
     scene_caption_enabled: bool = False
     drive_caption_concurrency: int = 1
-    drive_caption_model: str = "Qwen/Qwen2-VL-2B-Instruct"
+    drive_caption_model: str = "Qwen/Qwen2.5-VL-7B-Instruct"
     caption_engine: str = "qwen2vl"  # "qwen2vl", "internvl2", "florence2", or "llama_http"
     llama_caption_url: str = "http://llama-caption-server:8089"
     llama_caption_api_key: str = ""

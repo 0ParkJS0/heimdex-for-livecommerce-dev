@@ -379,7 +379,7 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              python -m src.worker"
 
-  # DEPRECATED (2026-02-26): llama-caption-server replaced by Qwen2-VL-2B on Aircloud+ GPU.
+  # DEPRECATED (2026-02-26): llama-caption-server replaced by Qwen2.5-VL-7B on Aircloud+ GPU.
   # Caption worker no longer uses HTTP-based llama backend (CAPTION_ENGINE=qwen2vl on Aircloud+).
   # Kept for local dev fallback only. Removal planned in PR2/PR4.
   llama-caption-server:
@@ -416,7 +416,7 @@ services:
   # DEPRECATED (2026-02-26): Caption enrichment worker migrated to Aircloud+ GPU.
   # This CPU service definition is kept for local dev only.
   # Staging/prod uses ghcr.io/jlee-heimdex/heimdex-caption-worker-gpu:latest on Aircloud+.
-  # Model: Qwen/Qwen2-VL-2B-Instruct (GPU) vs OpenGVLab/InternVL2-1B (CPU, below).
+  # Model: Qwen/Qwen2.5-VL-7B-Instruct (GPU) vs OpenGVLab/InternVL2-1B (CPU, below).
   # Guarded by profiles: ["ec2-legacy"] — requires --profile ec2-legacy to start.
   drive-caption-worker:
     profiles: ["ec2-legacy"]

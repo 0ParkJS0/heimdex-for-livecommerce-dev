@@ -40,7 +40,7 @@ class TestWorkerSettingsDefaults:
         assert s.scene_caption_enabled is False
         assert s.drive_caption_concurrency == 1
         assert s.caption_engine == "qwen2vl"
-        assert s.drive_caption_model == "Qwen/Qwen2-VL-2B-Instruct"
+        assert s.drive_caption_model == "Qwen/Qwen2.5-VL-7B-Instruct"
 
     def test_default_stt_settings(self):
         s = WorkerSettings()
