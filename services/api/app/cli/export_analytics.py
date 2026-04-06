@@ -61,7 +61,9 @@ def _rows_to_parquet(rows: list[dict[str, Any]]) -> bytes:
         [
             ("id", pa.int64()),
             ("org_id", pa.string()),
+            ("org_name", pa.string()),
             ("user_id", pa.string()),
+            ("user_email", pa.string()),
             ("query_text", pa.string()),
             ("search_mode", pa.string()),
             ("result_count", pa.int32()),
@@ -74,7 +76,9 @@ def _rows_to_parquet(rows: list[dict[str, Any]]) -> bytes:
     arrays = [
         pa.array([r["id"] for r in rows], type=pa.int64()),
         pa.array([str(r["org_id"]) for r in rows], type=pa.string()),
+        pa.array([r.get("org_name") or "" for r in rows], type=pa.string()),
         pa.array([str(r["user_id"]) for r in rows], type=pa.string()),
+        pa.array([r.get("user_email") or "" for r in rows], type=pa.string()),
         pa.array([r["query_text"] for r in rows], type=pa.string()),
         pa.array([r["search_mode"] for r in rows], type=pa.string()),
         pa.array([r.get("result_count") for r in rows], type=pa.int32()),
@@ -126,6 +130,7 @@ def _upload_to_bq(data: bytes, project: str, dataset: str, target: date) -> None
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.PARQUET,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
     )
 
     bq_retry = Retry(initial=1.0, maximum=4.0, multiplier=2.0, deadline=30.0)
@@ -190,16 +195,17 @@ def main() -> None:
         factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with factory() as session:
             repo = SearchEventRepository(session)
-            events = await repo.list_by_date_range(
+            rows = await repo.list_by_date_range_with_labels(
                 date_from=date_from,
                 date_to=date_to,
-                limit=100_000,
             )
             return [
                 {
                     "id": e.id,
                     "org_id": e.org_id,
+                    "org_name": org_name,
                     "user_id": e.user_id,
+                    "user_email": user_email,
                     "query_text": e.query_text,
                     "search_mode": e.search_mode,
                     "result_count": e.result_count,
@@ -207,7 +213,7 @@ def main() -> None:
                     "metadata": e.metadata_,
                     "created_at": e.created_at,
                 }
-                for e in events
+                for e, org_name, user_email in rows
             ]
 
     rows = asyncio.run(_fetch_events())

@@ -8,6 +8,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.logging_config import get_logger
+from app.modules.orgs.models import Org
+from app.modules.users.models import User
 from .models import SearchEvent
 
 logger = get_logger(__name__)
@@ -64,6 +66,28 @@ class SearchEventRepository:
 
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_by_date_range_with_labels(
+        self,
+        *,
+        date_from: datetime,
+        date_to: datetime,
+        limit: int = 100_000,
+    ) -> list[tuple[SearchEvent, str | None, str | None]]:
+        """Return (event, org_name, user_email) tuples for export."""
+        stmt = (
+            select(SearchEvent, Org.name, User.email)
+            .outerjoin(Org, SearchEvent.org_id == Org.id)
+            .outerjoin(User, SearchEvent.user_id == User.id)
+            .where(
+                SearchEvent.created_at >= date_from,
+                SearchEvent.created_at < date_to,
+            )
+            .order_by(SearchEvent.created_at.asc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.all())
 
     async def count_by_org(
         self,
