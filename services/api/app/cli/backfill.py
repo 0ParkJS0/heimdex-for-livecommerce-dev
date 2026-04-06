@@ -159,6 +159,10 @@ def _parse_args() -> argparse.Namespace:
         help="Org slug or UUID. Omit for all orgs.",
     )
     parser.add_argument(
+        "--video", type=str, default=None,
+        help="Single video_id to reprocess (e.g. gd_bdbcd446a322267a)",
+    )
+    parser.add_argument(
         "--since", type=str, default=None,
         help="Only videos created after this date (YYYY-MM-DD)",
     )
@@ -234,6 +238,7 @@ async def _query_files(
     cursor_created_at: datetime | None,
     cursor_file_id: UUID | None,
     batch_size: int,
+    video_id: str | None = None,
 ) -> list[Any]:
     from sqlalchemy import select, and_
     from app.modules.drive.models import DriveFile, DriveConnection
@@ -249,6 +254,9 @@ async def _query_files(
         q = q.where(DriveFile.keyframe_s3_prefix.isnot(None))
     if target.needs_audio:
         q = q.where(DriveFile.audio_s3_key.isnot(None))
+
+    if video_id:
+        q = q.where(DriveFile.video_id == video_id)
 
     if org_id:
         q = q.where(DriveFile.org_id == org_id)
@@ -384,6 +392,7 @@ async def _run(args: argparse.Namespace) -> None:
                     session, target, org_id, library_id,
                     since, until, args.skip_idempotency,
                     cursor_created_at, cursor_file_id, args.batch_size,
+                    video_id=args.video,
                 )
 
             if not files:
