@@ -109,13 +109,26 @@ export function ClipBlock({
         {/* Label */}
         {widthPx > 40 && (
           <div className="min-w-0 flex-1 pointer-events-none">
-            <p className="truncate text-[10px] font-medium leading-tight text-white">
-              {durationSec}s
-            </p>
-            {widthPx > 100 && (
-              <p className="truncate text-[9px] leading-tight text-white/70">
-                {formatTimelineTimestamp(clip.trimStartMs)}
-              </p>
+            {clip.label && widthPx > 80 ? (
+              <>
+                <p className="truncate text-[10px] font-medium leading-tight text-white">
+                  {clip.label}
+                </p>
+                <p className="truncate text-[9px] leading-tight text-white/70">
+                  {durationSec}s
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="truncate text-[10px] font-medium leading-tight text-white">
+                  {durationSec}s
+                </p>
+                {widthPx > 100 && (
+                  <p className="truncate text-[9px] leading-tight text-white/70">
+                    {formatTimelineTimestamp(clip.trimStartMs)}
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}

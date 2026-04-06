@@ -13,6 +13,7 @@ export interface EditorClip {
   trimEndMs: number;
   timelineStartMs: number;
   volume: number;
+  label?: string;
 }
 
 export interface SubtitleStyle {

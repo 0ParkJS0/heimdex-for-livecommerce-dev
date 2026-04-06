@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import type { EditorClip, EditorSubtitle } from "../lib/types";
-import { msToPixels } from "../lib/timeline-math";
+import { msToPixels, formatTimelineTimestamp } from "../lib/timeline-math";
 import { MIN_ZOOM, MAX_ZOOM } from "../constants";
 import { TimelineRuler } from "./TimelineRuler";
 import { ClipTrack } from "./ClipTrack";
@@ -26,6 +26,60 @@ interface TimelinePanelProps {
   onAddSubtitle: (subtitle: EditorSubtitle) => void;
   onSeek: (ms: number) => void;
   onZoomChange: (zoom: number) => void;
+}
+
+function parseTimestampInput(value: string): number | null {
+  const parts = value.split(":").map((p) => parseInt(p, 10));
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+  if (parts.length === 2) return (parts[0] * 60 + parts[1]) * 1000;
+  if (parts.length === 1) return parts[0] * 1000;
+  return null;
+}
+
+function TimestampInput({ playheadMs, onSeek }: { playheadMs: number; onSeek: (ms: number) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+
+  const displayValue = formatTimelineTimestamp(playheadMs);
+
+  const handleCommit = () => {
+    const ms = parseTimestampInput(inputValue);
+    if (ms != null && ms >= 0) {
+      onSeek(ms);
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        type="text"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onBlur={handleCommit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleCommit();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        autoFocus
+        className="w-16 rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-center text-[10px] font-mono text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setInputValue(displayValue);
+        setEditing(true);
+      }}
+      className="w-16 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-center text-[10px] font-mono text-gray-600 hover:border-indigo-300 hover:text-gray-800"
+    >
+      {displayValue}
+    </button>
+  );
 }
 
 function ZoomInIcon() {
@@ -94,7 +148,10 @@ export function TimelinePanel({
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex h-8 flex-shrink-0 items-center justify-between border-b border-gray-300 bg-gray-100 px-3">
-        <span className="text-[10px] font-medium text-gray-500">타임라인</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-medium text-gray-500">타임라인</span>
+          <TimestampInput playheadMs={playheadMs} onSeek={onSeek} />
+        </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
