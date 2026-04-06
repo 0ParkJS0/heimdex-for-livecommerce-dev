@@ -43,6 +43,10 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   useEffect(() => {
     if (!skipLayout && !isLoading && !isAuthenticated) {
+      const currentPath = window.location.pathname + window.location.search;
+      if (currentPath !== "/" && currentPath !== "/login") {
+        sessionStorage.setItem("heimdex_return_to", currentPath);
+      }
       router.replace("/login");
     }
   }, [skipLayout, isLoading, isAuthenticated, router]);

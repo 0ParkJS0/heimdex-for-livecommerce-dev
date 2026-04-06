@@ -29,11 +29,13 @@ function Auth0Callback({ router }: { router: ReturnType<typeof useRouter> }) {
       return;
     }
 
-    // Successful authentication — redirect to app
+    // Successful authentication — redirect to original page or app root
     if (isAuthenticated) {
       if (!hasRedirected.current) {
         hasRedirected.current = true;
-        router.replace("/");
+        const returnTo = sessionStorage.getItem("heimdex_return_to") || "/";
+        sessionStorage.removeItem("heimdex_return_to");
+        router.replace(returnTo);
       }
       return;
     }
