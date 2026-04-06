@@ -23,9 +23,23 @@ class SceneFacetsMixin:
         self,
         org_id: str,
         filters: dict[str, Any],
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         pos_clauses, must_not_clauses = self._build_filter_clauses(filters)
         filter_clauses = [{"term": {"org_id": org_id}}] + pos_clauses
+
+        if date_from or date_to:
+            date_range: dict[str, str] = {}
+            if date_from:
+                date_range["gte"] = date_from
+            if date_to:
+                date_range["lte"] = date_to
+            filter_clauses.append({"bool": {"should": [
+                {"range": {"capture_time": date_range}},
+                {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": date_range}}}},
+            ], "minimum_should_match": 1}})
 
         bool_query: dict[str, Any] = {"filter": filter_clauses}
         if must_not_clauses:
@@ -395,6 +409,9 @@ class SceneFacetsMixin:
         self,
         org_id: str,
         query: str,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> dict[str, list[str]]:
         """Find person clusters appearing in videos whose title matches *query*.
 
@@ -406,14 +423,25 @@ class SceneFacetsMixin:
         Returns ``{person_cluster_id: [matched_video_title, …]}``.
         """
         escaped = query.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
+        filter_clauses: list[dict[str, Any]] = [
+            {"term": {"org_id": org_id}},
+            {"term": {"content_type": "video"}},
+            {"exists": {"field": "people_cluster_ids"}},
+        ]
+        if date_from or date_to:
+            dr: dict[str, str] = {}
+            if date_from:
+                dr["gte"] = date_from
+            if date_to:
+                dr["lte"] = date_to
+            filter_clauses.append({"bool": {"should": [
+                {"range": {"capture_time": dr}},
+                {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": dr}}}},
+            ], "minimum_should_match": 1}})
         body: dict[str, Any] = {
             "query": {
                 "bool": {
-                    "filter": [
-                        {"term": {"org_id": org_id}},
-                        {"term": {"content_type": "video"}},
-                        {"exists": {"field": "people_cluster_ids"}},
-                    ],
+                    "filter": filter_clauses,
                     "should": [
                         {"match": {"video_title.nori": query}},
                         {"wildcard": {"video_title": {"value": f"*{escaped}*", "case_insensitive": True}}},
@@ -628,9 +656,24 @@ class SceneFacetsMixin:
         self,
         org_id: str,
         person_cluster_ids: list[str],
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> dict[str, dict[str, str]]:
         if not person_cluster_ids:
             return {}
+
+        date_filter: list[dict[str, Any]] = []
+        if date_from or date_to:
+            dr: dict[str, str] = {}
+            if date_from:
+                dr["gte"] = date_from
+            if date_to:
+                dr["lte"] = date_to
+            date_filter.append({"bool": {"should": [
+                {"range": {"capture_time": dr}},
+                {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": dr}}}},
+            ], "minimum_should_match": 1}})
 
         body_parts: list[dict[str, Any]] = []
         for cluster_id in person_cluster_ids:
@@ -641,6 +684,7 @@ class SceneFacetsMixin:
                         "filter": [
                             {"term": {"org_id": org_id}},
                             {"term": {"people_cluster_ids": cluster_id}},
+                            *date_filter,
                         ],
                     }
                 },

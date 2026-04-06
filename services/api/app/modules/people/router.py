@@ -57,6 +57,8 @@ router = APIRouter(prefix="/people", tags=["people"])
 @router.get("", response_model=PeopleListResponse)
 async def list_people(
     q: str | None = Query(None, min_length=1, max_length=100),
+    date_from: str | None = Query(None, description="Filter scenes from this date (YYYY-MM-DD)"),
+    date_to: str | None = Query(None, description="Filter scenes until this date (YYYY-MM-DD)"),
     org_ctx: OrgContext = Depends(get_current_org),
     user: User = Depends(get_current_user),
     people_repo: PeopleClusterLabelRepository = Depends(get_people_cluster_label_repository),
@@ -80,7 +82,7 @@ async def list_people(
 
     excluded_ids = set(await exclude_repo.list_by_user(org_ctx.org_id, user_id))
 
-    facets = await scene_opensearch.get_facets(org_id_str, {})
+    facets = await scene_opensearch.get_facets(org_id_str, {}, date_from=date_from, date_to=date_to)
     people_buckets = facets.get("people", [])
 
     video_title_matches: dict[str, list[str]] = {}
@@ -89,7 +91,7 @@ async def list_people(
 
     if q:
         vt_result, lb_result = await asyncio.gather(
-            scene_opensearch.search_people_by_video_title(org_id_str, q),
+            scene_opensearch.search_people_by_video_title(org_id_str, q, date_from=date_from, date_to=date_to),
             people_repo.search_by_label(org_ctx.org_id, q),
         )
         video_title_matches = vt_result
@@ -134,7 +136,7 @@ async def list_people(
 
     all_cluster_ids = [p.person_cluster_id for p in people]
     rep_scenes = await scene_opensearch.get_representative_scenes_for_people(
-        org_id_str, all_cluster_ids
+        org_id_str, all_cluster_ids, date_from=date_from, date_to=date_to
     )
 
     # Batch-fetch thumbnail sources from face identities
