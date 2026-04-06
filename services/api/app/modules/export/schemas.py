@@ -139,3 +139,16 @@ class ProxyPackStatusResponse(BaseModel):
     size_bytes: int | None = None
     error: str | None = None
     expires_at: str | None = None
+
+
+# --- Image Export ---
+
+
+class ExportImageItem(BaseModel):
+    video_id: str = Field(..., min_length=1)
+    scene_id: str = Field(..., min_length=1)
+    video_title: str | None = None
+
+
+class ExportImagesRequest(BaseModel):
+    images: list[ExportImageItem] = Field(..., min_length=1, max_length=50)

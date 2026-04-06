@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import unicodedata
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -37,6 +38,7 @@ from app.modules.export.schemas import (
     ExportClipRequest,
     ExportEdlRequest,
     ExportEdlResponse,
+    ExportImagesRequest,
     ExportPremierePackageRequest,
     ExportPremiereRequest,
     ProxyPackRequest,
@@ -790,3 +792,87 @@ async def get_proxy_pack_status(
         error=record.error_message,
         expires_at=expires_at_str,
     )
+
+
+# --- Image Bulk Download ---
+
+
+@router.post("/images")
+async def export_images(
+    body: ExportImagesRequest,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Download multiple keyframe images as a ZIP archive."""
+    settings = get_settings()
+    s3 = S3Client(bucket=settings.drive_s3_bucket)
+    org_id = str(org_ctx.org_id)
+
+    # Deduplicate by scene_id
+    seen: set[str] = set()
+    unique_images = []
+    for img in body.images:
+        if img.scene_id not in seen:
+            seen.add(img.scene_id)
+            unique_images.append(img)
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="heimdex_images_"))
+    try:
+        collected = 0
+        for img in unique_images:
+            s3_key = f"{org_id}/drive/keyframes/{img.video_id}/{img.scene_id}.jpg"
+            image_bytes = await s3.get_object_bytes_async(s3_key)
+            if image_bytes is None:
+                logger.warning(
+                    "image_export_missing_keyframe",
+                    extra={"scene_id": img.scene_id, "s3_key": s3_key},
+                )
+                continue
+
+            title_part = _sanitize_filename(img.video_title or img.video_id, max_len=80)
+            filename = f"{title_part}_{img.scene_id}.jpg"
+            (tmp_dir / filename).write_bytes(image_bytes)
+            collected += 1
+
+        if collected == 0:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No keyframe images found for the requested scenes",
+            )
+
+        # Create ZIP
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"heimdex_images_{timestamp}.zip"
+        zip_path = tmp_dir / zip_filename
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+            for jpg_file in tmp_dir.glob("*.jpg"):
+                zf.write(jpg_file, jpg_file.name)
+
+        logger.info(
+            "images_exported",
+            extra={
+                "org_id": org_id,
+                "image_count": collected,
+                "zip_size_bytes": zip_path.stat().st_size,
+            },
+        )
+
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=zip_filename,
+            headers={"Content-Disposition": _content_disposition(zip_filename)},
+            background=_cleanup_task(tmp_dir),
+        )
+    except HTTPException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        logger.exception("image_export_unexpected_error")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unexpected error during image export",
+        )

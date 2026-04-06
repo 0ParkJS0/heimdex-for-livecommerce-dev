@@ -14,6 +14,7 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { cn } from "@/lib/utils";
 import { useState, useMemo } from "react";
 import { AddToBasketButton } from "@/features/basket/AddToBasketButton";
+import { useImageSelectionContext } from "@/features/images/ImageSelectionContext";
 import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 import { useOrgSettings } from "@/lib/orgSettings";
@@ -497,11 +498,14 @@ function SceneCard({ result, rank, showDebug, agentAvailable, aspectRatio }: Sce
   const isRemovable = result.source_type === "removable_disk";
   const matchSignal = getMatchSignal(result.debug);
   const speakerTurns = useMemo(() => parseSpeakerTranscript(result.speaker_transcript), [result.speaker_transcript]);
+  const imageSelection = useImageSelectionContext();
+  const isImage = result.content_type === "image";
+  const isChecked = isImage && imageSelection?.isSelected(result.scene_id);
 
   return (
     <div className="p-4 hover:bg-gray-50 transition-colors">
       <div className="flex gap-4">
-        <div className="flex-shrink-0 relative">
+        <div className="flex-shrink-0 relative group">
           <SceneThumbnail
             videoId={result.video_id}
             sceneId={result.scene_id}
@@ -512,6 +516,34 @@ function SceneCard({ result, rank, showDebug, agentAvailable, aspectRatio }: Sce
           <span className="absolute -top-2 -left-2 bg-primary-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">
             {rank}
           </span>
+          {isImage && imageSelection && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                imageSelection.toggle({
+                  sceneId: result.scene_id,
+                  videoId: result.video_id,
+                  videoTitle: result.video_title,
+                });
+              }}
+              disabled={!isChecked && !imageSelection.canSelect}
+              className={cn(
+                "absolute top-1.5 left-1.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all",
+                isChecked
+                  ? "bg-primary-600 border-primary-600 text-white"
+                  : "border-white/80 bg-black/20 text-transparent hover:border-white hover:bg-black/40 group-hover:opacity-100",
+                !isChecked && !imageSelection.canSelect && "opacity-30 cursor-not-allowed",
+                !isChecked && imageSelection.canSelect && "opacity-0 group-hover:opacity-100",
+                isChecked && "opacity-100",
+              )}
+              title={isChecked ? "선택 해제" : "다운로드 선택"}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </button>
+          )}
         </div>
 
         <div className="flex-1 min-w-0">
