@@ -13,7 +13,9 @@ import { EditorLayout } from "./EditorLayout";
 import { EditorHeader } from "./EditorHeader";
 import { PreviewPanel } from "./PreviewPanel";
 import { TimelinePanel } from "./TimelinePanel";
-import { PropertiesPanel } from "./PropertiesPanel";
+import { ClipProperties } from "./ClipProperties";
+import { SubtitleStylePanel } from "./SubtitleStylePanel";
+import { SceneListPanel } from "./SceneListPanel";
 
 function BackArrowIcon() {
   return (
@@ -237,6 +239,31 @@ export function ShortsEditorPage() {
       />
 
       <EditorLayout
+        leftPanel={
+          state.selectedClipIndex != null && state.selectedClipIndex < state.clips.length ? (
+            <ClipProperties
+              clip={state.clips[state.selectedClipIndex]}
+              index={state.selectedClipIndex}
+              onTrim={editor.trimClip}
+              onVolumeChange={editor.setClipVolume}
+              onRemove={editor.removeClip}
+            />
+          ) : (
+            <SubtitleStylePanel
+              title={title}
+              onTitleChange={setTitle}
+              videoTitle={meta?.video_title ?? null}
+              subtitle={
+                state.selectedSubtitleIndex != null && state.selectedSubtitleIndex < state.subtitles.length
+                  ? state.subtitles[state.selectedSubtitleIndex]
+                  : null
+              }
+              subtitleIndex={state.selectedSubtitleIndex}
+              onUpdateSubtitle={editor.updateSubtitle}
+              onRemoveSubtitle={editor.removeSubtitle}
+            />
+          )
+        }
         preview={
           <PreviewPanel
             clips={state.clips}
@@ -246,6 +273,23 @@ export function ShortsEditorPage() {
             totalDurationMs={state.totalDurationMs}
             onPlayheadChange={setPlayhead}
             onPlayingChange={setPlaying}
+          />
+        }
+        rightPanel={
+          <SceneListPanel
+            videoId={state.videoId}
+            scenes={meta?.scenes ?? []}
+            clips={state.clips}
+            selectedClipIndex={state.selectedClipIndex}
+            onToggleScene={(scene) => {
+              const existingIdx = state.clips.findIndex((c) => c.sceneId === scene.scene_id);
+              if (existingIdx >= 0) {
+                editor.removeClip(existingIdx);
+              } else {
+                editor.addClip(createClipFromScene(scene, state.videoId, state.sourceType));
+              }
+            }}
+            onSelectClip={editor.selectClip}
           />
         }
         timeline={
@@ -266,19 +310,6 @@ export function ShortsEditorPage() {
             onAddSubtitle={editor.addSubtitle}
             onSeek={setPlayhead}
             onZoomChange={editor.setZoom}
-          />
-        }
-        properties={
-          <PropertiesPanel
-            clips={state.clips}
-            subtitles={state.subtitles}
-            selectedClipIndex={state.selectedClipIndex}
-            selectedSubtitleIndex={state.selectedSubtitleIndex}
-            onTrimClip={editor.trimClip}
-            onVolumeChange={editor.setClipVolume}
-            onRemoveClip={editor.removeClip}
-            onUpdateSubtitle={editor.updateSubtitle}
-            onRemoveSubtitle={editor.removeSubtitle}
           />
         }
       />

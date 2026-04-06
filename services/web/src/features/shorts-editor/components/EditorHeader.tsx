@@ -84,7 +84,7 @@ export function EditorHeader({
 
   return (
     <div className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-4">
-      {/* Left: back + title */}
+      {/* Left: back + metadata */}
       <div className="flex items-center gap-3">
         <Link
           href="/shorts"
@@ -94,13 +94,9 @@ export function EditorHeader({
           <BackArrowIcon />
         </Link>
 
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          placeholder={videoTitle ?? "제목 없음"}
-          className="w-48 border-none bg-transparent text-sm font-semibold text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-0"
-        />
+        <span className="text-sm font-semibold text-gray-900 truncate max-w-64">
+          {title || videoTitle || "제목 없음"}
+        </span>
 
         <span className="text-xs text-gray-400">
           {clipCount}개 장면 &middot; {Math.round(totalDurationMs / 1000)}초
