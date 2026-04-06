@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { getVideoScenes } from "@/lib/api/videos";
 import { getShortComposition } from "@/lib/api/shorts-render";
 import type { VideoScenesResponse } from "@/lib/types";
-import { useEditorState, createClipFromScene } from "../hooks/useEditorState";
+import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import { EditorLayout } from "./EditorLayout";
 import { EditorHeader } from "./EditorHeader";
@@ -286,10 +286,21 @@ export function ShortsEditorPage() {
               if (existingIdx >= 0) {
                 editor.removeClip(existingIdx);
               } else {
-                editor.addClip(createClipFromScene(scene, state.videoId, state.sourceType));
+                const clip = createClipFromScene(scene, state.videoId, state.sourceType);
+                editor.addClip(clip);
+                const subs = generateSubtitlesFromTranscript(scene.speaker_transcript, clip);
+                for (const sub of subs) {
+                  editor.addSubtitle(sub);
+                }
               }
             }}
             onSelectClip={editor.selectClip}
+            onPreview={(clipIndex) => {
+              editor.selectClip(clipIndex);
+              const clip = state.clips[clipIndex];
+              if (clip) setPlayhead(clip.timelineStartMs);
+            }}
+            onExport={submitComposition}
           />
         }
         timeline={

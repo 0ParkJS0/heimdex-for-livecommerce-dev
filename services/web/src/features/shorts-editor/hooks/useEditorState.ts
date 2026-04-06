@@ -1,7 +1,8 @@
 import { useReducer, useCallback } from "react";
 import type { EditorState, EditorAction, EditorClip, EditorSubtitle } from "../lib/types";
 import { recomputeTimeline, getTotalDuration } from "../lib/timeline-math";
-import { DEFAULT_ZOOM } from "../constants";
+import { DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
+import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 
 const INITIAL_STATE: EditorState = {
   videoId: "",
@@ -200,10 +201,11 @@ export function generateSubtitleId(): string {
 }
 
 export function createClipFromScene(
-  scene: { scene_id: string; start_ms: number; end_ms: number },
+  scene: { scene_id: string; start_ms: number; end_ms: number; scene_caption?: string; ai_tags?: string[] },
   videoId: string,
   sourceType: string,
 ): EditorClip {
+  const label = scene.scene_caption?.slice(0, 30) || scene.ai_tags?.[0] || undefined;
   return {
     id: generateClipId(),
     sceneId: scene.scene_id,
@@ -215,7 +217,84 @@ export function createClipFromScene(
     trimEndMs: scene.end_ms,
     timelineStartMs: 0,
     volume: 1.0,
+    label,
   };
+}
+
+/**
+ * Parse a timestamp string like "1:23" or "0:05" into milliseconds.
+ */
+function parseTimestampMs(ts: string): number | null {
+  const parts = ts.split(":").map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+  if (parts.length === 2) return (parts[0] * 60 + parts[1]) * 1000;
+  return null;
+}
+
+/**
+ * Generate subtitle blocks from a scene's speaker transcript.
+ * Maps speaker turns to timed EditorSubtitle entries positioned on the timeline.
+ */
+export function generateSubtitlesFromTranscript(
+  speakerTranscript: string | undefined | null,
+  clip: EditorClip,
+): EditorSubtitle[] {
+  const turns = parseSpeakerTranscript(speakerTranscript);
+  if (turns.length === 0) return [];
+
+  const clipDuration = clip.trimEndMs - clip.trimStartMs;
+  const subtitles: EditorSubtitle[] = [];
+
+  // Check if turns have usable timestamps
+  const turnsWithTs = turns
+    .map((turn) => ({ turn, ms: turn.timestamp ? parseTimestampMs(turn.timestamp) : null }))
+    .filter((t) => t.ms != null) as Array<{ turn: typeof turns[0]; ms: number }>;
+
+  if (turnsWithTs.length > 0) {
+    // Timestamp-based: use actual positions within the scene
+    for (let i = 0; i < turnsWithTs.length; i++) {
+      const { turn, ms: offsetMs } = turnsWithTs[i];
+      // offsetMs is absolute in the video; convert to relative within clip
+      const relativeMs = offsetMs - clip.trimStartMs;
+      if (relativeMs < 0 || relativeMs >= clipDuration) continue;
+
+      const nextOffset = i + 1 < turnsWithTs.length
+        ? turnsWithTs[i + 1].ms - clip.trimStartMs
+        : relativeMs + DEFAULT_SUBTITLE_DURATION_MS;
+      const endMs = Math.min(relativeMs + Math.min(nextOffset - relativeMs, DEFAULT_SUBTITLE_DURATION_MS), clipDuration);
+
+      subtitles.push({
+        id: generateSubtitleId(),
+        text: turn.text,
+        startMs: clip.timelineStartMs + relativeMs,
+        endMs: clip.timelineStartMs + endMs,
+        style: { ...DEFAULT_SUBTITLE_STYLE },
+      });
+    }
+  } else {
+    // No timestamps: distribute turns evenly across the clip duration
+    const slotDuration = Math.min(
+      Math.floor(clipDuration / turns.length),
+      DEFAULT_SUBTITLE_DURATION_MS,
+    );
+    if (slotDuration < 500) return []; // too short for subtitles
+
+    for (let i = 0; i < turns.length; i++) {
+      const startMs = clip.timelineStartMs + Math.floor((i / turns.length) * clipDuration);
+      const endMs = Math.min(startMs + slotDuration, clip.timelineStartMs + clipDuration);
+
+      subtitles.push({
+        id: generateSubtitleId(),
+        text: turns[i].text,
+        startMs,
+        endMs,
+        style: { ...DEFAULT_SUBTITLE_STYLE },
+      });
+    }
+  }
+
+  return subtitles;
 }
 
 export function useEditorState() {
