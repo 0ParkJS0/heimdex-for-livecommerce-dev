@@ -499,8 +499,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable, aspectRatio }: Sce
   const matchSignal = getMatchSignal(result.debug);
   const speakerTurns = useMemo(() => parseSpeakerTranscript(result.speaker_transcript), [result.speaker_transcript]);
   const imageSelection = useImageSelectionContext();
-  const isImage = result.content_type === "image";
-  const isChecked = isImage && imageSelection?.isSelected(result.scene_id);
+  const isChecked = imageSelection?.isSelected(result.scene_id);
 
   return (
     <div className="p-4 hover:bg-gray-50 transition-colors">
@@ -516,7 +515,7 @@ function SceneCard({ result, rank, showDebug, agentAvailable, aspectRatio }: Sce
           <span className="absolute -top-2 -left-2 bg-primary-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">
             {rank}
           </span>
-          {isImage && imageSelection && (
+          {imageSelection && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
