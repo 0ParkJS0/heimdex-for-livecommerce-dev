@@ -36,10 +36,7 @@ class SceneFacetsMixin:
                 date_range["gte"] = date_from
             if date_to:
                 date_range["lte"] = date_to
-            filter_clauses.append({"bool": {"should": [
-                {"range": {"capture_time": date_range}},
-                {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": date_range}}}},
-            ], "minimum_should_match": 1}})
+            filter_clauses.append({"range": {"capture_time": date_range}})
 
         bool_query: dict[str, Any] = {"filter": filter_clauses}
         if must_not_clauses:
@@ -434,10 +431,7 @@ class SceneFacetsMixin:
                 dr["gte"] = date_from
             if date_to:
                 dr["lte"] = date_to
-            filter_clauses.append({"bool": {"should": [
-                {"range": {"capture_time": dr}},
-                {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": dr}}}},
-            ], "minimum_should_match": 1}})
+            filter_clauses.append({"range": {"capture_time": dr}})
         body: dict[str, Any] = {
             "query": {
                 "bool": {
@@ -670,10 +664,7 @@ class SceneFacetsMixin:
                 dr["gte"] = date_from
             if date_to:
                 dr["lte"] = date_to
-            date_filter.append({"bool": {"should": [
-                {"range": {"capture_time": dr}},
-                {"bool": {"must_not": {"exists": {"field": "capture_time"}}, "filter": {"range": {"ingest_time": dr}}}},
-            ], "minimum_should_match": 1}})
+            date_filter.append({"range": {"capture_time": dr}})
 
         body_parts: list[dict[str, Any]] = []
         for cluster_id in person_cluster_ids:
