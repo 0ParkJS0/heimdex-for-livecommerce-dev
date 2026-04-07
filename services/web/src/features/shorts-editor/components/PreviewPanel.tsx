@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type { EditorClip, EditorSubtitle } from "../lib/types";
 import { getActiveSubtitles } from "../lib/source-time";
@@ -14,8 +15,11 @@ interface PreviewPanelProps {
   playheadMs: number;
   isPlaying: boolean;
   totalDurationMs: number;
+  selectedSubtitleIndex: number | null;
   onPlayheadChange: (ms: number) => void;
   onPlayingChange: (playing: boolean) => void;
+  onSelectSubtitle: (index: number | null) => void;
+  onUpdateSubtitlePosition: (index: number, positionX: number, positionY: number) => void;
 }
 
 function PlayIcon() {
@@ -40,8 +44,11 @@ export function PreviewPanel({
   playheadMs,
   isPlaying,
   totalDurationMs,
+  selectedSubtitleIndex,
   onPlayheadChange,
   onPlayingChange,
+  onSelectSubtitle,
+  onUpdateSubtitlePosition,
 }: PreviewPanelProps) {
   const {
     videoRef,
@@ -63,13 +70,61 @@ export function PreviewPanel({
   const activeSubtitles = getActiveSubtitles(subtitles, playheadMs);
   const progressPct = totalDurationMs > 0 ? (playheadMs / totalDurationMs) * 100 : 0;
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ subtitleIndex: number; startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  const getSubtitleIndex = useCallback((subtitleId: string): number => {
+    return subtitles.findIndex((s) => s.id === subtitleId);
+  }, [subtitles]);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent, sub: EditorSubtitle) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const idx = getSubtitleIndex(sub.id);
+    if (idx < 0) return;
+
+    onSelectSubtitle(idx);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+    dragRef.current = {
+      subtitleIndex: idx,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: sub.style.positionX,
+      origY: sub.style.positionY,
+    };
+  }, [getSubtitleIndex, onSelectSubtitle]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    const drag = dragRef.current;
+    const container = containerRef.current;
+    if (!drag || !container) return;
+
+    const rect = container.getBoundingClientRect();
+    const deltaX = (e.clientX - drag.startX) / rect.width;
+    const deltaY = (e.clientY - drag.startY) / rect.height;
+
+    const newX = Math.max(0, Math.min(1, drag.origX + deltaX));
+    const newY = Math.max(0, Math.min(1, drag.origY + deltaY));
+
+    onUpdateSubtitlePosition(drag.subtitleIndex, newX, newY);
+  }, [onUpdateSubtitlePosition]);
+
+  const handlePointerUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
       {/* Preview container — matches org aspect ratio */}
-      <div className={cn(
-        "relative w-full overflow-hidden rounded-lg bg-black",
-        aspectRatio === "9:16" ? "aspect-[9/16] max-w-[280px]" : "aspect-video max-w-[480px]",
-      )}>
+      <div
+        ref={containerRef}
+        className={cn(
+          "relative w-full overflow-hidden rounded-lg bg-black",
+          aspectRatio === "9:16" ? "aspect-[9/16] max-w-[280px]" : "aspect-video max-w-[480px]",
+        )}
+        onClick={() => onSelectSubtitle(null)}
+      >
         {/* Main video element */}
         <video
           ref={videoRef}
@@ -80,37 +135,53 @@ export function PreviewPanel({
         />
 
         {/* Subtitle overlay */}
-        {activeSubtitles.map((sub) => (
-          <div
-            key={sub.id}
-            className="pointer-events-none absolute inset-x-0"
-            style={{
-              top: `${sub.style.positionY * 100}%`,
-              transform: "translateY(-50%)",
-            }}
-          >
-            <p
-              className="mx-auto w-fit max-w-[90%] text-center"
+        {activeSubtitles.map((sub) => {
+          const idx = getSubtitleIndex(sub.id);
+          const isSelected = idx >= 0 && idx === selectedSubtitleIndex;
+
+          return (
+            <div
+              key={sub.id}
+              className={cn(
+                "absolute",
+                isSelected ? "cursor-grabbing z-10" : "cursor-grab",
+              )}
               style={{
-                fontFamily: sub.style.fontFamily,
-                fontSize: `${Math.max(8, sub.style.fontSizePx * 0.5)}px`, // Scale down for preview
-                color: sub.style.fontColor,
-                fontWeight: sub.style.fontWeight,
-                textAlign: "center",
-                ...(sub.style.backgroundColor
-                  ? {
-                      backgroundColor: sub.style.backgroundColor,
-                      padding: "2px 6px",
-                      borderRadius: "2px",
-                      opacity: sub.style.backgroundOpacity,
-                    }
-                  : {}),
+                left: `${sub.style.positionX * 100}%`,
+                top: `${sub.style.positionY * 100}%`,
+                transform: "translate(-50%, -50%)",
               }}
+              onPointerDown={(e) => handlePointerDown(e, sub)}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onClick={(e) => e.stopPropagation()}
             >
-              {sub.text}
-            </p>
-          </div>
-        ))}
+              <p
+                className={cn(
+                  "w-fit max-w-[90cqw] text-center select-none",
+                  isSelected && "ring-2 ring-indigo-400 ring-offset-1 rounded",
+                )}
+                style={{
+                  fontFamily: sub.style.fontFamily,
+                  fontSize: `${Math.max(8, sub.style.fontSizePx * 0.5)}px`,
+                  color: sub.style.fontColor,
+                  fontWeight: sub.style.fontWeight,
+                  textAlign: "center",
+                  padding: "2px 6px",
+                  borderRadius: "2px",
+                  ...(sub.style.backgroundColor
+                    ? {
+                        backgroundColor: sub.style.backgroundColor,
+                        opacity: sub.style.backgroundOpacity,
+                      }
+                    : {}),
+                }}
+              >
+                {sub.text}
+              </p>
+            </div>
+          );
+        })}
 
         {/* No clips placeholder */}
         {clips.length === 0 && (

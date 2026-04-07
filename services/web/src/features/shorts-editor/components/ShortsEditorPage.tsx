@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -45,6 +45,8 @@ export function ShortsEditorPage() {
     initFromComposition,
     setPlayhead,
     setPlaying,
+    selectSubtitle,
+    updateSubtitle,
   } = editor;
 
   const {
@@ -58,6 +60,17 @@ export function ShortsEditorPage() {
     title,
     getToken: getAccessToken,
   });
+
+  const handleSubtitlePositionChange = useCallback(
+    (index: number, positionX: number, positionY: number) => {
+      const sub = state.subtitles[index];
+      if (!sub) return;
+      updateSubtitle(index, {
+        style: { ...sub.style, positionX, positionY },
+      });
+    },
+    [state.subtitles, updateSubtitle],
+  );
 
   // Load from scene IDs (entry from ShortsCreatePage or ShortsPlanPanel)
   useEffect(() => {
@@ -280,8 +293,11 @@ export function ShortsEditorPage() {
             playheadMs={state.playheadMs}
             isPlaying={state.isPlaying}
             totalDurationMs={state.totalDurationMs}
+            selectedSubtitleIndex={state.selectedSubtitleIndex}
             onPlayheadChange={setPlayhead}
             onPlayingChange={setPlaying}
+            onSelectSubtitle={selectSubtitle}
+            onUpdateSubtitlePosition={handleSubtitlePositionChange}
           />
         }
         rightPanel={
