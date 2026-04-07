@@ -234,6 +234,12 @@ def get_grouping_service(
     return GroupingService(scene_opensearch)
 
 
+def get_scene_override_repository(db: AsyncSession = Depends(get_db_session)):
+    """Scene override repository factory."""
+    from app.modules.scene_overrides.repository import SceneOverrideRepository
+    return SceneOverrideRepository(db)
+
+
 def get_device_repository(db: AsyncSession = Depends(get_db_session)):
     """Device repository factory."""
     from app.modules.devices.repository import DeviceRepository

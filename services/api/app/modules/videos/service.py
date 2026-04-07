@@ -198,6 +198,29 @@ class VideoService:
 
         scenes = [VideoScene(**s) for s in result["scenes"]]
 
+        # Merge user overrides from PostgreSQL (safety net for dual-write)
+        from app.modules.scene_overrides.repository import SceneOverrideRepository
+        import json as _json
+        override_repo = SceneOverrideRepository(self.session)
+        overrides = await override_repo.get_by_video(org_id, video_id)
+        if overrides:
+            override_map = {o.scene_id: o for o in overrides}
+            for scene in scenes:
+                ov = override_map.get(scene.scene_id)
+                if ov is None:
+                    continue
+                fields = set(ov.overridden_fields.split(",")) if ov.overridden_fields else set()
+                if "scene_caption" in fields and ov.scene_caption is not None:
+                    scene.scene_caption = ov.scene_caption
+                if "transcript_raw" in fields and ov.transcript_raw is not None:
+                    scene.transcript_raw = ov.transcript_raw
+                if "speaker_transcript" in fields and ov.speaker_transcript is not None:
+                    scene.speaker_transcript = ov.speaker_transcript
+                if "ai_tags" in fields and ov.ai_tags_json is not None:
+                    scene.ai_tags = _json.loads(ov.ai_tags_json)
+                scene.is_edited = True
+                scene.edited_fields = sorted(fields)
+
         library_name: str | None = None
         lib_id = result.get("library_id")
         if lib_id:

@@ -306,6 +306,12 @@ class SceneIngestService:
 
         existing_docs = await self.scene_opensearch.mget_scenes(list(doc_id_map.keys()))
 
+        # Fetch user-overridden fields to protect them from worker overwrites
+        from app.modules.scene_overrides.repository import SceneOverrideRepository
+        override_repo = SceneOverrideRepository(self.session)
+        scene_ids = [s.scene_id for s in request.scenes]
+        overridden_map = await override_repo.get_overridden_fields(org_id, scene_ids)
+
         now = datetime.now(timezone.utc)
         partial_updates: list[tuple[str, dict[str, Any]]] = []
         skipped = 0
@@ -321,20 +327,24 @@ class SceneIngestService:
                 )
                 skipped += 1
                 continue
+
+            # Fields protected by user overrides — skip these in worker updates
+            protected = overridden_map.get(enrichment.scene_id, set())
+
             # Build partial update containing ONLY the fields this
             # enrichment provides.  Using partial updates instead of full
             # document replace prevents concurrent workers (STT, OCR,
             # Caption) from overwriting each other's data.
             partial: dict[str, Any] = {}
             needs_embedding_update = False
-            if enrichment.transcript_raw is not None:
+            if enrichment.transcript_raw is not None and "transcript_raw" not in protected:
                 transcript_norm = normalize_transcript(enrichment.transcript_raw)
                 partial["transcript_raw"] = enrichment.transcript_raw
                 partial["transcript_norm"] = transcript_norm
                 partial["transcript_char_count"] = len(transcript_norm)
                 partial["speech_segment_count"] = enrichment.speech_segment_count or 0
                 needs_embedding_update = True
-            if enrichment.speaker_transcript is not None:
+            if enrichment.speaker_transcript is not None and "speaker_transcript" not in protected:
                 partial["speaker_transcript"] = enrichment.speaker_transcript
                 partial["speaker_count"] = enrichment.speaker_count or 0
             if enrichment.ocr_text_raw is not None:
@@ -343,7 +353,7 @@ class SceneIngestService:
                 partial["ocr_text_norm"] = ocr_norm
                 partial["ocr_char_count"] = len(ocr_norm)
                 needs_embedding_update = True
-            if enrichment.scene_caption is not None:
+            if enrichment.scene_caption is not None and "scene_caption" not in protected:
                 caption_norm = normalize_transcript(enrichment.scene_caption) if enrichment.scene_caption else ""
                 partial["scene_caption"] = caption_norm
                 needs_embedding_update = True
@@ -353,6 +363,8 @@ class SceneIngestService:
             if enrichment.visual_embedding is not None:
                 partial["visual_embedding"] = enrichment.visual_embedding
             if needs_embedding_update:
+                # For embedding: use user-override values for protected fields,
+                # worker/existing values for non-protected fields
                 t_raw = partial.get("transcript_raw", existing.get("transcript_raw", ""))
                 o_raw = partial.get("ocr_text_raw", existing.get("ocr_text_raw", ""))
                 c_raw = partial.get("scene_caption", existing.get("scene_caption", ""))
@@ -377,7 +389,7 @@ class SceneIngestService:
                     if product_tags:
                         partial["product_tags"] = product_tags
 
-                if enrichment.ai_tags is not None:
+                if enrichment.ai_tags is not None and "ai_tags" not in protected:
                     partial["ai_tags"] = enrichment.ai_tags
 
             partial["ingest_time"] = now.isoformat()

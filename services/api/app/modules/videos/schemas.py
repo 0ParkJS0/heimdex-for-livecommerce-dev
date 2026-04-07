@@ -74,9 +74,12 @@ class VideoScene(BaseModel):
     speaker_count: int = 0
     ocr_text_raw: str = ""
     ocr_char_count: int = 0
+    ai_tags: list[str] = Field(default_factory=list)
     people_cluster_ids: list[str] = Field(default_factory=list)
     ingest_time: str | None = None
     keyframe_timestamp_ms: int = 0
+    is_edited: bool = False
+    edited_fields: list[str] = Field(default_factory=list)
 
 
 class VideoScenesResponse(BaseModel):
