@@ -150,6 +150,7 @@ export function PreviewPanel({
                 left: `${sub.style.positionX * 100}%`,
                 top: `${sub.style.positionY * 100}%`,
                 transform: "translate(-50%, -50%)",
+                pointerEvents: "auto",
               }}
               onPointerDown={(e) => handlePointerDown(e, sub)}
               onPointerMove={handlePointerMove}
@@ -158,7 +159,7 @@ export function PreviewPanel({
             >
               <p
                 className={cn(
-                  "w-fit max-w-[90cqw] text-center select-none",
+                  "whitespace-nowrap text-center select-none",
                   isSelected && "ring-2 ring-indigo-400 ring-offset-1 rounded",
                 )}
                 style={{
