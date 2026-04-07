@@ -559,19 +559,32 @@ export function SceneCard({
                 </div>
                 {speakerExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
               </button>
-              <div className={cn("mt-2 space-y-1", !speakerExpanded && "max-h-[4.5rem] overflow-hidden")}>
-                {speakerTurns.map((turn, i) => (
-                  <div key={i} className={cn("flex gap-2 text-sm leading-relaxed", turn.color.border, "border-l-2 pl-2")}>
-                    <span className={cn("inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold mt-0.5", turn.color.bg, turn.color.text)}>
-                      {turn.label}
-                    </span>
-                    {turn.timestamp && (
-                      <span className="text-gray-400 font-mono text-xs flex-shrink-0 mt-0.5">{turn.timestamp}</span>
-                    )}
-                    <span className="text-gray-700">{turn.text}</span>
-                  </div>
-                ))}
-              </div>
+              {speakerExpanded && onSaveOverride ? (
+                <div className="mt-2">
+                  <InlineEditField
+                    value={scene.speaker_transcript ?? ""}
+                    fieldName="speaker_transcript"
+                    isEdited={scene.edited_fields?.includes("speaker_transcript")}
+                    onSave={async (field, val) => { await onSaveOverride(scene.scene_id, field, val); }}
+                    onReset={onResetOverride ? async (field) => { await onResetOverride(scene.scene_id, field); } : undefined}
+                    placeholder="화자 자막을 입력하세요"
+                  />
+                </div>
+              ) : (
+                <div className={cn("mt-2 space-y-1", !speakerExpanded && "max-h-[4.5rem] overflow-hidden")}>
+                  {speakerTurns.map((turn, i) => (
+                    <div key={i} className={cn("flex gap-2 text-sm leading-relaxed", turn.color.border, "border-l-2 pl-2")}>
+                      <span className={cn("inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold mt-0.5", turn.color.bg, turn.color.text)}>
+                        {turn.label}
+                      </span>
+                      {turn.timestamp && (
+                        <span className="text-gray-400 font-mono text-xs flex-shrink-0 mt-0.5">{turn.timestamp}</span>
+                      )}
+                      <span className="text-gray-700">{turn.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="mt-3 border-t border-gray-100 pt-3">
@@ -586,13 +599,26 @@ export function SceneCard({
                 </div>
                 {subtitleExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
               </button>
-              <p className={cn(
-                "mt-2 text-sm leading-relaxed text-gray-600",
-                !subtitleExpanded && "line-clamp-2",
-              )}>
-                <span className="text-gray-400 font-mono text-xs">[{formatTimestamp(scene.start_ms)}]</span>{" "}
-                {subtitleExpanded ? scene.transcript_raw : transcriptPreview}
-              </p>
+              {subtitleExpanded && onSaveOverride ? (
+                <div className="mt-2">
+                  <InlineEditField
+                    value={scene.transcript_raw}
+                    fieldName="transcript_raw"
+                    isEdited={scene.edited_fields?.includes("transcript_raw")}
+                    onSave={async (field, val) => { await onSaveOverride(scene.scene_id, field, val); }}
+                    onReset={onResetOverride ? async (field) => { await onResetOverride(scene.scene_id, field); } : undefined}
+                    placeholder="자막을 입력하세요"
+                  />
+                </div>
+              ) : (
+                <p className={cn(
+                  "mt-2 text-sm leading-relaxed text-gray-600",
+                  !subtitleExpanded && "line-clamp-2",
+                )}>
+                  <span className="text-gray-400 font-mono text-xs">[{formatTimestamp(scene.start_ms)}]</span>{" "}
+                  {subtitleExpanded ? scene.transcript_raw : transcriptPreview}
+                </p>
+              )}
             </div>
           )}
         </div>
