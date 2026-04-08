@@ -97,6 +97,7 @@ class SceneOverrideRepository:
             existing.overridden_fields = ",".join(sorted(current_fields))
             existing.edited_by = edited_by
             await self.session.flush()
+            await self.session.refresh(existing)
             return existing
 
         override = SceneOverride(
@@ -120,6 +121,7 @@ class SceneOverrideRepository:
 
         self.session.add(override)
         await self.session.flush()
+        await self.session.refresh(override)
         return override
 
     async def reset_field(
