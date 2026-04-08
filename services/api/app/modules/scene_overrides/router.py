@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -113,7 +114,7 @@ async def patch_scene_override(
         ocr = existing.get("ocr_text_norm", "")
         embedding_text = build_embedding_text(transcript, ocr, caption)
         if embedding_text:
-            vectors = get_passage_embeddings_batch([embedding_text])
+            vectors = await asyncio.to_thread(get_passage_embeddings_batch, [embedding_text])
             if vectors:
                 partial["embedding_vector"] = vectors[0]
 
@@ -184,7 +185,7 @@ async def reset_scene_override(
         ocr = effective.get("ocr_text_norm", "")
         embedding_text = build_embedding_text(transcript, ocr, caption)
         if embedding_text:
-            vectors = get_passage_embeddings_batch([embedding_text])
+            vectors = await asyncio.to_thread(get_passage_embeddings_batch, [embedding_text])
             if vectors:
                 partial["embedding_vector"] = vectors[0]
 
