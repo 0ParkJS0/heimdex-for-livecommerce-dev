@@ -1,5 +1,5 @@
 # docker-compose.override.yml
-# DEV-ONLY: Mounts worker_sdk source and installs it as editable.
+# DEV-ONLY: Mounts heimdex-worker-sdk (sibling repo) and installs it as editable.
 # This file is auto-loaded by `docker compose up` when present.
 # Production images bake the SDK wheel at build time (see Dockerfiles).
 #
@@ -9,7 +9,7 @@
 services:
   drive-worker:
     volumes:
-      - ./services/worker_sdk:/opt/heimdex-worker-sdk:ro
+      - ../heimdex-worker-sdk:/opt/heimdex-worker-sdk:ro
     environment:
       - PYTHONPATH=/app:/opt/heimdex-worker-sdk/src
     command: >
@@ -20,7 +20,7 @@ services:
 
   drive-ocr-worker:
     volumes:
-      - ./services/worker_sdk:/opt/heimdex-worker-sdk:ro
+      - ../heimdex-worker-sdk:/opt/heimdex-worker-sdk:ro
     environment:
       - PYTHONPATH=/app:/opt/heimdex-worker-sdk/src
     command: >
@@ -31,7 +31,7 @@ services:
 
   drive-caption-worker:
     volumes:
-      - ./services/worker_sdk:/opt/heimdex-worker-sdk:ro
+      - ../heimdex-worker-sdk:/opt/heimdex-worker-sdk:ro
     environment:
       - PYTHONPATH=/app:/opt/heimdex-worker-sdk/src
     command: >
@@ -42,7 +42,7 @@ services:
 
   drive-stt-worker:
     volumes:
-      - ./services/worker_sdk:/opt/heimdex-worker-sdk:ro
+      - ../heimdex-worker-sdk:/opt/heimdex-worker-sdk:ro
     environment:
       - PYTHONPATH=/app:/opt/heimdex-worker-sdk/src
     command: >

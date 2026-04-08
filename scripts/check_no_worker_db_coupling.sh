@@ -194,7 +194,7 @@ fi
 bold "=== Checking worker_sdk settings for dead DB fields ==="
 echo ""
 
-SDK_SETTINGS="$REPO_ROOT/services/worker_sdk/src/heimdex_worker_sdk/settings.py"
+SDK_SETTINGS="$REPO_ROOT/../heimdex-worker-sdk/src/heimdex_worker_sdk/settings.py"
 if [ -f "$SDK_SETTINGS" ]; then
     sdk_db=$(grep -n -E '^\s*(database_url|DATABASE_URL)\b|^\s*(import|from).*(asyncpg|psycopg2)' "$SDK_SETTINGS" 2>/dev/null || true)
     if [ -n "$sdk_db" ]; then
