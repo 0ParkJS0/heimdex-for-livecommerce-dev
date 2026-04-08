@@ -227,16 +227,17 @@ This is enforced by `worker-coupling-check.yml` in CI. Workers communicate with 
 
 ## Dependencies on Other Repos
 
-Both `heimdex-media-contracts` and `heimdex-media-pipelines` are **mounted as Docker volumes** and installed as editable packages:
+`heimdex-media-contracts`, `heimdex-media-pipelines`, and `heimdex-worker-sdk` are **mounted as Docker volumes** via `docker-compose.override.yml` and installed as editable packages:
 
 ```yaml
-# docker-compose.yml
+# docker-compose.override.yml
 volumes:
   - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
   - ../heimdex-media-pipelines:/opt/heimdex-media-pipelines:ro
+  - ../heimdex-worker-sdk:/opt/heimdex-worker-sdk:ro
 ```
 
-**Before modifying contracts or pipelines**, verify changes don't break this repo's API or workers.
+**Before modifying contracts, pipelines, or worker-sdk**, verify changes don't break this repo's API or workers.
 
 ## Multi-Tenancy
 
@@ -398,6 +399,16 @@ The worker SDK is installed from **PyPI** during Docker builds (`pip install "he
 - When constructing doc IDs for `mget_scenes`, always prefix: `[f"{org_id}:{sid}" for sid in scene_ids]`
 - The scene search client (`get_scene_opensearch_client`) is a `SceneSearchClient` instance with `SceneIngestMixin`
 
+### INDEX_VERSION and Alias (CRITICAL)
+
+`SceneSearchClient.INDEX_VERSION` in `scene_client.py` **must match the promoted alias target**. Currently: `v5` (alias `heimdex_scenes` → `heimdex_scenes_v5`).
+
+- **Reads** (search, facets) use `alias_name` → correct regardless of INDEX_VERSION
+- **Writes** (bulk_index, bulk_partial_update, mget) use `index_name` → derived from `INDEX_VERSION`
+- **Deletes** (delete_by_query) use `alias_name` → correct regardless
+
+If INDEX_VERSION doesn't match the alias target, **ingested scenes become invisible** (written to old index, reads go to new index via alias). After running `promote_alias.py`, always update INDEX_VERSION to match.
+
 ## Frontend Testing
 
 - **Test runner**: Vitest + Testing Library (`@testing-library/react`)
@@ -439,6 +450,7 @@ When fixing data that lives in both PostgreSQL and OpenSearch:
 - Running `npx vitest` from repo root instead of `services/web/` (picks up Playwright e2e files, causes false failures)
 - Not adjusting `selectedClipIndex`/`selectedSubtitleIndex` when removing items before the selected index in array-based selection (off-by-one after splice)
 - Using stale closures in React effects that read frequently-changing values like `playheadMs` — use refs for values that change every frame, deps arrays for values that change on user action
+- Running `promote_alias.py` without updating `SceneSearchClient.INDEX_VERSION` in `scene_client.py` (writes go to old index, reads go to new — scenes become invisible)
 
 ## Documentation
 
