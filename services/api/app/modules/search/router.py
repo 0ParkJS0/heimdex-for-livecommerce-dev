@@ -99,12 +99,15 @@ async def search(
     """
     settings = get_settings()
 
-    logger.debug(
-        "search_request",
+    logger.info(
+        "search_request_debug",
         user_id=str(user.id),
         org_id=str(org_ctx.org_id),
         mode=settings.search_default_mode,
         search_mode=request.search_mode,
+        color_hex=request.color_hex,
+        color_family=request.color_family,
+        query=request.q[:50] if request.q else "",
     )
 
     user_id = cast(UUID, user.id)
