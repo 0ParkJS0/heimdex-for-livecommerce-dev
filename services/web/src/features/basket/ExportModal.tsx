@@ -70,14 +70,27 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
   useEffect(() => {
     if (!isOpen) return;
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved && !saved.includes("email@gmail.com")) return; // already has a real path
+    if (saved && !saved.includes("email@gmail.com")) {
+      // Already has a real saved path — use it if it's in the detected mounts or if no mounts.
+      setDrivePath(saved);
+      setSelectedDriveOption(saved);
+      return;
+    }
 
     // Prefer agent-detected mounts (accurate for local machine).
-    if (premiereInfo?.google_drive_mounts?.length) {
-      const mount = premiereInfo.google_drive_mounts[0];
-      setDrivePath(mount);
-      setSelectedDriveOption(mount);
-      localStorage.setItem(STORAGE_KEY, mount);
+    const mounts = premiereInfo?.google_drive_mounts ?? [];
+    if (mounts.length === 1) {
+      // Single mount — auto-select.
+      setDrivePath(mounts[0]);
+      setSelectedDriveOption(mounts[0]);
+      localStorage.setItem(STORAGE_KEY, mounts[0]);
+      return;
+    }
+    if (mounts.length > 1) {
+      // Multiple mounts — don't auto-select, let user choose.
+      // Set first as default but don't persist until user confirms.
+      setDrivePath(mounts[0]);
+      setSelectedDriveOption(mounts[0]);
       return;
     }
 
@@ -602,6 +615,35 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
               )}
               Premiere 내보내기 패키지 다운로드 (.zip)
             </button>
+          )}
+
+          {/* Google Drive mount selector (when multiple detected) */}
+          {activeTab === "proxy-pack" && agentAvailable && (premiereInfo?.google_drive_mounts?.length ?? 0) > 1 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Google 드라이브 계정</label>
+              <select
+                value={drivePath}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setDrivePath(value);
+                  setSelectedDriveOption(value);
+                  localStorage.setItem(STORAGE_KEY, value);
+                }}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+              >
+                {premiereInfo!.google_drive_mounts!.map((mount) => {
+                  const email = mount.replace("~/Library/CloudStorage/GoogleDrive-", "");
+                  return (
+                    <option key={mount} value={mount}>
+                      {email}
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                영상 파일이 있는 Google 드라이브 계정을 선택하세요.
+              </p>
+            </div>
           )}
 
           {/* Open in Premiere Pro (via Heimdex Agent) */}
