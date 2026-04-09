@@ -632,7 +632,7 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
               >
                 {premiereInfo!.google_drive_mounts!.map((mount) => {
-                  const email = mount.replace("~/Library/CloudStorage/GoogleDrive-", "");
+                  const email = mount.replace(/.*GoogleDrive-/, "");
                   return (
                     <option key={mount} value={mount}>
                       {email}
