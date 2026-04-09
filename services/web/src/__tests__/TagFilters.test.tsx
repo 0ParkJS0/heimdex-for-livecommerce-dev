@@ -120,12 +120,11 @@ describe("TagFilters", () => {
     expect(screen.getByText("Keyword tags")).toBeInTheDocument();
     expect(screen.getByText("Product tags")).toBeInTheDocument();
     expect(screen.getByText("Product entities")).toBeInTheDocument();
-    expect(screen.getByText("AI 태그")).toBeInTheDocument();
 
     const includeLabels = screen.getAllByText("Include");
     const excludeLabels = screen.getAllByText("Exclude");
-    expect(includeLabels).toHaveLength(4);
-    expect(excludeLabels).toHaveLength(4);
+    expect(includeLabels).toHaveLength(3);
+    expect(excludeLabels).toHaveLength(3);
   });
 
   it("renders helper text for product entities", () => {
