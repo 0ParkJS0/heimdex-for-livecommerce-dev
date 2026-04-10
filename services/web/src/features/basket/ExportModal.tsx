@@ -74,6 +74,8 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
       // Already has a real saved path — use it if it's in the detected mounts or if no mounts.
       setDrivePath(saved);
       setSelectedDriveOption(saved);
+      const mounts = premiereInfo?.google_drive_mounts ?? [];
+      setDrivePathSource(mounts.includes(saved) ? "agent" : "oauth");
       return;
     }
 
@@ -83,6 +85,7 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
       // Single mount — auto-select.
       setDrivePath(mounts[0]);
       setSelectedDriveOption(mounts[0]);
+      setDrivePathSource("agent");
       localStorage.setItem(STORAGE_KEY, mounts[0]);
       return;
     }
@@ -91,6 +94,7 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
       // Set first as default but don't persist until user confirms.
       setDrivePath(mounts[0]);
       setSelectedDriveOption(mounts[0]);
+      setDrivePathSource("agent");
       return;
     }
 
@@ -105,13 +109,20 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
             : "G:\\";
           setDrivePath(predicted);
           setSelectedDriveOption(predicted);
+          setDrivePathSource("oauth");
           localStorage.setItem(STORAGE_KEY, predicted);
+        } else {
+          setDrivePathSource("none");
         }
       } catch {
-        // proceed with default
+        setDrivePathSource("none");
       }
     })();
   }, [isOpen, getAccessToken, premiereInfo]);
+
+  // --- Drive path source tracking ---
+  // "agent" = agent detected, "oauth" = predicted from OAuth email, "manual" = user entered, "none" = unknown
+  const [drivePathSource, setDrivePathSource] = useState<"agent" | "oauth" | "manual" | "none">("none");
 
   // --- Shared state ---
   const [activeTab, setActiveTab] = useState<ExportTab>("proxy-pack");
@@ -689,21 +700,121 @@ export function ExportModal({ isOpen, onClose, overrideItems }: ExportModalProps
             </div>
           )}
 
+          {/* FCPXML Direct Download — lightweight option */}
+          {activeTab === "proxy-pack" && (
+            <div className="border-t border-gray-200 pt-4 space-y-3">
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <span className="flex-1 border-t border-gray-200" />
+                <span>또는</span>
+                <span className="flex-1 border-t border-gray-200" />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">FCPXML 타임라인 다운로드</p>
+
+                {drivePathSource === "agent" && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                    <p className="text-xs text-green-700">
+                      Google 드라이브의 원본 미디어를 참조하는 타임라인 파일입니다.
+                    </p>
+                    <p className="text-xs text-green-600 mt-1 font-mono truncate" title={drivePath}>
+                      {drivePath}
+                    </p>
+                  </div>
+                )}
+
+                {drivePathSource === "oauth" && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                    <p className="text-xs text-yellow-700">
+                      경로가 정확하지 않을 수 있습니다. Premiere Pro에서 미디어 재연결이 필요할 수 있습니다.
+                    </p>
+                    <p className="text-xs text-yellow-600 mt-1 font-mono truncate" title={drivePath}>
+                      {drivePath}
+                    </p>
+                  </div>
+                )}
+
+                {drivePathSource === "none" && (
+                  <div className="space-y-2">
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                      <p className="text-xs text-gray-600">
+                        Google 드라이브 경로를 확인할 수 없습니다. Heimdex Agent를 설치하거나 Google 드라이브를 연결하세요.
+                      </p>
+                    </div>
+                    <input
+                      type="text"
+                      value={drivePath.includes("email@gmail.com") ? "" : drivePath}
+                      onChange={(e) => {
+                        setDrivePath(e.target.value);
+                        setDrivePathSource("manual");
+                      }}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+                      placeholder="Google 드라이브 경로를 입력하세요 (예: ~/Library/CloudStorage/GoogleDrive-email@gmail.com)"
+                    />
+                  </div>
+                )}
+
+                {drivePathSource === "manual" && (
+                  <input
+                    type="text"
+                    value={drivePath}
+                    onChange={(e) => setDrivePath(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+                    placeholder="Google 드라이브 경로를 입력하세요"
+                  />
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleFcpxmlExport}
+                  disabled={loading || openingInPremiere || (drivePathSource === "none" && !drivePath.trim())}
+                  className="w-full bg-gray-700 text-white py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
+                >
+                  {loading && activeTab === "proxy-pack" ? (
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  )}
+                  FCPXML 패키지 다운로드 (.zip)
+                </button>
+                <p className="text-xs text-gray-400">
+                  Premiere Pro → 파일 → 가져오기에서 .fcpxml 파일을 선택하세요.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Proxy Pack generation divider + button */}
           {activeTab === "proxy-pack" && !proxyJobId && (
-            <button
-              type="button"
-              onClick={handleProxyPackExport}
-              disabled={loading || openingInPremiere}
-              className="w-full bg-primary-600 text-white py-2.5 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {loading && (
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                </svg>
-              )}
-              프록시 팩 생성 시작
-            </button>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-xs text-gray-400">
+                <span className="flex-1 border-t border-gray-200" />
+                <span>또는</span>
+                <span className="flex-1 border-t border-gray-200" />
+              </div>
+              <button
+                type="button"
+                onClick={handleProxyPackExport}
+                disabled={loading || openingInPremiere}
+                className="w-full bg-primary-600 text-white py-2.5 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {loading && (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                )}
+                프록시 팩 생성 시작
+              </button>
+              <p className="text-xs text-gray-400">
+                프록시 영상이 포함된 ZIP 파일을 생성합니다. Google 드라이브 없이 편집할 수 있습니다.
+              </p>
+            </div>
           )}
         </div>
       </div>

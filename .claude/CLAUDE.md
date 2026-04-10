@@ -175,6 +175,17 @@ S3 layout: `{org_id}/faces/{cluster_id}.jpg`, `{org_id}/faces/exemplars/{exempla
 
 Storage: Dual-write (disk + S3). Reads check disk first, fall back to S3. When `FACE_THUMBNAIL_S3_PRIMARY=true`, reads from S3 first with disk fallback. S3 cleanup on delete/merge. Backfill existing disk thumbnails with `backfill_face_thumbnails_to_s3.py`.
 
+### Similar Faces Merge (인물 병합)
+
+Context-menu-initiated merge flow: user clicks "인물 병합" on a face profile, sees similar faces ranked by embedding similarity, selects which to merge.
+
+- **Endpoint**: `GET /api/people/{id}/similar?threshold=0.40&limit=20` — lean response (IDs + similarity scores only, no OpenSearch calls)
+- **Repository**: `FaceRepository.find_similar_identities()` — single pgvector `<=>` cosine distance query returning `cluster_id`, `similarity`, `thumbnail_source`
+- **Index**: HNSW on `face_identities.centroid_embedding` (`m=16, ef_construction=64`) — replaced IVFFlat in migration 043
+- **Frontend**: `SimilarFacesModal` with inline label resolution (no modal stacking). Joins lean API response against already-loaded `people` array via `peopleMap`. Module-level cache for repeat opens.
+- **Merge**: Calls existing `POST /api/people/merge` — no new merge logic needed
+- **Threshold**: 0.40 default (lower than clustering threshold 0.55 because human reviews results). Configurable via query param.
+
 ### Highlight Reel (when `HIGHLIGHT_REEL_ENABLED=true`)
 
 Auto-generates a highlight video from a face profile. Uses the "Max-Diversity Run Sampler" algorithm to select scenes across multiple videos.
