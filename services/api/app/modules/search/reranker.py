@@ -1,16 +1,18 @@
 """
 Cross-encoder reranker for search result re-scoring.
 
-Uses BAAI/bge-reranker-v2-m3 to rescore the top-k RRF candidates with
+Uses BAAI/bge-reranker-base to rescore the top-k RRF candidates with
 query-document cross-attention, then blends the reranker score with the
 original RRF adjusted_score.
 
-## Model: BAAI/bge-reranker-v2-m3
+## Model: BAAI/bge-reranker-base
 
-- **Type**: Cross-encoder (sequence classification)
-- **Languages**: 100+ languages including Korean
+- **Type**: Cross-encoder (XLMRobertaForSequenceClassification)
+- **Languages**: 100+ languages including Korean (XLM-Roberta backbone)
 - **Max length**: 512 tokens (query + document concatenated)
-- **Memory**: ~560MB (FP32)
+- **Parameters**: 278M
+- **Memory**: ~1.1GB (FP32)
+- **Latency**: ~1.7s for 20 pairs on c6i.4xlarge (16 vCPU)
 
 ## Integration point
 

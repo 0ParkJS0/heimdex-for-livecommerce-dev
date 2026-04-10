@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     
     # Cross-encoder reranker configuration
     reranker_enabled: bool = False
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
-    reranker_top_k: int = 50
+    reranker_model: str = "BAAI/bge-reranker-base"
+    reranker_top_k: int = 20
     reranker_blend_weight: float = 0.7
     reranker_use_mock: bool = False
 

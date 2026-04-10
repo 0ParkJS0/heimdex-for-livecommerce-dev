@@ -80,7 +80,7 @@ class TestRerankerServiceMock:
     def test_score_pairs_mock_mode(self):
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             service = RerankerService()
             scores = service.score_pairs("test query", ["doc1", "doc2", "doc3"])
             assert len(scores) == 3
@@ -90,7 +90,7 @@ class TestRerankerServiceMock:
     def test_score_pairs_empty_documents(self):
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             service = RerankerService()
             scores = service.score_pairs("query", [])
             assert scores == []
@@ -111,7 +111,7 @@ class TestApplyReranking:
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_enabled = True
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             mock_settings.return_value.reranker_top_k = 50
             mock_settings.return_value.reranker_blend_weight = 0.7
 
@@ -136,7 +136,7 @@ class TestApplyReranking:
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_enabled = True
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             mock_settings.return_value.reranker_top_k = 50
             mock_settings.return_value.reranker_blend_weight = 0.7
 
@@ -155,7 +155,7 @@ class TestApplyReranking:
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_enabled = True
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             mock_settings.return_value.reranker_top_k = 50
             mock_settings.return_value.reranker_blend_weight = 0.7
 
@@ -175,7 +175,7 @@ class TestApplyReranking:
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_enabled = True
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             mock_settings.return_value.reranker_top_k = 50
             mock_settings.return_value.reranker_blend_weight = 0.7
 
@@ -196,7 +196,7 @@ class TestApplyReranking:
         with patch("app.modules.search.reranker.get_settings") as mock_settings:
             mock_settings.return_value.reranker_enabled = True
             mock_settings.return_value.reranker_use_mock = True
-            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-v2-m3"
+            mock_settings.return_value.reranker_model = "BAAI/bge-reranker-base"
             mock_settings.return_value.reranker_top_k = 50
             mock_settings.return_value.reranker_blend_weight = 0.7
 
