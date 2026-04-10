@@ -10,6 +10,7 @@ import {
   PersonTimelineResponse,
   PersonVideosResponse,
   RenamePersonResponse,
+  SimilarPeopleResponse,
   ThumbnailResponse,
   VideoExclusionsResponse,
 } from "@/lib/types";
@@ -158,6 +159,22 @@ export async function getPersonTimeline(
 ): Promise<PersonTimelineResponse> {
   return apiRequest<PersonTimelineResponse>(
     `/api/people/${encodeURIComponent(personClusterId)}/timeline`,
+    "GET",
+    getToken,
+  );
+}
+
+export async function getSimilarPeople(
+  personClusterId: string,
+  getToken?: TokenGetter,
+  options?: { threshold?: number; limit?: number },
+): Promise<SimilarPeopleResponse> {
+  const params = new URLSearchParams();
+  if (options?.threshold != null) params.set("threshold", String(options.threshold));
+  if (options?.limit != null) params.set("limit", String(options.limit));
+  const qs = params.toString();
+  return apiRequest<SimilarPeopleResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/similar${qs ? `?${qs}` : ""}`,
     "GET",
     getToken,
   );

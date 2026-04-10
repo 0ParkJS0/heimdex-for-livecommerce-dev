@@ -36,6 +36,7 @@ import { HighlightReelButton } from "./HighlightReelButton";
 import { HighlightReelPreviewModal } from "./HighlightReelPreviewModal";
 import type { HighlightReelPreviewResponse } from "@/lib/api/highlight-reel";
 import { SelectionTray } from "./SelectionTray";
+import { SimilarFacesModal } from "./SimilarFacesModal";
 import { TimelineBar } from "./TimelineBar";
 import { splitByLabel } from "@/lib/people-utils";
 
@@ -146,6 +147,7 @@ function PersonAvatar({
   onDelete,
   onRename,
   onGalleryOpen,
+  onFindSimilar,
   agentAvailable,
   isDragActive,
   thumbnailVersion,
@@ -156,6 +158,7 @@ function PersonAvatar({
   onDelete: (id: string) => void;
   onRename?: () => void;
   onGalleryOpen?: (id: string) => void;
+  onFindSimilar?: (id: string) => void;
   agentAvailable: boolean;
   isDragActive: boolean;
   thumbnailVersion?: number;
@@ -274,6 +277,13 @@ function PersonAvatar({
                 className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
               >
                 프로필 사진 변경
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onFindSimilar?.(person.person_cluster_id); }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                인물 병합
               </button>
               <button
                 type="button"
@@ -845,6 +855,7 @@ export function PeopleSettings() {
   const [thumbnailVersion, setThumbnailVersion] = useState(0);
   const [bulkMergeOpen, setBulkMergeOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [similarTarget, setSimilarTarget] = useState<PersonResponse | null>(null);
 
   // Highlight reel state
   const [highlightPreview, setHighlightPreview] = useState<HighlightReelPreviewResponse | null>(null);
@@ -1212,6 +1223,10 @@ export function PeopleSettings() {
                           onDelete={setDeleteTargetId}
                           onRename={() => toggleSelection(person.person_cluster_id)}
                           onGalleryOpen={setGalleryTargetId}
+                          onFindSimilar={(id) => {
+                            const target = people.find((p) => p.person_cluster_id === id);
+                            if (target) setSimilarTarget(target);
+                          }}
                           agentAvailable={agentAvailable}
                           isDragActive={activeDragPerson !== null}
                           thumbnailVersion={thumbnailVersion}
@@ -1310,6 +1325,23 @@ export function PeopleSettings() {
           fetchPeople();
         }}
       />
+      {similarTarget && (
+        <SimilarFacesModal
+          targetPerson={similarTarget}
+          people={people}
+          onClose={() => setSimilarTarget(null)}
+          onMerge={async (request) => {
+            const result = await mergePeople(request);
+            if (result) {
+              setSimilarTarget(null);
+              setThumbnailVersion((v) => v + 1);
+            }
+            return result;
+          }}
+          isMerging={isMerging}
+          getAccessToken={getAccessToken}
+        />
+      )}
       {highlightPreview && (
         <HighlightReelPreviewModal
           isOpen={highlightPreview !== null}

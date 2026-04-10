@@ -89,6 +89,18 @@ export interface VideoPeopleResponse {
   total: number;
 }
 
+export interface SimilarPersonItem {
+  person_cluster_id: string;
+  similarity: number;
+}
+
+export interface SimilarPeopleResponse {
+  target_cluster_id: string;
+  similarities: SimilarPersonItem[];
+  total: number;
+  threshold: number;
+}
+
 export interface ExemplarResponse {
   exemplar_id: string;
   video_id: string;
