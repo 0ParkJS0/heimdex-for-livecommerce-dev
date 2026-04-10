@@ -97,6 +97,9 @@ services:
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
       - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
       - EMBEDDING_USE_MOCK=${EMBEDDING_USE_MOCK:-true}
+      # Cross-encoder reranker
+      - RERANKER_ENABLED=${RERANKER_ENABLED:-false}
+      - RERANKER_USE_MOCK=${RERANKER_USE_MOCK:-false}
       # Speech-aware scene splitting + VLM tags
       - DRIVE_SPEECH_SPLIT_ENABLED=${DRIVE_SPEECH_SPLIT_ENABLED:-false}
       - VLM_TAGS_ENABLED=${VLM_TAGS_ENABLED:-false}
