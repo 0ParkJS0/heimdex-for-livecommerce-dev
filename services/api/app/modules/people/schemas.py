@@ -144,6 +144,18 @@ class BulkDeleteResponse(BaseModel):
     total_deleted: int
 
 
+class SimilarPersonItem(BaseModel):
+    person_cluster_id: str
+    similarity: float
+
+
+class SimilarPeopleResponse(BaseModel):
+    target_cluster_id: str
+    similarities: list[SimilarPersonItem]
+    total: int
+    threshold: float
+
+
 class ExemplarResponse(BaseModel):
     exemplar_id: str
     video_id: str

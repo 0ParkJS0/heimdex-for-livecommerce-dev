@@ -12,6 +12,12 @@ class FaceMatchRow(TypedDict):
     cluster_id: str
     similarity: float
 
+
+class SimilarIdentityRow(TypedDict):
+    cluster_id: str
+    similarity: float
+    thumbnail_source: str
+
 class FaceRepository:
     def __init__(self, session: AsyncSession):
         self.session: AsyncSession = session
@@ -226,6 +232,51 @@ class FaceRepository:
         self.session.add(exemplar)
         await self.session.flush()
         return cast(UUID, exemplar.id)
+
+    async def find_similar_identities(
+        self,
+        org_id: UUID,
+        cluster_id: str,
+        threshold: float = 0.40,
+        limit: int = 20,
+    ) -> list[SimilarIdentityRow]:
+        """Find face identities similar to the given cluster using pgvector cosine distance.
+
+        Returns cluster_id, similarity score, and thumbnail_source in a single query
+        to avoid a separate round-trip for thumbnail data.
+        """
+        result = await self.session.execute(
+            text("""
+                WITH target AS (
+                    SELECT centroid_embedding
+                    FROM face_identities
+                    WHERE org_id = :org_id AND cluster_id = :cluster_id
+                )
+                SELECT fi.cluster_id,
+                       1 - (fi.centroid_embedding <=> target.centroid_embedding) AS similarity,
+                       fi.thumbnail_source
+                FROM face_identities fi, target
+                WHERE fi.org_id = :org_id
+                  AND fi.cluster_id != :cluster_id
+                ORDER BY fi.centroid_embedding <=> target.centroid_embedding
+                LIMIT :limit
+            """),
+            {
+                "org_id": str(org_id),
+                "cluster_id": cluster_id,
+                "limit": limit,
+            },
+        )
+        rows = result.mappings().all()
+        return [
+            SimilarIdentityRow(
+                cluster_id=str(row["cluster_id"]),
+                similarity=float(row["similarity"]),
+                thumbnail_source=str(row["thumbnail_source"]),
+            )
+            for row in rows
+            if float(row["similarity"]) >= threshold
+        ]
 
     async def merge_identities(
         self,

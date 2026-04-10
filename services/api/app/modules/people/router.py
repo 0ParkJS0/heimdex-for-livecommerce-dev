@@ -43,6 +43,8 @@ from app.modules.people.schemas import (
     SetExcludePreferencesRequest,
     SetThumbnailRequest,
     SetVideoExclusionsRequest,
+    SimilarPeopleResponse,
+    SimilarPersonItem,
     ThumbnailResponse,
     VideoExclusionsResponse,
 )
@@ -185,6 +187,43 @@ async def rename_person(
     return RenamePersonResponse(
         person_cluster_id=updated.person_cluster_id,
         label=updated.label,
+    )
+
+
+@router.get("/{person_cluster_id}/similar", response_model=SimilarPeopleResponse)
+async def find_similar_people(
+    person_cluster_id: str,
+    threshold: float = Query(0.40, ge=0.0, le=1.0, description="Minimum cosine similarity"),
+    limit: int = Query(20, ge=1, le=50, description="Maximum results"),
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    face_repo: FaceRepository = Depends(get_face_repository),
+):
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="People feature is not enabled",
+        )
+
+    similar = await face_repo.find_similar_identities(
+        org_id=org_ctx.org_id,
+        cluster_id=person_cluster_id,
+        threshold=threshold,
+        limit=limit,
+    )
+
+    return SimilarPeopleResponse(
+        target_cluster_id=person_cluster_id,
+        similarities=[
+            SimilarPersonItem(
+                person_cluster_id=row["cluster_id"],
+                similarity=round(row["similarity"], 4),
+            )
+            for row in similar
+        ],
+        total=len(similar),
+        threshold=threshold,
     )
 
 
