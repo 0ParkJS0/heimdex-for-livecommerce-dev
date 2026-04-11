@@ -24,6 +24,7 @@ const navItems: NavItem[] = [
     label: "내보내기",
     children: [
       { label: "쇼츠", href: "/export/shorts" },
+      { label: "가편집", href: "/export/preedit" },
       { label: "문서", href: "/export/documents" },
     ],
   },
