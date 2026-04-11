@@ -231,7 +231,7 @@ export function ShortsEditorPage() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50">
         <p className="text-sm text-red-600">{loadError}</p>
-        <Link href="/shorts" className="text-sm text-indigo-600 hover:text-indigo-700">
+        <Link href="/export/shorts" className="text-sm text-indigo-600 hover:text-indigo-700">
           <span className="inline-flex items-center gap-1.5">
             <BackArrowIcon />
             쇼츠 목록으로 돌아가기

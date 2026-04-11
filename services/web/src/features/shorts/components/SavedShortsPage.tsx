@@ -465,7 +465,7 @@ export function SavedShortsPage() {
                 {/* Thumbnail area */}
                 <div className="relative block aspect-[4/3] w-full overflow-hidden rounded-lg bg-gray-200">
                   {item.type === "saved" && item.scene_ids ? (
-                    <Link href={`/shorts/create?videoId=${item.video_id}&sceneIds=${item.scene_ids.join(",")}`} className="block h-full w-full">
+                    <Link href={`/export/shorts/create?videoId=${item.video_id}&sceneIds=${item.scene_ids.join(",")}`} className="block h-full w-full">
                       <SceneThumbnail videoId={item.video_id} sceneId={item.scene_ids[0]} agentAvailable={true} className="h-full w-full" />
                     </Link>
                   ) : (
@@ -551,7 +551,7 @@ export function SavedShortsPage() {
                   <div className="ml-2 flex flex-shrink-0 items-center gap-2">
                     {item.type === "saved" && item.scene_ids && (
                       <Link
-                        href={`/shorts/editor?shortId=${item.id}`}
+                        href={`/export/shorts/editor?shortId=${item.id}`}
                         className="text-xs text-indigo-500 hover:text-indigo-600 transition-colors"
                       >
                         편집

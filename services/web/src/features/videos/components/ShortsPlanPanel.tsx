@@ -135,7 +135,7 @@ export function ShortsPlanPanel({
             <div className="flex items-center gap-2">
               {selectedCount > 0 && (
                 <Link
-                  href={`/shorts/editor?videoId=${videoId}&sceneIds=${selectedCandidates.flatMap((c) => c.scene_ids).join(",")}`}
+                  href={`/export/shorts/editor?videoId=${videoId}&sceneIds=${selectedCandidates.flatMap((c) => c.scene_ids).join(",")}`}
                   className="text-sm px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 font-medium hover:bg-indigo-100 transition-colors"
                 >
                   Edit in Timeline

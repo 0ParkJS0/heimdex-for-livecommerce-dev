@@ -277,7 +277,7 @@ export function ShortsCreatePage() {
         throw new Error(detail?.detail ?? `저장 실패 (${res.status})`);
       }
 
-      router.push("/shorts");
+      router.push("/export/shorts");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "저장 중 오류가 발생했습니다.");
     } finally {
@@ -359,7 +359,7 @@ export function ShortsCreatePage() {
                   선택된 장면 ({selectedScenes.length})
                 </h2>
                 <Link
-                  href={`/shorts/editor?videoId=${videoId}&sceneIds=${selectedScenes.map((s) => s.scene_id).join(",")}`}
+                  href={`/export/shorts/editor?videoId=${videoId}&sceneIds=${selectedScenes.map((s) => s.scene_id).join(",")}`}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
                 >
                   타임라인에서 편집

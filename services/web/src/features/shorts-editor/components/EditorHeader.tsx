@@ -87,7 +87,7 @@ export function EditorHeader({
       {/* Left: back + metadata */}
       <div className="flex items-center gap-3">
         <Link
-          href="/shorts"
+          href="/export/shorts"
           onClick={handleBack}
           className="rounded-full p-1.5 hover:bg-gray-100"
         >

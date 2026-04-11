@@ -899,7 +899,7 @@ function ScenesPanel({
           disabled={selectedIds.size === 0}
           onClick={() => {
             if (selectedIds.size > 0) {
-              router.push(`/shorts/create?videoId=${videoId}&sceneIds=${Array.from(selectedIds).join(",")}`);
+              router.push(`/export/shorts/create?videoId=${videoId}&sceneIds=${Array.from(selectedIds).join(",")}`);
             }
           }}
           className={cn(
@@ -1217,7 +1217,7 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
         ))}
         <button
           type="button"
-          onClick={() => router.push(`/shorts/create?videoId=${videoId}`)}
+          onClick={() => router.push(`/export/shorts/create?videoId=${videoId}`)}
           className="ml-auto mb-1 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
         >
           <DownloadIcon />

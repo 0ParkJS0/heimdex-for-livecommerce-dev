@@ -74,7 +74,7 @@ export function HighlightReelPreviewModal({
         getToken,
       );
       onClose();
-      router.push("/shorts");
+      router.push("/export/shorts");
     } catch (err) {
       setError(err instanceof Error ? err.message : "렌더링 요청에 실패했습니다.");
     } finally {
