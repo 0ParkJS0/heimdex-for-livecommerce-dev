@@ -17,6 +17,7 @@ interface PreeditRowProps {
   index: number;
   actions: PreeditActions;
   getToken: TokenGetter;
+  onPreviewScene: (scene: SceneResult) => void;
 }
 
 function formatMs(ms: number): string {
@@ -26,7 +27,7 @@ function formatMs(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export function PreeditRow({ row, index, actions, getToken }: PreeditRowProps) {
+export function PreeditRow({ row, index, actions, getToken, onPreviewScene }: PreeditRowProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useSortable({ id: row.id });
 
@@ -136,6 +137,7 @@ export function PreeditRow({ row, index, actions, getToken }: PreeditRowProps) {
               key={scene.scene_id}
               scene={scene}
               onSelect={() => handleSelect(scene)}
+              onPreview={() => onPreviewScene(scene)}
             />
           ))}
         </div>

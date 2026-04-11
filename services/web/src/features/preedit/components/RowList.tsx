@@ -10,6 +10,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import type { SceneResult } from "@/lib/types";
 import type { PreeditRow as PreeditRowType } from "../lib/types";
 import type { PreeditActions } from "./PreeditLayout";
 import { PreeditRow } from "./PreeditRow";
@@ -20,9 +21,10 @@ interface RowListProps {
   rows: PreeditRowType[];
   actions: PreeditActions;
   getToken: TokenGetter;
+  onPreviewScene: (scene: SceneResult) => void;
 }
 
-export function RowList({ rows, actions, getToken }: RowListProps) {
+export function RowList({ rows, actions, getToken, onPreviewScene }: RowListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
@@ -56,6 +58,7 @@ export function RowList({ rows, actions, getToken }: RowListProps) {
               index={index}
               actions={actions}
               getToken={getToken}
+              onPreviewScene={onPreviewScene}
             />
           ))}
         </SortableContext>

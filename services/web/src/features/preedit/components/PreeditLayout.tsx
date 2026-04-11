@@ -1,3 +1,5 @@
+import { useState } from "react";
+import type { SceneResult } from "@/lib/types";
 import type { PreeditProject, PreeditScene } from "../lib/types";
 import { PreeditHeader } from "./PreeditHeader";
 import { RowList } from "./RowList";
@@ -28,6 +30,8 @@ export function PreeditLayout({
   actions,
   getToken,
 }: PreeditLayoutProps) {
+  const [previewScene, setPreviewScene] = useState<SceneResult | null>(null);
+
   return (
     <div className="flex h-[calc(100vh-64px)] w-full flex-col overflow-hidden">
       <PreeditHeader
@@ -40,10 +44,11 @@ export function PreeditLayout({
             rows={project.rows}
             actions={actions}
             getToken={getToken}
+            onPreviewScene={setPreviewScene}
           />
         </main>
         <aside className="w-[320px] flex-shrink-0 overflow-y-auto border-l border-gray-200 bg-gray-50">
-          <SequenceSidebar project={project} />
+          <SequenceSidebar project={project} previewScene={previewScene} />
         </aside>
       </div>
     </div>
