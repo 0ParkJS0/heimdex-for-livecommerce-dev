@@ -23,7 +23,7 @@ export function SelectedSceneSlot({
   const durationSec = Math.round((scene.endMs - scene.startMs) / 1000);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+    <div className="flex items-center gap-3 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
       <div className="h-16 w-28 flex-shrink-0 overflow-hidden rounded bg-gray-200">
         <SceneThumbnail
           videoId={scene.videoId}
