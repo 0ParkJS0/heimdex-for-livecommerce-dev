@@ -462,7 +462,7 @@ describe("ShortsCreatePage behavior", () => {
     await user.click(screen.getByRole("button", { name: /저장하기/ }));
 
     await waitFor(() => {
-      expect(mockRouterPush).toHaveBeenCalledWith("/shorts");
+      expect(mockRouterPush).toHaveBeenCalledWith("/export/shorts");
     });
 
     vi.mocked(global.fetch).mockRestore();

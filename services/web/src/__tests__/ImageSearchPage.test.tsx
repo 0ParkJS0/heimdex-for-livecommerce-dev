@@ -8,6 +8,17 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({
+    getAccessToken: vi.fn().mockResolvedValue("token"),
+    user: { name: "Test User", email: "test@test.com" },
+    logout: vi.fn(),
+    isAuthenticated: true,
+    isLoading: false,
+  }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
 vi.mock("@/components/dashboard/DashboardContent", () => {
   return {
     default: function MockDashboardContent(props: Record<string, unknown>) {

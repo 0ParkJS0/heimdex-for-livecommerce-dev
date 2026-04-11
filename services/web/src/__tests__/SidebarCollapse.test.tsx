@@ -4,10 +4,11 @@ import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
+const mockUsePathname = vi.fn(() => "/");
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }),
-  usePathname: () => "/",
+  usePathname: () => mockUsePathname(),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -30,10 +31,10 @@ describe("Sidebar", () => {
   it("renders expanded by default with nav items visible", () => {
     render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
 
-    expect(screen.getByText("전체 아카이브 검색")).toBeInTheDocument();
+    expect(screen.getByText("동영상 검색")).toBeInTheDocument();
     expect(screen.getByText("파일 동기화")).toBeInTheDocument();
     expect(screen.getByText("인물 라벨 관리")).toBeInTheDocument();
-    expect(screen.getByText("저장된 쇼츠")).toBeInTheDocument();
+    expect(screen.getByText("내보내기")).toBeInTheDocument();
     expect(screen.getByText("에이전트")).toBeInTheDocument();
   });
 
@@ -106,6 +107,78 @@ describe("TopHeader", () => {
     await user.click(hamburgerBtn);
 
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("NavGroup — 내보내기", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mockUsePathname.mockReturnValue("/");
+  });
+
+  it("shows children when group is expanded by default", () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.getByText("내보내기")).toBeInTheDocument();
+    expect(screen.getByText("쇼츠")).toBeInTheDocument();
+    expect(screen.getByText("문서")).toBeInTheDocument();
+  });
+
+  it("hides children when group is collapsed", async () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("내보내기"));
+
+    expect(screen.queryByText("쇼츠")).not.toBeInTheDocument();
+    expect(screen.queryByText("문서")).not.toBeInTheDocument();
+  });
+
+  it("auto-expands when child route is active", () => {
+    localStorage.setItem("heimdex-export-group-expanded", "false");
+
+    mockUsePathname.mockReturnValue("/export/shorts");
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.getByText("쇼츠")).toBeInTheDocument();
+    expect(screen.getByText("문서")).toBeInTheDocument();
+  });
+
+  it("auto-expands on deep child route", () => {
+    localStorage.setItem("heimdex-export-group-expanded", "false");
+
+    mockUsePathname.mockReturnValue("/export/shorts/create");
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.getByText("쇼츠")).toBeInTheDocument();
+  });
+
+  it("persists collapsed state to localStorage", async () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("내보내기"));
+
+    expect(localStorage.getItem("heimdex-export-group-expanded")).toBe("false");
+  });
+
+  it("reads initial state from localStorage", () => {
+    localStorage.setItem("heimdex-export-group-expanded", "false");
+
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.queryByText("쇼츠")).not.toBeInTheDocument();
+    expect(screen.queryByText("문서")).not.toBeInTheDocument();
+  });
+
+  it("renders children with correct hrefs", () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    const shortsLink = screen.getByText("쇼츠").closest("a");
+    const docsLink = screen.getByText("문서").closest("a");
+
+    expect(shortsLink).toHaveAttribute("href", "/export/shorts");
+    expect(docsLink).toHaveAttribute("href", "/export/documents");
   });
 });
 

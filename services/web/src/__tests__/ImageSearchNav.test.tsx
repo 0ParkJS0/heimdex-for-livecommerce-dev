@@ -36,14 +36,14 @@ describe("Sidebar - 이미지 검색 nav item", () => {
     expect(link).toHaveAttribute("href", "/images");
   });
 
-  it('appears between "전체 아카이브 검색" and "파일 동기화" in DOM order', () => {
+  it('appears between "동영상 검색" and "파일 동기화" in DOM order', () => {
     mockPathname = "/";
     const { container } = render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
 
     const links = container.querySelectorAll("nav a");
     const labels = Array.from(links).map((el) => el.textContent?.trim());
 
-    const archiveIdx = labels.findIndex((t) => t?.includes("전체 아카이브 검색"));
+    const archiveIdx = labels.findIndex((t) => t?.includes("동영상 검색"));
     const imageIdx = labels.findIndex((t) => t?.includes("이미지 검색"));
     const syncIdx = labels.findIndex((t) => t?.includes("파일 동기화"));
 
@@ -62,11 +62,11 @@ describe("Sidebar - 이미지 검색 nav item", () => {
     expect(link).toHaveClass("border-indigo-500");
   });
 
-  it('"전체 아카이브 검색" is NOT active when pathname is "/images"', () => {
+  it('"동영상 검색" is NOT active when pathname is "/images"', () => {
     mockPathname = "/images";
     render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
 
-    const archiveLink = screen.getByRole("link", { name: /전체 아카이브 검색/ });
+    const archiveLink = screen.getByRole("link", { name: /동영상 검색/ });
     expect(archiveLink).not.toHaveClass("border-indigo-500");
   });
 });

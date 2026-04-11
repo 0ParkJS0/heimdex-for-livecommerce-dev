@@ -142,11 +142,11 @@ describe("VideoCard", () => {
     expect(badges.length).toBe(2); // thumbnail overlay + text badge
   });
 
-  it("renders keyword and product tags", () => {
+  it("does not render keyword and product tags (hidden from UI)", () => {
     render(<VideoCard video={sampleVideo} onSelect={vi.fn()} agentAvailable={false} />);
-    expect(screen.getByText("fashion")).toBeInTheDocument();
-    expect(screen.getByText("unboxing")).toBeInTheDocument();
-    expect(screen.getByText("product-a")).toBeInTheDocument();
+    expect(screen.queryByText("fashion")).not.toBeInTheDocument();
+    expect(screen.queryByText("unboxing")).not.toBeInTheDocument();
+    expect(screen.queryByText("product-a")).not.toBeInTheDocument();
   });
 
   it("calls onSelect when clicked", async () => {
@@ -350,8 +350,8 @@ describe("VideoDetailDrawer", () => {
     expect(pulseElements.length).toBeGreaterThan(0);
   });
 
-  it("shows scene tags", () => {
+  it("does not show scene tags (hidden from UI)", () => {
     renderWithProviders(<VideoDetailDrawer {...defaultProps} />);
-    expect(screen.getByText("greeting")).toBeInTheDocument();
+    expect(screen.queryByText("greeting")).not.toBeInTheDocument();
   });
 });
