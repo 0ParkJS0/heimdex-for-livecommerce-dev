@@ -39,7 +39,7 @@ export function RowList({ rows, actions, getToken }: RowListProps) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex w-full flex-col gap-4 overflow-hidden">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
