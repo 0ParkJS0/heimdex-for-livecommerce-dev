@@ -18,7 +18,7 @@ export function SceneCandidateCard({ scene, onSelect }: SceneCandidateCardProps)
   const durationSec = Math.round(duration / 1000);
 
   return (
-    <div className="flex w-[200px] flex-shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white transition-shadow hover:shadow-md">
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white transition-shadow hover:shadow-md">
       {/* Thumbnail */}
       <div className="relative aspect-video w-full overflow-hidden bg-gray-100">
         <SceneThumbnail

@@ -130,7 +130,7 @@ export function PreeditRow({ row, index, actions, getToken }: PreeditRowProps) {
 
       {/* Search results */}
       {rowSearch.results.length > 0 && (
-        <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
+        <div className="mt-3 grid auto-cols-[200px] grid-flow-col gap-3 overflow-x-auto pb-2">
           {rowSearch.results.map((scene) => (
             <SceneCandidateCard
               key={scene.scene_id}
