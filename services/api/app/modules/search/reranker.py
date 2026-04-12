@@ -46,9 +46,13 @@ class RerankerClient:
             import httpx
 
             timeout = self.settings.reranker_timeout_ms / 1000
+            headers = {}
+            if self.settings.aircloud_api_key:
+                headers["x-api-key"] = self.settings.aircloud_api_key
             self._client = httpx.AsyncClient(
                 base_url=self.settings.reranker_service_url,
                 timeout=httpx.Timeout(timeout),
+                headers=headers,
             )
         return self._client
 
