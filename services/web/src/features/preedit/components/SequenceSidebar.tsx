@@ -1,11 +1,28 @@
 import type { SceneResult } from "@/lib/types";
+import type { RenderJobResponse } from "@/lib/api/shorts-render";
 import type { PreeditProject } from "../lib/types";
 import { ScenePreviewPlayer, ScenePreviewEmpty } from "./ScenePreviewPlayer";
+import { ExportPanel } from "./ExportPanel";
 import { SequenceItem } from "./SequenceItem";
+
+type TokenGetter = () => Promise<string | null>;
+
+interface ExportState {
+  renderStatus: "idle" | "submitting" | "queued" | "rendering" | "completed" | "failed";
+  renderJob: RenderJobResponse | null;
+  renderError: string | null;
+  submitRender: () => Promise<void>;
+  exportPremiere: (driveMountPath: string) => Promise<void>;
+  premiereError: string | null;
+  isExportingPremiere: boolean;
+  reset: () => void;
+}
 
 interface SequenceSidebarProps {
   project: PreeditProject;
   previewScene: SceneResult | null;
+  exportState: ExportState;
+  getToken: TokenGetter;
 }
 
 function formatDuration(totalMs: number): string {
@@ -15,7 +32,7 @@ function formatDuration(totalMs: number): string {
   return `${m}분 ${s}초`;
 }
 
-export function SequenceSidebar({ project, previewScene }: SequenceSidebarProps) {
+export function SequenceSidebar({ project, previewScene, exportState, getToken }: SequenceSidebarProps) {
   const filledRows = project.rows.filter((r) => r.selectedScene !== null);
   const totalDurationMs = filledRows.reduce((sum, row) => {
     const scene = row.selectedScene!;
@@ -61,8 +78,19 @@ export function SequenceSidebar({ project, previewScene }: SequenceSidebarProps)
             </span>
           </div>
 
-          <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3 text-center text-xs text-gray-400">
-            내보내기 기능 준비 중
+          <div className="mt-4">
+            <ExportPanel
+              hasFilledRows={filledRows.length > 0}
+              renderStatus={exportState.renderStatus}
+              renderJob={exportState.renderJob}
+              renderError={exportState.renderError}
+              onSubmitRender={exportState.submitRender}
+              onExportPremiere={exportState.exportPremiere}
+              premiereError={exportState.premiereError}
+              isExportingPremiere={exportState.isExportingPremiere}
+              onReset={exportState.reset}
+              getToken={getToken}
+            />
           </div>
         </div>
       </div>
