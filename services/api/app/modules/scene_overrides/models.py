@@ -35,12 +35,14 @@ class SceneOverride(Base, UUIDMixin, TimestampMixin):
     transcript_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
     speaker_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_tags_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    people_cluster_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Original worker values — captured on first override for reset
     original_scene_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_transcript_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_speaker_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_ai_tags_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_people_cluster_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Comma-separated field names that are actively overridden
     overridden_fields: Mapped[str] = mapped_column(String(256), nullable=False, default="")

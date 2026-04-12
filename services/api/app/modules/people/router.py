@@ -14,6 +14,7 @@ from app.dependencies import (
     get_people_exclude_preference_repository,
     get_people_video_exclusion_repository,
     get_scene_opensearch_client,
+    get_scene_override_repository,
 )
 from app.logging_config import get_logger
 from app.modules.auth import get_current_user
@@ -22,6 +23,7 @@ from app.modules.people.repository import (
     PeopleExcludePreferenceRepository,
     PeopleVideoExclusionRepository,
 )
+from app.modules.scene_overrides.repository import SceneOverrideRepository
 from app.modules.face.repository import FaceRepository
 from app.modules.people.schemas import (
     BulkDeleteRequest,
@@ -29,6 +31,8 @@ from app.modules.people.schemas import (
     ExcludePreferencesResponse,
     ExemplarListResponse,
     ExemplarResponse,
+    LinkPersonVideoRequest,
+    LinkPersonVideoResponse,
     MergePersonRequest,
     MergePersonResponse,
     PeopleListResponse,
@@ -1050,3 +1054,177 @@ async def reset_thumbnail(
     )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{person_cluster_id}/unlink-video", response_model=LinkPersonVideoResponse)
+async def unlink_person_from_video(
+    person_cluster_id: str,
+    request: LinkPersonVideoRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
+    override_repo: SceneOverrideRepository = Depends(get_scene_override_repository),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Unlink a person from all scenes in a specific video.
+
+    Creates scene overrides so the unlink survives face re-detection.
+    """
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="People feature is not enabled")
+
+    org_id_str = str(org_ctx.org_id)
+    user_id = cast(UUID, user.id)
+    video_id = request.video_id
+
+    logger.info(
+        "unlink_person_from_video_request",
+        user_id=str(user_id),
+        org_id=org_id_str,
+        person_cluster_id=person_cluster_id,
+        video_id=video_id,
+    )
+
+    # 1. Find all scenes in this video
+    scene_ids = await scene_opensearch.find_scene_ids_by_video_id(org_id_str, video_id)
+    if not scene_ids:
+        return LinkPersonVideoResponse(
+            person_cluster_id=person_cluster_id,
+            video_id=video_id,
+            scenes_updated=0,
+        )
+
+    # 2. Fetch current people_cluster_ids per scene
+    doc_ids = [f"{org_id_str}:{sid}" for sid in scene_ids]
+    scenes_data = await scene_opensearch.mget_scenes(doc_ids)
+
+    # 3. Create scene overrides for each scene that contains this person
+    override_count = 0
+    for scene_id in scene_ids:
+        doc_id = f"{org_id_str}:{scene_id}"
+        scene_doc = scenes_data.get(doc_id, {})
+        current_ids = scene_doc.get("people_cluster_ids", []) or []
+
+        if person_cluster_id not in current_ids:
+            continue
+
+        new_ids = [cid for cid in current_ids if cid != person_cluster_id]
+        await override_repo.upsert(
+            org_id=org_ctx.org_id,
+            scene_id=scene_id,
+            video_id=video_id,
+            edited_by=user_id,
+            fields={"people_cluster_ids": new_ids},
+            originals={"people_cluster_ids": current_ids},
+        )
+        override_count += 1
+
+    # 4. Update OpenSearch in bulk via Painless script
+    scenes_updated = await scene_opensearch.remove_person_from_video(
+        org_id_str, person_cluster_id, video_id,
+    )
+
+    await db.commit()
+
+    logger.info(
+        "unlink_person_from_video_complete",
+        org_id=org_id_str,
+        person_cluster_id=person_cluster_id,
+        video_id=video_id,
+        overrides_created=override_count,
+        scenes_updated=scenes_updated,
+    )
+
+    return LinkPersonVideoResponse(
+        person_cluster_id=person_cluster_id,
+        video_id=video_id,
+        scenes_updated=scenes_updated,
+    )
+
+
+@router.post("/{person_cluster_id}/link-video", response_model=LinkPersonVideoResponse)
+async def link_person_to_video(
+    person_cluster_id: str,
+    request: LinkPersonVideoRequest,
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+    scene_opensearch: SceneSearchClient = Depends(get_scene_opensearch_client),
+    override_repo: SceneOverrideRepository = Depends(get_scene_override_repository),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Link a person to all scenes in a specific video.
+
+    Creates scene overrides so the link survives face re-detection.
+    """
+    settings = get_settings()
+    if not settings.people_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="People feature is not enabled")
+
+    org_id_str = str(org_ctx.org_id)
+    user_id = cast(UUID, user.id)
+    video_id = request.video_id
+
+    logger.info(
+        "link_person_to_video_request",
+        user_id=str(user_id),
+        org_id=org_id_str,
+        person_cluster_id=person_cluster_id,
+        video_id=video_id,
+    )
+
+    # 1. Find all scenes in this video
+    scene_ids = await scene_opensearch.find_scene_ids_by_video_id(org_id_str, video_id)
+    if not scene_ids:
+        return LinkPersonVideoResponse(
+            person_cluster_id=person_cluster_id,
+            video_id=video_id,
+            scenes_updated=0,
+        )
+
+    # 2. Fetch current people_cluster_ids per scene
+    doc_ids = [f"{org_id_str}:{sid}" for sid in scene_ids]
+    scenes_data = await scene_opensearch.mget_scenes(doc_ids)
+
+    # 3. Create scene overrides for each scene that doesn't already have this person
+    override_count = 0
+    for scene_id in scene_ids:
+        doc_id = f"{org_id_str}:{scene_id}"
+        scene_doc = scenes_data.get(doc_id, {})
+        current_ids = scene_doc.get("people_cluster_ids", []) or []
+
+        if person_cluster_id in current_ids:
+            continue
+
+        new_ids = current_ids + [person_cluster_id]
+        await override_repo.upsert(
+            org_id=org_ctx.org_id,
+            scene_id=scene_id,
+            video_id=video_id,
+            edited_by=user_id,
+            fields={"people_cluster_ids": new_ids},
+            originals={"people_cluster_ids": current_ids},
+        )
+        override_count += 1
+
+    # 4. Update OpenSearch in bulk via Painless script
+    scenes_updated = await scene_opensearch.add_person_to_video(
+        org_id_str, person_cluster_id, video_id,
+    )
+
+    await db.commit()
+
+    logger.info(
+        "link_person_to_video_complete",
+        org_id=org_id_str,
+        person_cluster_id=person_cluster_id,
+        video_id=video_id,
+        overrides_created=override_count,
+        scenes_updated=scenes_updated,
+    )
+
+    return LinkPersonVideoResponse(
+        person_cluster_id=person_cluster_id,
+        video_id=video_id,
+        scenes_updated=scenes_updated,
+    )

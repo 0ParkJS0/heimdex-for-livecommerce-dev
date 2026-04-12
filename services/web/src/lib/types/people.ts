@@ -118,3 +118,9 @@ export interface ThumbnailResponse {
   person_cluster_id: string;
   thumbnail_source: string;
 }
+
+export interface LinkPersonVideoResponse {
+  person_cluster_id: string;
+  video_id: string;
+  scenes_updated: number;
+}

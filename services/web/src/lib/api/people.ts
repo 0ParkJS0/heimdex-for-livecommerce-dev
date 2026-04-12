@@ -4,6 +4,7 @@ import {
   BulkDeleteResponse,
   ExcludePreferencesResponse,
   ExemplarListResponse,
+  LinkPersonVideoResponse,
   MergePersonRequest,
   MergePersonResponse,
   PeopleListResponse,
@@ -307,4 +308,30 @@ export async function resetThumbnail(
     const body = await response.json().catch(() => null);
     throw ApiError.fromResponse(response.status, body);
   }
+}
+
+export async function unlinkPersonFromVideo(
+  personClusterId: string,
+  videoId: string,
+  getToken?: TokenGetter,
+): Promise<LinkPersonVideoResponse> {
+  return apiRequest<LinkPersonVideoResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/unlink-video`,
+    "POST",
+    getToken,
+    { video_id: videoId },
+  );
+}
+
+export async function linkPersonToVideo(
+  personClusterId: string,
+  videoId: string,
+  getToken?: TokenGetter,
+): Promise<LinkPersonVideoResponse> {
+  return apiRequest<LinkPersonVideoResponse>(
+    `/api/people/${encodeURIComponent(personClusterId)}/link-video`,
+    "POST",
+    getToken,
+    { video_id: videoId },
+  );
 }

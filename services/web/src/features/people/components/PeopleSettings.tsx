@@ -148,6 +148,7 @@ function PersonAvatar({
   onRename,
   onGalleryOpen,
   onFindSimilar,
+  onManageVideos,
   agentAvailable,
   isDragActive,
   thumbnailVersion,
@@ -159,6 +160,7 @@ function PersonAvatar({
   onRename?: () => void;
   onGalleryOpen?: (id: string) => void;
   onFindSimilar?: (id: string) => void;
+  onManageVideos?: (id: string) => void;
   agentAvailable: boolean;
   isDragActive: boolean;
   thumbnailVersion?: number;
@@ -284,6 +286,13 @@ function PersonAvatar({
                 className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
               >
                 인물 병합
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onManageVideos?.(person.person_cluster_id); }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                동영상 관리
               </button>
               <button
                 type="button"
@@ -847,6 +856,7 @@ export function PeopleSettings() {
   } = usePeople();
   const { getAccessToken } = useAuth();
   const { isAvailable: agentAvailable } = useAgent();
+  const peopleRouter = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
   const [sortBy, setSortBy] = useState<"label" | "scenes" | "date">("label");
@@ -1227,6 +1237,7 @@ export function PeopleSettings() {
                             const target = people.find((p) => p.person_cluster_id === id);
                             if (target) setSimilarTarget(target);
                           }}
+                          onManageVideos={(id) => peopleRouter.push(`/settings/people/${encodeURIComponent(id)}/videos`)}
                           agentAvailable={agentAvailable}
                           isDragActive={activeDragPerson !== null}
                           thumbnailVersion={thumbnailVersion}

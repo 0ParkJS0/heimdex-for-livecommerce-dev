@@ -357,7 +357,7 @@ class SceneIngestService:
                 caption_norm = normalize_transcript(enrichment.scene_caption) if enrichment.scene_caption else ""
                 partial["scene_caption"] = caption_norm
                 needs_embedding_update = True
-            if enrichment.people_cluster_ids is not None:
+            if enrichment.people_cluster_ids is not None and "people_cluster_ids" not in protected:
                 partial["people_cluster_ids"] = enrichment.people_cluster_ids
 
             if enrichment.visual_embedding is not None:

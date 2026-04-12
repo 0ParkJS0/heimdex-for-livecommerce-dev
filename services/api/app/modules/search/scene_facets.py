@@ -790,6 +790,98 @@ class SceneFacetsMixin:
         )
         return updated
 
+    async def remove_person_from_video(
+        self,
+        org_id: str,
+        person_cluster_id: str,
+        video_id: str,
+    ) -> int:
+        """Remove a person from all scenes in a specific video."""
+        body: dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"org_id": org_id}},
+                        {"term": {"video_id": video_id}},
+                        {"term": {"people_cluster_ids": person_cluster_id}},
+                    ],
+                }
+            },
+            "script": {
+                "source": (
+                    "if (ctx._source.people_cluster_ids != null) {"
+                    "  ctx._source.people_cluster_ids.removeIf("
+                    "    id -> id.equals(params.cluster_id)"
+                    "  );"
+                    "}"
+                ),
+                "lang": "painless",
+                "params": {"cluster_id": person_cluster_id},
+            },
+        }
+
+        response = await self.client.update_by_query(
+            index=self.alias_name,
+            body=body,
+            params={"refresh": "true"},
+        )
+        updated = int(response.get("updated", 0))
+        logger.info(
+            "remove_person_from_video_complete",
+            org_id=org_id,
+            person_cluster_id=person_cluster_id,
+            video_id=video_id,
+            scenes_updated=updated,
+        )
+        return updated
+
+    async def add_person_to_video(
+        self,
+        org_id: str,
+        person_cluster_id: str,
+        video_id: str,
+    ) -> int:
+        """Add a person to all scenes in a specific video."""
+        body: dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"term": {"org_id": org_id}},
+                        {"term": {"video_id": video_id}},
+                    ],
+                    "must_not": [
+                        {"term": {"people_cluster_ids": person_cluster_id}},
+                    ],
+                }
+            },
+            "script": {
+                "source": (
+                    "if (ctx._source.people_cluster_ids == null) {"
+                    "  ctx._source.people_cluster_ids = [params.cluster_id];"
+                    "} else if (!ctx._source.people_cluster_ids.contains(params.cluster_id)) {"
+                    "  ctx._source.people_cluster_ids.add(params.cluster_id);"
+                    "}"
+                ),
+                "lang": "painless",
+                "params": {"cluster_id": person_cluster_id},
+            },
+        }
+
+        response = await self.client.update_by_query(
+            index=self.alias_name,
+            body=body,
+            params={"refresh": "true"},
+        )
+        updated = int(response.get("updated", 0))
+        logger.info(
+            "add_person_to_video_complete",
+            org_id=org_id,
+            person_cluster_id=person_cluster_id,
+            video_id=video_id,
+            scenes_updated=updated,
+        )
+        return updated
+
     async def get_video_stats(
         self,
         org_id: str,

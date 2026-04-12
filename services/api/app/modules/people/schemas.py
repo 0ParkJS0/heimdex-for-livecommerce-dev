@@ -176,3 +176,17 @@ class SetThumbnailRequest(BaseModel):
 class ThumbnailResponse(BaseModel):
     person_cluster_id: str
     thumbnail_source: str
+
+
+class LinkPersonVideoRequest(BaseModel):
+    """Link or unlink a person from all scenes in a video."""
+
+    video_id: str = Field(..., min_length=1)
+
+
+class LinkPersonVideoResponse(BaseModel):
+    """Response for link/unlink operations."""
+
+    person_cluster_id: str
+    video_id: str
+    scenes_updated: int

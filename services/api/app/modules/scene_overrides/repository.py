@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.scene_overrides.models import SceneOverride
 
 # Fields that users are allowed to override
-EDITABLE_FIELDS = {"scene_caption", "transcript_raw", "speaker_transcript", "ai_tags"}
+EDITABLE_FIELDS = {"scene_caption", "transcript_raw", "speaker_transcript", "ai_tags", "people_cluster_ids"}
 
 # Mapping from editable field name to model column names (override + original)
 _FIELD_TO_COLUMN = {
@@ -15,6 +15,7 @@ _FIELD_TO_COLUMN = {
     "transcript_raw": ("transcript_raw", "original_transcript_raw"),
     "speaker_transcript": ("speaker_transcript", "original_speaker_transcript"),
     "ai_tags": ("ai_tags_json", "original_ai_tags_json"),
+    "people_cluster_ids": ("people_cluster_ids_json", "original_people_cluster_ids_json"),
 }
 
 
@@ -86,12 +87,12 @@ class SceneOverrideRepository:
                 if field_name not in EDITABLE_FIELDS:
                     continue
                 col, orig_col = _FIELD_TO_COLUMN[field_name]
-                stored = json.dumps(value, ensure_ascii=False) if field_name == "ai_tags" else value
+                stored = json.dumps(value, ensure_ascii=False) if field_name in ("ai_tags", "people_cluster_ids") else value
                 setattr(existing, col, stored)
                 # Capture original only on first override of this field
                 if field_name not in current_fields:
                     orig_val = originals.get(field_name)
-                    orig_stored = json.dumps(orig_val, ensure_ascii=False) if field_name == "ai_tags" and orig_val is not None else orig_val
+                    orig_stored = json.dumps(orig_val, ensure_ascii=False) if field_name in ("ai_tags", "people_cluster_ids") and orig_val is not None else orig_val
                     setattr(existing, orig_col, orig_stored)
                 current_fields.add(field_name)
             existing.overridden_fields = ",".join(sorted(current_fields))
@@ -111,10 +112,10 @@ class SceneOverrideRepository:
             if field_name not in EDITABLE_FIELDS:
                 continue
             col, orig_col = _FIELD_TO_COLUMN[field_name]
-            stored = json.dumps(value, ensure_ascii=False) if field_name == "ai_tags" else value
+            stored = json.dumps(value, ensure_ascii=False) if field_name in ("ai_tags", "people_cluster_ids") else value
             setattr(override, col, stored)
             orig_val = originals.get(field_name)
-            orig_stored = json.dumps(orig_val, ensure_ascii=False) if field_name == "ai_tags" and orig_val is not None else orig_val
+            orig_stored = json.dumps(orig_val, ensure_ascii=False) if field_name in ("ai_tags", "people_cluster_ids") and orig_val is not None else orig_val
             setattr(override, orig_col, orig_stored)
             field_names.add(field_name)
         override.overridden_fields = ",".join(sorted(field_names))
@@ -147,7 +148,7 @@ class SceneOverrideRepository:
         original_value = getattr(existing, orig_col)
 
         # Parse JSON for ai_tags
-        if field_name == "ai_tags" and original_value is not None:
+        if field_name in ("ai_tags", "people_cluster_ids") and original_value is not None:
             original_value = json.loads(original_value)
 
         # Clear the override
