@@ -84,6 +84,7 @@ services/
 ├── drive-face-worker/        # Face detection + clustering
 ├── youtube-worker/           # YouTube content sync
 ├── shorts-render-worker/     # Short-form video generation
+├── drive-reranker-worker/    # GPU cross-encoder reranker (Aircloud, FastAPI HTTP service)
 └── (deprecated: drive-caption-worker, drive-stt-worker, drive-ocr-worker, llama-caption-server, worker)
 ```
 
@@ -197,11 +198,20 @@ Architecture: Hexagonal — domain algorithm (`highlight_reel/domain.py`) is pur
 
 User controls: duration (30s-5min), per-video exclusions respected, clip removal in preview. Rendered videos appear on shorts page with progress tracking.
 
+### Navigation: 내보내기 (Export) Group
+
+The sidebar has a collapsible "내보내기" group with three children:
+- **쇼츠** → `/export/shorts` (saved shorts + timeline editor)
+- **가편집** → `/export/preedit` (search-driven rough cut builder)
+- **문서** → `/export/documents` (placeholder for CSV/SRT/PDF transcript exports)
+
+Old `/shorts/*` routes redirect to `/export/shorts/*` via permanent redirects. Sidebar group state persisted in `localStorage` key `heimdex-export-group-expanded`.
+
 ### Shorts Timeline Editor
 
-Timeline-based video editor at `/shorts/editor` for composing short-form videos from scenes.
+Timeline-based video editor at `/export/shorts/editor` for composing short-form videos from scenes.
 
-- **Route**: `/shorts/editor?videoId=X&sceneIds=a,b,c` or `?shortId=Y`
+- **Route**: `/export/shorts/editor?videoId=X&sceneIds=a,b,c` or `?shortId=Y`
 - **Module**: `services/web/src/features/shorts-editor/` (self-contained, 28 files)
 - **State**: `useEditorState` reducer with 16 actions (clip CRUD, trim, reorder, subtitle CRUD)
 - **Preview**: Multi-clip playback via `usePlaybackSync` — switches `<video>` source at clip boundaries
@@ -211,6 +221,34 @@ Timeline-based video editor at `/shorts/editor` for composing short-form videos 
 - **Backend**: `GET /api/shorts/{short_id}/composition` generates or retrieves CompositionSpec
 - **Entry points**: ShortsCreatePage ("타임라인에서 편집"), SavedShortsPage ("편집"), ShortsPlanPanel ("Edit in Timeline")
 - **Keyboard**: Space (play/pause), Delete (remove selected), Escape (deselect)
+
+### Preedit (가편집)
+
+Search-driven rough cut builder at `/export/preedit`. Users add rows, search for scenes, pick one per row, reorder, and export.
+
+- **Module**: `services/web/src/features/preedit/` (self-contained, 20+ files)
+- **State**: `usePreeditState` reducer with 11 actions (row CRUD, reorder, scene select/clear)
+- **Persistence**: localStorage (`heimdex-preedit-projects`), no backend DB
+- **Search**: `useRowSearch` hook — independent `searchScenes()` call per row, max 10 results
+- **Preview**: Scene preview player in right sidebar, native `<video>` with seek-to-start
+- **DnD**: Row reorder via `@dnd-kit/sortable` (vertical strategy)
+- **Export render**: `buildPreeditComposition()` → `submitRender()` → poll `getRenderJobStatus()`. Output dimensions follow org `thumbnail_aspect_ratio`. Multi-video supported.
+- **Export Premiere**: `buildPremiereRequest()` → `exportPremierePackage()` → direct ZIP download
+- **Adapters**: `composition-adapter.ts` (→ CompositionSpec) and `premiere-adapter.ts` (→ PremierePackageRequest) are pure functions, zero coupling to shorts-editor internals
+
+### Premiere Pro Export
+
+Three export methods for getting scenes into Premiere Pro, all accessible from the export modal (`features/basket/ExportModal.tsx`):
+
+1. **"Premiere Pro에서 열기"** — Heimdex Agent downloads ZIP + opens Premiere (requires agent running)
+2. **"FCPXML 패키지 다운로드"** — Direct ZIP download with FCPXML 1.8 + manifest + CSV + README. User imports via File > Import in Premiere. Three drive-path detection states: agent-detected (green), OAuth-predicted (yellow warning), no-detection (gray + manual input).
+3. **"프록시 팩 생성 시작"** — Async SQS job downloads proxy media (720p H.264), bundles into ZIP with FCPXML. Heaviest option, works without Google Drive.
+
+- **FCPXML generation**: `modules/export/fcpxml_writer.py` — FCPXML 1.8, rational time format, auto-snapped FPS, markers, Rec. 709
+- **ZIP assembly**: `modules/export/packager.py` — FCPXML + `manifest.json` + `scenes.csv` + `README.txt`
+- **Endpoints**: `POST /api/export/premiere-package` (direct ZIP), `POST /api/export/premiere-package-url` (presigned S3 URL, 15min), `POST /api/export/proxy-pack` (async)
+- **Agent endpoints**: `GET 127.0.0.1:8787/local/premiere-info`, `POST 127.0.0.1:8787/local/open-premiere`
+- **No `.prproj` generation** — format is undocumented gzip XML with proprietary header byte. xmeml/FCPXML is the standard interchange path.
 
 ### Key Principle: Workers MUST NOT import API database models
 
@@ -261,7 +299,20 @@ Subdomain-based: `{org-slug}.app.heimdex.co`. API extracts org from `Host` heade
 
 ### Auth0 Multi-Tenant
 
-Each org has its own Auth0 Organization. The frontend resolves the correct org via `/api/auth/org-info` (unauthenticated, returns `auth0_org_id` from the Host header subdomain). `NEXT_PUBLIC_AUTH0_ORGANIZATION` env var is a fallback only.
+Each org has its own Auth0 Organization. The frontend resolves the correct org **dynamically** via `/api/auth/org-info` (unauthenticated endpoint, returns `auth0_org_id` from the Host header subdomain).
+
+**CRITICAL — `NEXT_PUBLIC_AUTH0_ORGANIZATION` must be EMPTY on production.**
+This env var is a fallback only. If set to a specific org ID (e.g. livenow), it gets **baked into the Next.js JS bundle at build time** and ALL subdomains (livenow, ebsdemo, future orgs) will attempt to authenticate against that single org — breaking login for every org except the hardcoded one. The dynamic resolution via `/api/auth/org-info` handles multi-tenant correctly when the fallback is empty.
+
+Auth resolution flow (`services/web/src/lib/auth.tsx`):
+1. `fetchAuth0OrgId()` calls `/api/auth/org-info` → gets correct org for current subdomain
+2. `setMounted(true)` triggers re-render → `Auth0Provider` initializes with correct org
+3. `loginWithRedirect()` also calls `fetchAuth0OrgId()` before redirecting
+4. If fetch fails → falls back to `NEXT_PUBLIC_AUTH0_ORGANIZATION` (must be empty to avoid cross-org auth)
+
+Auth0 orgs: `devorg` (staging), `livenow` (prod), `ebsdemo` (prod). Tenant: `heimdex.jp.auth0.com`.
+
+**After fixing auth issues**: Users may have stale Auth0 cookies/sessions from the wrong org. They must clear site data for both `*.app.heimdex.co` and `heimdex.jp.auth0.com`, or use an incognito window.
 
 ### New Customer Onboarding
 
@@ -270,7 +321,8 @@ Each org has its own Auth0 Organization. The frontend resolves the correct org v
 3. **DNS**: Add A record in Squarespace for `{slug}.app.heimdex.co` → production EC2 IP
 4. **SSL**: Expand Let's Encrypt cert: `sudo certbot certonly --nginx --cert-name livenow.app.heimdex.co -d livenow.app.heimdex.co -d {slug}.app.heimdex.co -d app.heimdex.co`
 5. **Nginx**: Already configured for `*.app.heimdex.co` — no changes needed
-6. **No web rebuild needed** — `getApiBaseUrl()` resolves dynamically
+6. **No web rebuild needed** — `getApiBaseUrl()` and Auth0 org resolve dynamically
+7. **Verify**: Test login from the new subdomain in an incognito window before handing to customer
 
 Local dev requires `/etc/hosts` entry: `127.0.0.1 devorg.app.heimdex.local`
 
@@ -300,12 +352,27 @@ Watched folders support **nested subfolders** — files at any depth are discove
 
 ## Search
 
-Hybrid retrieval: BM25 (lexical) + kNN (semantic) with Reciprocal Rank Fusion.
+Hybrid retrieval: BM25 (lexical) + kNN (semantic) with Reciprocal Rank Fusion, optionally followed by cross-encoder reranking.
 
 - `SEARCH_DEFAULT_MODE`: `segments` or `scenes`
 - Alpha slider: 0 = pure lexical, 1 = pure semantic, 0.5 = balanced
 - Index versioning with alias promotion for zero-downtime migration
 - Promote: `python -m app.modules.search.promote_alias`
+
+### Cross-Encoder Reranking (when `RERANKER_ENABLED=true`)
+
+Rescores top-20 RRF candidates using `BAAI/bge-reranker-base` (278M params) on a dedicated Aircloud GPU, then blends reranker score with RRF score (70/30 default). Single always-on endpoint serves both staging and production.
+
+- **Pipeline position**: After `compute_weighted_rrf()`, before `diversify_results()` in `scene_service.py`
+- **Architecture**: API calls GPU service via HTTP (`POST /rerank`), not in-process inference
+- **GPU service**: `services/drive-reranker-worker/` — standalone FastAPI, zero Heimdex domain deps
+- **Fail-open**: If GPU service is down/slow, reranking is skipped and RRF order is used
+- **Gating**: Skips metadata mode, lexical mode, few results, empty queries
+- **Blending**: `adjusted_score = 0.7 * reranker_score + 0.3 * normalized_rrf_score` (configurable via `RERANKER_BLEND_WEIGHT`)
+- **Aircloud endpoint**: `https://ap-1.aieev.cloud/ac/7/reranker-worker-gpu` (requires `x-api-key` auth via `AIRCLOUD_API_KEY`)
+- **Latency**: ~100-200ms GPU inference for 20 pairs
+- **Debug**: `reranker_score` visible in frontend debug panel
+- **Image**: `ghcr.io/jlee-heimdex/heimdex-reranker-worker-gpu:latest`
 
 ## Deployment
 
@@ -458,6 +525,14 @@ When fixing data that lives in both PostgreSQL and OpenSearch:
 - Not adjusting `selectedClipIndex`/`selectedSubtitleIndex` when removing items before the selected index in array-based selection (off-by-one after splice)
 - Using stale closures in React effects that read frequently-changing values like `playheadMs` — use refs for values that change every frame, deps arrays for values that change on user action
 - Running `promote_alias.py` without updating `SceneSearchClient.INDEX_VERSION` in `scene_client.py` (writes go to old index, reads go to new — scenes become invisible)
+- Setting `NEXT_PUBLIC_AUTH0_ORGANIZATION` to a specific org ID on production (baked into JS bundle, breaks login for ALL other orgs — must be empty for multi-tenant)
+- Running `docker compose up` on production without the prod overlay (`-f docker-compose.yml -f /opt/heimdex/docker-compose.prod.yml`) — loads the dev override which mounts missing sibling repos and uses wrong env vars
+- Manually modifying production `.env` or running `docker compose` on the EC2 without the deploy workflow — use `gh workflow run "Deploy Production"` instead
+- Using `truncate` (white-space: nowrap) in deeply nested flex layouts — the text's intrinsic width pushes flex containers wider because width resolution fails. Use `line-clamp-1` instead (wraps text normally, clamps to 1 line)
+- Missing `min-w-0` on flex children that contain text — without it, flex items grow to their content's intrinsic width instead of shrinking. Both AppLayout root and content wrapper need `min-w-0` + `overflow-hidden`
+- Using `flex` with `flex-shrink-0` children for horizontal scroll carousels — the flex container expands to fit all children instead of scrolling. Use CSS Grid (`grid-auto-flow: column` + `auto-cols-[200px]` + `overflow-x-auto`) instead
+- Importing from `shorts-editor` internals (hooks, components, reducer) in `preedit` module — only import type definitions. Build equivalent adapters in the preedit module
+- Missing `setpts=PTS+{offset}/TB` in composition filter graph for multi-clip renders — extracted clips start at t=0 but the overlay enable window uses canvas-relative timestamps. Without PTS offset, clip 2+ shows a still image while audio plays correctly
 
 ## Documentation
 
