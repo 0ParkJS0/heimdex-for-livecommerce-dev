@@ -217,6 +217,27 @@ class Settings(BaseSettings):
     video_summary_enabled: bool = False
     video_summary_model: str = "gpt-4o-mini"
 
+    # --- Image caption (OpenAI gpt-4o) ---
+    # Feature flag — when False, image scenes index without captions and the
+    # ingest hook becomes a no-op. Safe default.
+    image_caption_enabled: bool = False
+    image_caption_model: str = "gpt-4o"
+    # "low" uses ~85 tokens per image, "high" uses ~170 per 512x512 tile.
+    # VMD-level description is fine with "low".
+    image_caption_image_detail: Literal["low", "high", "auto"] = "low"
+    image_caption_max_concurrency: int = 4
+    image_caption_timeout_s: float = 30.0
+    # Hard daily dollar ceiling. When exceeded, engine raises
+    # BudgetExceededError, service marks scene caption_status=pending so the
+    # backfill CLI picks it up after the budget resets.
+    image_caption_daily_budget_usd: float = 50.0
+    # Used for the pre-call budget reservation. Set above mean per-call cost
+    # so burst traffic can't slip past the ceiling.
+    image_caption_estimated_cost_per_call_usd: float = 0.012
+    # Bump this string (matches openai_prompt.PROMPT_VERSION) when the prompt
+    # changes, so we can target re-backfill at a specific prompt generation.
+    image_caption_prompt_version: str = "2026-04-13-v1"
+
     # --- Search analytics ---
     analytics_enabled: bool = True  # Record search events to Postgres
     analytics_export_enabled: bool = False  # Nightly S3 Parquet export
