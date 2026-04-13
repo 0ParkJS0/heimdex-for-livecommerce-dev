@@ -603,6 +603,11 @@ function SceneCard({ scene, aspectRatio }: { scene: SceneResult; aspectRatio: Th
           {scene.snippet}
         </p>
       )}
+      {isImage && scene.scene_caption && (
+        <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">
+          {scene.scene_caption}
+        </p>
+      )}
     </Link>
   );
 }
