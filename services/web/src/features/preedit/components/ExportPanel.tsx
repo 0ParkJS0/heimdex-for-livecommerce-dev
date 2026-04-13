@@ -4,13 +4,17 @@ import { useState, useCallback } from "react";
 import type { RenderJobResponse } from "@/lib/api/shorts-render";
 import { getApiBaseUrl } from "@/lib/api/utils";
 
+// Must stay in sync with the RenderStatus union in usePreeditExport.ts —
+// `rate_limited` is distinct from `failed` so the UI can show a "wait a
+// moment" message instead of a generic error.
 type RenderStatus =
   | "idle"
   | "submitting"
   | "queued"
   | "rendering"
   | "completed"
-  | "failed";
+  | "failed"
+  | "rate_limited";
 
 const DRIVE_PATH_KEY = "heimdex_drive_mount_path";
 
@@ -56,6 +60,8 @@ function renderStatusLabel(status: RenderStatus): string {
       return "완료";
     case "failed":
       return "실패";
+    case "rate_limited":
+      return "요청 제한에 도달했습니다. 잠시 후 다시 시도하세요.";
     default:
       return "";
   }

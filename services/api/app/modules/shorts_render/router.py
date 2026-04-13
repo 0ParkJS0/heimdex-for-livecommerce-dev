@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_scene_opensearch_client, get_shorts_render_service
 from app.modules.auth.service import get_current_user
+from app.modules.shorts_render.rate_limit import require_shorts_render_rate_limit
 from app.modules.shorts_render.schemas import (
     RenderJobCreate,
     RenderJobListResponse,
@@ -33,6 +34,7 @@ async def create_render_job(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ShortsRenderService, Depends(get_shorts_render_service)],
+    _rate_limit: Annotated[None, Depends(require_shorts_render_rate_limit)] = None,
 ):
     user_id = cast(UUID, user.id)
     return await service.create_render_job(org_ctx.org_id, user_id, body)
@@ -57,7 +59,8 @@ async def get_render_job(
     user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ShortsRenderService, Depends(get_shorts_render_service)],
 ):
-    return await service.get_render_job(org_ctx.org_id, job_id)
+    user_id = cast(UUID, user.id)
+    return await service.get_render_job(org_ctx.org_id, user_id, job_id)
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -67,7 +70,8 @@ async def delete_render_job(
     user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ShortsRenderService, Depends(get_shorts_render_service)],
 ):
-    await service.delete_render_job(org_ctx.org_id, job_id)
+    user_id = cast(UUID, user.id)
+    await service.delete_render_job(org_ctx.org_id, user_id, job_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -80,7 +84,8 @@ async def download_rendered_short(
     service: Annotated[ShortsRenderService, Depends(get_shorts_render_service)],
 ):
     """Stream the rendered MP4 from S3. Supports HTTP Range requests."""
-    job = await service.get_render_job_record(org_ctx.org_id, job_id)
+    user_id = cast(UUID, user.id)
+    job = await service.get_render_job_record(org_ctx.org_id, user_id, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Render job not found")
 

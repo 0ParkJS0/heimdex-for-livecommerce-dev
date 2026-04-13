@@ -43,7 +43,21 @@ class ShortsRenderJob(Base, UUIDMixin, TimestampMixin):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # sha256 of the normalized composition spec. Used by the dedupe query
+    # to collapse accidental double-submissions of the same composition
+    # from the same user within a short time window. NULL for legacy rows
+    # created before this column existed.
+    composition_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
 
     __table_args__: tuple[object, ...] = (
         Index("ix_shorts_render_jobs_org_id_user_id", "org_id", "user_id"),
+        Index(
+            "ix_shorts_render_jobs_dedupe",
+            "org_id",
+            "user_id",
+            "composition_hash",
+            "created_at",
+        ),
     )

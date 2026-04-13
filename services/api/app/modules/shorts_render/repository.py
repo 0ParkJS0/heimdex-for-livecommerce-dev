@@ -26,6 +26,7 @@ class ShortsRenderJobRepository:
         title: str | None,
         input_spec: dict[str, Any],
         expires_at: datetime | None,
+        composition_hash: str | None = None,
     ) -> ShortsRenderJob:
         """Create a new render job (status set by server_default)."""
         job = ShortsRenderJob(
@@ -35,18 +36,62 @@ class ShortsRenderJobRepository:
             title=title,
             input_spec=input_spec,
             expires_at=expires_at,
+            composition_hash=composition_hash,
         )
         self.session.add(job)
         await self.session.flush()
         return job
 
-    async def get_by_id(self, org_id: UUID, job_id: UUID) -> ShortsRenderJob | None:
-        """Get a render job by ID, scoped to org."""
+    async def get_by_id(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        job_id: UUID,
+    ) -> ShortsRenderJob | None:
+        """Get a render job by ID, scoped to org AND user.
+
+        Previously org-scoped only; now also filters on ``user_id`` so a
+        user cannot view another user's render job in the same org even
+        if they guess the UUID. Internal callers (worker status
+        callbacks) use ``_get_by_id_internal`` and bypass this check.
+        """
         result = await self.session.execute(
             select(ShortsRenderJob).where(
                 ShortsRenderJob.id == job_id,
                 ShortsRenderJob.org_id == org_id,
+                ShortsRenderJob.user_id == user_id,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def find_recent_duplicate(
+        self,
+        *,
+        org_id: UUID,
+        user_id: UUID,
+        composition_hash: str,
+        since: datetime,
+    ) -> ShortsRenderJob | None:
+        """Find the most recent job whose (org, user, hash) matches and
+        was created after ``since``. Used by the idempotency check to
+        collapse accidental double-submissions.
+
+        Returns None if no recent match — the caller should proceed with
+        a fresh create. Jobs in any status (queued / rendering /
+        completed / failed) count as duplicates so a retry during an
+        in-flight render returns the existing in-flight job, not a new
+        one.
+        """
+        result = await self.session.execute(
+            select(ShortsRenderJob)
+            .where(
+                ShortsRenderJob.org_id == org_id,
+                ShortsRenderJob.user_id == user_id,
+                ShortsRenderJob.composition_hash == composition_hash,
+                ShortsRenderJob.created_at >= since,
+            )
+            .order_by(ShortsRenderJob.created_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -115,9 +160,13 @@ class ShortsRenderJobRepository:
 
         return await self._get_by_id_internal(job_id)
 
-    async def delete(self, org_id: UUID, job_id: UUID) -> bool:
-        """Delete a render job by ID, scoped to org. Returns True if deleted."""
-        job = await self.get_by_id(org_id, job_id)
+    async def delete(self, org_id: UUID, user_id: UUID, job_id: UUID) -> bool:
+        """Delete a render job by ID, scoped to org + user.
+
+        Internal system-level cleanup goes through
+        ``delete_one_by_id_internal`` instead.
+        """
+        job = await self.get_by_id(org_id, user_id, job_id)
         if job is None:
             return False
         await self.session.delete(job)

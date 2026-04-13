@@ -7,8 +7,17 @@ import { SequenceItem } from "./SequenceItem";
 
 type TokenGetter = () => Promise<string | null>;
 
+// Keep this union in sync with usePreeditExport.ts and ExportPanel.tsx.
+// `rate_limited` is surfaced distinctly from `failed` for 429 responses.
 interface ExportState {
-  renderStatus: "idle" | "submitting" | "queued" | "rendering" | "completed" | "failed";
+  renderStatus:
+    | "idle"
+    | "submitting"
+    | "queued"
+    | "rendering"
+    | "completed"
+    | "failed"
+    | "rate_limited";
   renderJob: RenderJobResponse | null;
   renderError: string | null;
   submitRender: () => Promise<void>;

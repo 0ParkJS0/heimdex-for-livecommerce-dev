@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { submitRender } from "@/lib/api/shorts-render";
+import { submitRender, RenderRateLimitError } from "@/lib/api/shorts-render";
 import type { RenderJobResponse } from "@/lib/api/shorts-render";
 import { getRenderJobStatus } from "@/lib/api/highlight-reel";
 import { exportPremierePackage } from "@/lib/cloud-export";
@@ -8,13 +8,17 @@ import { buildPremiereRequest } from "../lib/premiere-adapter";
 import type { PreeditProject } from "../lib/types";
 
 type TokenGetter = () => Promise<string | null>;
+// `rate_limited` is distinct from `failed` so the UI can show
+// "wait a moment" instead of a generic error; retrying immediately
+// won't help.
 type RenderStatus =
   | "idle"
   | "submitting"
   | "queued"
   | "rendering"
   | "completed"
-  | "failed";
+  | "failed"
+  | "rate_limited";
 
 const POLL_INTERVAL = 5000;
 
@@ -81,10 +85,15 @@ export function usePreeditExport(
       setRenderJob(job);
       setRenderStatus("queued");
     } catch (err) {
-      setRenderStatus("failed");
-      setRenderError(
-        err instanceof Error ? err.message : "렌더링 요청에 실패했습니다",
-      );
+      if (err instanceof RenderRateLimitError) {
+        setRenderStatus("rate_limited");
+        setRenderError(err.message);
+      } else {
+        setRenderStatus("failed");
+        setRenderError(
+          err instanceof Error ? err.message : "렌더링 요청에 실패했습니다",
+        );
+      }
     }
   }, [project, aspectRatio, getToken]);
 

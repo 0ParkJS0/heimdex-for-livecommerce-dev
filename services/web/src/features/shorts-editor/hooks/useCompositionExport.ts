@@ -1,10 +1,24 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { submitRender, type RenderJobResponse } from "@/lib/api/shorts-render";
+import {
+  submitRender,
+  RenderRateLimitError,
+  type RenderJobResponse,
+} from "@/lib/api/shorts-render";
 import { getRenderJobStatus } from "@/lib/api/highlight-reel";
 import type { EditorState } from "../lib/types";
 import { buildCompositionSpec } from "../lib/composition-builder";
 
-export type RenderStatus = "idle" | "submitting" | "queued" | "rendering" | "completed" | "failed";
+// `rate_limited` is distinct from `failed` so the UI can show a
+// "wait a moment" message instead of a generic error — retrying
+// immediately won't help, so we don't want the user to mash the button.
+export type RenderStatus =
+  | "idle"
+  | "submitting"
+  | "queued"
+  | "rendering"
+  | "completed"
+  | "failed"
+  | "rate_limited";
 
 const POLL_INTERVAL = 5000;
 
@@ -77,8 +91,13 @@ export function useCompositionExport({ state, title, getToken }: UseCompositionE
       setRenderJob(job);
       setRenderStatus("queued");
     } catch (err) {
-      setRenderStatus("failed");
-      setRenderError(err instanceof Error ? err.message : "렌더링 제출 실패");
+      if (err instanceof RenderRateLimitError) {
+        setRenderStatus("rate_limited");
+        setRenderError(err.message);
+      } else {
+        setRenderStatus("failed");
+        setRenderError(err instanceof Error ? err.message : "렌더링 제출 실패");
+      }
     }
   }, [state, title, getToken]);
 

@@ -9,6 +9,8 @@ used by the nightly cleanup CLI. It lives here (not on the request-scoped
 service dependency graph.
 """
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,27 @@ from uuid import UUID
 
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, status
+
+# How long a just-created render job is visible to the dedupe query.
+# Long enough to kill accidental double-clicks, React dev-mode double
+# renders, and mobile-client network retries. Short enough not to block
+# intentional re-submission (e.g. the user edits fonts and resubmits).
+_DEDUPE_WINDOW_SECONDS = 30
+
+
+def compute_composition_hash(composition: Any) -> str:
+    """Deterministic sha256 of a composition spec.
+
+    Uses ``sort_keys=True`` so Pydantic dict-ordering drift across
+    versions never changes the hash. Returned as 64 hex chars — fits
+    the ``composition_hash VARCHAR(64)`` column exactly.
+    """
+    if hasattr(composition, "model_dump"):
+        body = composition.model_dump()
+    else:
+        body = composition
+    canonical = json.dumps(body, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 # Defensive regex for the ONLY S3 key shape the cleanup sweep is allowed to
 # touch. Enforced at delete time so a future bug that writes something other
@@ -255,11 +278,40 @@ class ShortsRenderService:
         user_id: UUID,
         payload: RenderJobCreate,
     ) -> RenderJobResponse:
-        """Create a render job after validating scene boundaries."""
+        """Create a render job after validating scene boundaries.
+
+        Implements implicit idempotency: if the same user submits a job
+        with the same composition_hash within _DEDUPE_WINDOW_SECONDS,
+        returns the existing job instead of creating a new one. Kills
+        accidental double-clicks without blocking intentional re-renders.
+        """
         # 1. Validate scene boundaries via OpenSearch mget
         await self._validate_scene_clips(org_id, payload)
 
-        # 2. Create DB record
+        # 2. Dedupe check — if this user just submitted the same
+        #    composition, return that job instead of spawning a duplicate.
+        composition_hash = compute_composition_hash(payload.composition)
+        dedupe_since = datetime.now(timezone.utc) - timedelta(seconds=_DEDUPE_WINDOW_SECONDS)
+        existing = await self.repository.find_recent_duplicate(
+            org_id=org_id,
+            user_id=user_id,
+            composition_hash=composition_hash,
+            since=dedupe_since,
+        )
+        if existing is not None:
+            logger.info(
+                "render_job_idempotent_replay",
+                job_id=str(existing.id),
+                org_id=str(org_id),
+                user_id=str(user_id),
+                composition_hash=composition_hash,
+                age_seconds=(
+                    datetime.now(timezone.utc) - existing.created_at
+                ).total_seconds(),
+            )
+            return _to_response(existing)
+
+        # 3. Create DB record
         settings = get_settings()
         expires_at = datetime.now(timezone.utc) + timedelta(days=settings.shorts_render_expiry_days)
 
@@ -270,6 +322,7 @@ class ShortsRenderService:
             title=payload.title,
             input_spec=payload.composition.model_dump(),
             expires_at=expires_at,
+            composition_hash=composition_hash,
         )
 
         logger.info(
@@ -280,6 +333,7 @@ class ShortsRenderService:
             video_id=payload.video_id,
             clip_count=len(payload.composition.scene_clips),
             subtitle_count=len(payload.composition.subtitles),
+            composition_hash=composition_hash,
         )
 
         # 3. Publish SQS — if this fails, mark job as failed so it doesn't
@@ -308,18 +362,24 @@ class ShortsRenderService:
     async def get_render_job_record(
         self,
         org_id: UUID,
+        user_id: UUID,
         job_id: UUID,
     ) -> ShortsRenderJob | None:
-        """Get the raw DB record for a render job."""
-        return await self.repository.get_by_id(org_id, job_id)
+        """Get the raw DB record for a render job (org + user scoped)."""
+        return await self.repository.get_by_id(org_id, user_id, job_id)
 
     async def get_render_job(
         self,
         org_id: UUID,
+        user_id: UUID,
         job_id: UUID,
     ) -> RenderJobResponse:
-        """Get a render job by ID. Populates download_url for completed jobs."""
-        job = await self.repository.get_by_id(org_id, job_id)
+        """Get a render job by ID. Populates download_url for completed jobs.
+
+        Scoped to org AND user — a user cannot view another user's job
+        in the same org even if they guess the UUID.
+        """
+        job = await self.repository.get_by_id(org_id, user_id, job_id)
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -349,10 +409,14 @@ class ShortsRenderService:
     async def delete_render_job(
         self,
         org_id: UUID,
+        user_id: UUID,
         job_id: UUID,
     ) -> None:
-        """Delete a render job. Cleans up S3 output if present."""
-        job = await self.repository.get_by_id(org_id, job_id)
+        """Delete a render job. Cleans up S3 output if present.
+
+        Scoped to org + user — matches get_render_job semantics.
+        """
+        job = await self.repository.get_by_id(org_id, user_id, job_id)
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -374,7 +438,7 @@ class ShortsRenderService:
                     s3_key=job.output_s3_key,
                 )
 
-        await self.repository.delete(org_id, job_id)
+        await self.repository.delete(org_id, user_id, job_id)
 
     async def _validate_scene_clips(
         self,

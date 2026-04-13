@@ -10,6 +10,20 @@ export interface RenderJobListResponse {
   total: number;
 }
 
+/**
+ * Thrown when the backend returns 429 Too Many Requests on
+ * POST /api/shorts/render. The UI should surface this as a "wait a
+ * moment" message distinct from a generic submission failure so the
+ * user understands retrying immediately won't help.
+ */
+export class RenderRateLimitError extends Error {
+  readonly isRateLimit = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "RenderRateLimitError";
+  }
+}
+
 export interface CompositionResponse {
   composition: Record<string, unknown>;
   source: "render_job" | "generated";
@@ -38,7 +52,11 @@ export async function submitRender(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `Render submission failed (${res.status})`);
+    const message = detail.detail || `Render submission failed (${res.status})`;
+    if (res.status === 429) {
+      throw new RenderRateLimitError(message);
+    }
+    throw new Error(message);
   }
   return res.json();
 }

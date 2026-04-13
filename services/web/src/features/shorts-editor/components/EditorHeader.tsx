@@ -44,6 +44,7 @@ const STATUS_LABELS: Record<RenderStatus, string> = {
   rendering: "렌더링 중...",
   completed: "완료",
   failed: "실패",
+  rate_limited: "요청 제한",
 };
 
 export function EditorHeader({
