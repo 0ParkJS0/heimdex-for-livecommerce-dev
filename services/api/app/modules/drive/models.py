@@ -168,6 +168,18 @@ class DriveFile(Base, UUIDMixin, TimestampMixin):
         String(32), nullable=True
     )  # pending | running | done | failed
     caption_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Image caption metadata (migration 046). Populated by
+    # app.modules.image_caption.service after a successful OpenAI caption.
+    # Used by the backfill CLI to target a specific prompt generation.
+    caption_engine: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )
+    caption_prompt_version: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
+    caption_generated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
