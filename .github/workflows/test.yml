@@ -1,0 +1,90 @@
+name: Test
+
+# Unit test gate for PRs and main. Runs:
+# - Backend pytest on a curated allowlist of tests known to pass without
+#   docker services (minio/opensearch/SQS). The allowlist widens as stale
+#   tests get repaired. Run the full suite locally with:
+#     cd services/api && pytest -m "not integration and not quality"
+# - Frontend vitest (entire suite — ~3.5s, 605 tests).
+#
+# NOT run here: integration/quality-marked tests, end-to-end tests, e2e/
+# Playwright specs. Deploy workflows stay independent.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest allowlist)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Sync dependencies (with dev extras)
+        run: uv sync --extra dev
+
+      - name: Run pytest allowlist
+        # Curated list of files verified to pass without external services
+        # (no minio, no opensearch, no SQS, no torch download). Add a file
+        # here once it's been cleaned up and verified locally. The pytest.ini
+        # `addopts` already filters out integration/quality markers.
+        run: |
+          uv run pytest \
+            tests/test_moodboard_pagination.py \
+            tests/test_visual_fusion_semantic.py \
+            tests/test_search_analytics.py \
+            tests/test_image_search.py \
+            tests/test_fusion.py \
+            tests/test_fusion_3way.py \
+            tests/test_intent.py \
+            tests/test_grouping_algorithm.py \
+            tests/test_search_contract.py \
+            tests/test_search_mode.py \
+            tests/test_search_mode_routing.py \
+            tests/test_search_rate_limit.py \
+            --tb=short
+
+  frontend:
+    name: Frontend (vitest + tsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: services/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run vitest
+        run: npx vitest run --reporter=dot
