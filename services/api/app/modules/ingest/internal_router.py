@@ -102,6 +102,36 @@ async def internal_ingest_scenes(
             detail=str(e),
         )
 
+    # Image captioning hook: fire-and-forget background task for any scene
+    # with content_type='image'. Runs on the same event loop, outside the
+    # request lifecycle. Short-circuits cleanly when image_caption_enabled
+    # is False. See app/modules/image_caption/README.md for rationale.
+    if settings.image_caption_enabled:
+        from app.modules.image_caption.service import (
+            SceneCaptionRequest,
+            schedule_image_caption_task,
+        )
+
+        image_scene_requests = [
+            SceneCaptionRequest(
+                org_id=org_id,
+                video_id=request.video_id,
+                scene_id=scene.scene_id,
+                file_name=getattr(request, "video_title", None),
+                library_name=None,
+            )
+            for scene in request.scenes
+            if getattr(scene, "content_type", None) == "image"
+        ]
+        if image_scene_requests:
+            schedule_image_caption_task(image_scene_requests)
+            logger.info(
+                "image_caption_scheduled",
+                org_id=str(org_id),
+                video_id=request.video_id,
+                scene_count=len(image_scene_requests),
+            )
+
     return IngestScenesResponse(**result)
 
 
