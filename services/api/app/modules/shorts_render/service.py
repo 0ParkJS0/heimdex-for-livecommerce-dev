@@ -9,6 +9,7 @@ used by the nightly cleanup CLI. It lives here (not on the request-scoped
 service dependency graph.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -16,6 +17,26 @@ from uuid import UUID
 
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, status
+
+# Defensive regex for the ONLY S3 key shape the cleanup sweep is allowed to
+# touch. Enforced at delete time so a future bug that writes something other
+# than a shorts render output into `output_s3_key` (e.g., a scene thumbnail
+# path, a drive proxy, a raw upload) will be skipped with a warning instead
+# of silently deleted. Matches:
+#     {org_uuid}/shorts/renders/{job_uuid}/output.mp4
+# Case-insensitive on the UUID hex to be forgiving of any capitalization drift.
+_SAFE_SHORTS_OUTPUT_KEY_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"/shorts/renders/"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"/[^/]+\.mp4$",
+    re.IGNORECASE,
+)
+
+
+def _is_safe_shorts_output_key(key: str) -> bool:
+    """Is this S3 key shaped like a shorts-render worker output?"""
+    return bool(_SAFE_SHORTS_OUTPUT_KEY_RE.match(key))
 
 from app.config import get_settings
 from app.logging_config import get_logger
@@ -38,17 +59,25 @@ class CleanupResult:
     - ``s3_deleted``: S3 objects successfully deleted
     - ``s3_skipped_not_found``: S3 keys that were already gone (idempotent)
     - ``s3_failed``: S3 deletes that raised an unexpected error
+    - ``s3_skipped_unsafe_key``: jobs whose output_s3_key didn't match the
+      shorts-render pattern, so cleanup refused to delete them (safety belt
+      against the bucket accidentally holding a video / scene / thumbnail
+      path under output_s3_key). These rows are NOT DB-deleted — a human
+      should investigate.
     - ``db_deleted``: DB rows removed
     - ``dry_run``: True when nothing was actually deleted
     - ``failed_keys``: list of ``(s3_key, error_message)`` for failed deletes
+    - ``unsafe_keys``: list of keys that tripped the safety pattern check
     """
     total_expired: int = 0
     s3_deleted: int = 0
     s3_skipped_not_found: int = 0
     s3_failed: int = 0
+    s3_skipped_unsafe_key: int = 0
     db_deleted: int = 0
     dry_run: bool = False
     failed_keys: list[tuple[str, str]] = field(default_factory=list)
+    unsafe_keys: list[str] = field(default_factory=list)
 
 
 async def cleanup_expired_renders(
@@ -102,6 +131,21 @@ async def cleanup_expired_renders(
         s3_key = job.output_s3_key
         if s3_key is None:
             # list_expired() filters on IS NOT NULL; this is defensive only
+            continue
+
+        # Safety belt: refuse to delete any key outside the shorts-render
+        # output namespace, even in dry-run logs. Protects against the
+        # catastrophic case where something upstream ever wrote a
+        # video/scene/thumbnail path into this column.
+        if not _is_safe_shorts_output_key(s3_key):
+            result.s3_skipped_unsafe_key += 1
+            result.unsafe_keys.append(s3_key)
+            logger.error(
+                "cleanup_refused_unsafe_key",
+                job_id=str(job.id),
+                s3_key=s3_key,
+                reason="does not match {org_uuid}/shorts/renders/{job_uuid}/*.mp4",
+            )
             continue
 
         if dry_run:
@@ -164,6 +208,7 @@ async def cleanup_expired_renders(
         s3_deleted=result.s3_deleted,
         s3_skipped_not_found=result.s3_skipped_not_found,
         s3_failed=result.s3_failed,
+        s3_skipped_unsafe_key=result.s3_skipped_unsafe_key,
         db_deleted=result.db_deleted,
     )
 

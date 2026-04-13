@@ -18,16 +18,26 @@ from botocore.exceptions import ClientError
 
 from app.modules.shorts_render.service import (
     CleanupResult,
+    _is_safe_shorts_output_key,
     cleanup_expired_renders,
 )
 
 
-def _make_job(*, with_output: bool, status_: str = "completed", job_id=None):
-    """Build a fake ShortsRenderJob just complete enough for cleanup."""
+def _make_job(*, with_output: bool, status_: str = "completed", job_id=None, org_id=None):
+    """Build a fake ShortsRenderJob just complete enough for cleanup.
+
+    Uses a valid UUID for the org portion of the S3 key so the cleanup
+    safety-belt pattern (`{uuid}/shorts/renders/{uuid}/output.mp4`)
+    accepts it. Tests that want to exercise the safety belt assign
+    ``job.output_s3_key`` directly to an unsafe value after construction.
+    """
     job = MagicMock()
     job.id = job_id or uuid4()
     job.status = status_
-    job.output_s3_key = f"org/shorts/renders/{job.id}/output.mp4" if with_output else None
+    job_org = org_id or uuid4()
+    job.output_s3_key = (
+        f"{job_org}/shorts/renders/{job.id}/output.mp4" if with_output else None
+    )
     job.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
     return job
 
@@ -209,3 +219,109 @@ async def test_cleanup_uses_provided_now_for_deterministic_tests():
 
     repo.list_expired.assert_awaited_once_with(fixed_now)
     repo.list_expired_without_output.assert_awaited_once_with(fixed_now)
+
+
+# ---------------------------------------------------------------------------
+# Safety belt: the pattern check refuses keys outside the shorts-render space
+# ---------------------------------------------------------------------------
+
+
+class TestSafeShortsOutputKeyPattern:
+    """Unit-level coverage of the pattern validator. Exhaustive because it
+    is the last line of defense against the bucket eating a video / scene
+    thumbnail / drive proxy if some future bug writes one of those paths
+    into ``ShortsRenderJob.output_s3_key``."""
+
+    def test_accepts_canonical_worker_output(self):
+        key = (
+            "11111111-1111-1111-1111-111111111111"
+            "/shorts/renders/"
+            "22222222-2222-2222-2222-222222222222/output.mp4"
+        )
+        assert _is_safe_shorts_output_key(key) is True
+
+    def test_accepts_uppercase_hex(self):
+        key = (
+            "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+            "/shorts/renders/"
+            "FFFFFFFF-1111-2222-3333-444444444444/output.mp4"
+        )
+        assert _is_safe_shorts_output_key(key) is True
+
+    def test_rejects_scene_thumbnail_path(self):
+        key = "11111111-1111-1111-1111-111111111111/scenes/abc123/thumb.jpg"
+        assert _is_safe_shorts_output_key(key) is False
+
+    def test_rejects_drive_proxy_path(self):
+        key = "drive/proxies/gd_xyz/video.mp4"
+        assert _is_safe_shorts_output_key(key) is False
+
+    def test_rejects_missing_shorts_prefix(self):
+        key = (
+            "11111111-1111-1111-1111-111111111111"
+            "/renders/"
+            "22222222-2222-2222-2222-222222222222/output.mp4"
+        )
+        assert _is_safe_shorts_output_key(key) is False
+
+    def test_rejects_non_uuid_org_prefix(self):
+        key = "my-org/shorts/renders/22222222-2222-2222-2222-222222222222/output.mp4"
+        assert _is_safe_shorts_output_key(key) is False
+
+    def test_rejects_path_traversal_attempt(self):
+        key = (
+            "11111111-1111-1111-1111-111111111111"
+            "/shorts/renders/"
+            "22222222-2222-2222-2222-222222222222/../../../etc/passwd"
+        )
+        assert _is_safe_shorts_output_key(key) is False
+
+    def test_rejects_non_mp4_extension(self):
+        key = (
+            "11111111-1111-1111-1111-111111111111"
+            "/shorts/renders/"
+            "22222222-2222-2222-2222-222222222222/output.mov"
+        )
+        assert _is_safe_shorts_output_key(key) is False
+
+
+@pytest.mark.asyncio
+async def test_cleanup_refuses_to_delete_unsafe_keys_and_keeps_db_row():
+    """A job with an output_s3_key outside the shorts-render namespace
+    must trip the safety belt — cleanup skips S3 entirely, DOES NOT drop
+    the DB row, and surfaces the key for human review."""
+    safe_job = _make_job(with_output=True)
+    # Simulate a future bug: a thumbnail path snuck into output_s3_key
+    unsafe_job = _make_job(with_output=True)
+    unsafe_job.output_s3_key = "org123/scenes/thumb.jpg"
+    repo = _mock_repo(with_output=[safe_job, unsafe_job])
+    s3 = _mock_s3()
+
+    result = await cleanup_expired_renders(repo, s3)
+
+    # Safe job was processed normally
+    assert result.s3_deleted == 1
+    # Unsafe job was skipped: no S3 call, no DB delete
+    assert result.s3_skipped_unsafe_key == 1
+    assert result.unsafe_keys == ["org123/scenes/thumb.jpg"]
+    assert result.db_deleted == 1  # only the safe one
+    # Verify s3.delete was NOT called with the unsafe key
+    called_keys = [call.args[0] for call in s3.delete.call_args_list]
+    assert "org123/scenes/thumb.jpg" not in called_keys
+
+
+@pytest.mark.asyncio
+async def test_cleanup_dry_run_also_refuses_unsafe_keys():
+    """Dry-run logging must not print 'would delete' for unsafe keys —
+    the safety check runs BEFORE the dry-run branch."""
+    unsafe_job = _make_job(with_output=True)
+    unsafe_job.output_s3_key = "drive/proxies/video.mp4"
+    repo = _mock_repo(with_output=[unsafe_job])
+    s3 = _mock_s3()
+
+    result = await cleanup_expired_renders(repo, s3, dry_run=True)
+
+    assert result.s3_skipped_unsafe_key == 1
+    assert result.unsafe_keys == ["drive/proxies/video.mp4"]
+    assert result.db_deleted == 0
+    s3.delete.assert_not_called()
