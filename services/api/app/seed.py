@@ -218,9 +218,7 @@ def _synthesize_color_data(
     return hex_colors, histogram
 
 
-def _build_speaker_transcript(
-    transcript_parts: list[str], rng: random.Random
-) -> tuple[str, int]:
+def _build_speaker_transcript(transcript_parts: list[str]) -> tuple[str, int]:
     """Assign existing transcript parts to SPEAKER_00/SPEAKER_01.
 
     Produces the same \\n-delimited format the real diarization pipeline
@@ -231,7 +229,7 @@ def _build_speaker_transcript(
         return "", 0
 
     # 70% chance of dialog (2 speakers), 30% monologue (1 speaker).
-    speaker_count = 2 if rng.random() < 0.7 and len(transcript_parts) >= 2 else 1
+    speaker_count = 2 if random.random() < 0.7 and len(transcript_parts) >= 2 else 1
 
     lines: list[str] = []
     for idx, part in enumerate(transcript_parts):
@@ -581,7 +579,7 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                     transcript_raw = " ".join(transcript_parts)
 
                     speaker_transcript, speaker_count = _build_speaker_transcript(
-                        transcript_parts, random
+                        transcript_parts
                     )
 
                     scene_people = random.sample(
