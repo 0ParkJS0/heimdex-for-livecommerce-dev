@@ -2,6 +2,14 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+# Force-load the full SQLAlchemy model registry before any test configures
+# a mapper. Without this, tests that import a single model directly (e.g.
+# `from app.modules.search.models import SearchEvent`) trigger Library's
+# `LibraryProfile` relationship forward-ref while the profiles module
+# hasn't been imported yet, producing:
+#   InvalidRequestError: expression 'LibraryProfile' failed to locate a name
+import app.db.models  # noqa: F401
+
 from app.modules.tenancy.context import OrgContext
 
 

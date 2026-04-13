@@ -403,7 +403,11 @@ class TestVisualFusionSemanticMode:
         assert kwargs["visual_weight"] == pytest.approx(0.0)
 
     @pytest.mark.asyncio
-    async def test_semantic_mode_always_calls_text_vector_search(self, mock_search_service, org_id):
+    async def test_metadata_intent_skips_text_vector_search(self, mock_search_service, org_id):
+        """Metadata-intent queries (e.g. exact price/discount phrases) route to
+        BM25-only and must NOT fire the text kNN call — text_knn_weight=0
+        should short-circuit the search_vector dispatch in scene_service.py.
+        """
         svc, os_client, mocks = mock_search_service
         svc.settings.visual_embedding_enabled = True
         mocks["classify_intent"].return_value = _intent(
@@ -416,7 +420,8 @@ class TestVisualFusionSemanticMode:
 
         await _run_semantic_search(svc, org_id, "3만원 할인")
 
-        os_client.search_vector.assert_called_once()
+        os_client.search_vector.assert_not_called()
+        os_client.search_lexical.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_bm25_runs_when_weight_positive(self, mock_search_service, org_id):

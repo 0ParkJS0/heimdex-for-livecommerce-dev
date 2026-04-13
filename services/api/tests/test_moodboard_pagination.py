@@ -197,6 +197,109 @@ async def test_search_lexical_default_video_path_still_20():
 
 
 @pytest.mark.asyncio
+async def test_search_semantic_threads_moodboard_override_to_diversify():
+    """Semantic mode must also honor page_size/max_per_video overrides.
+
+    Regression guard: my moodboard change touches all three mode methods;
+    this confirms _search_semantic's diversify_results call uses the
+    per-request overrides, not settings defaults.
+    """
+    from app.modules.search.scene_service import _SearchContext
+    from app.modules.search.schemas import Facets, SearchFilters
+
+    svc = _make_service_with_settings(visual_embedding_enabled=False)
+    svc._prepare_search_context = AsyncMock(
+        return_value=_SearchContext(
+            query="pink dress",
+            org_id=uuid4(),
+            org_id_str="org",
+            filter_dict={"content_types": ["image"]},
+            matched_person_cluster_ids=[],
+            people_label_map={},
+            library_map={},
+            facet_data={},
+            include_ocr=None,
+            group_by="scene",
+        )
+    )
+    svc.scene_opensearch.search_lexical = AsyncMock(return_value=[])
+    svc.scene_opensearch.search_vector = AsyncMock(return_value=[])
+    svc.scene_opensearch.search_visual_vector = AsyncMock(return_value=[])
+    svc.scene_opensearch.search_color_vector = AsyncMock(return_value=[])
+    svc._build_scene_results = MagicMock(return_value=[])
+    svc._build_facets = MagicMock(return_value=Facets())
+    svc._backfill_web_view_links = AsyncMock()
+
+    # Mock embedding generators so no real model is loaded
+    with patch(
+        "app.modules.search.scene_service.get_query_embedding",
+        new=AsyncMock(return_value=[0.1] * 1024),
+    ), patch(
+        "app.modules.search.scene_service.diversify_results",
+        return_value=[],
+    ) as mock_diversify:
+        await svc.search(
+            query="pink dress",
+            org_id=uuid4(),
+            alpha=0.5,
+            filters=SearchFilters(content_types=["image"]),
+            search_mode="semantic",
+            page_size=60,
+            max_per_video=6,
+        )
+
+    mock_diversify.assert_called_once()
+    _, kwargs = mock_diversify.call_args
+    assert kwargs["target_count"] == 60
+    assert kwargs["max_per_video"] == 6
+
+
+@pytest.mark.asyncio
+async def test_search_metadata_threads_moodboard_override_to_diversify():
+    """Metadata mode (file-title / source-path BM25) must also honor overrides."""
+    from app.modules.search.scene_service import _SearchContext
+    from app.modules.search.schemas import Facets, SearchFilters
+
+    svc = _make_service_with_settings()
+    svc._prepare_search_context = AsyncMock(
+        return_value=_SearchContext(
+            query="vacation",
+            org_id=uuid4(),
+            org_id_str="org",
+            filter_dict={"content_types": ["image"]},
+            matched_person_cluster_ids=[],
+            people_label_map={},
+            library_map={},
+            facet_data={},
+            include_ocr=None,
+            group_by="video",
+        )
+    )
+    svc.scene_opensearch.search_metadata = AsyncMock(return_value=[])
+    svc._build_scene_results = MagicMock(return_value=[])
+    svc._build_facets = MagicMock(return_value=Facets())
+    svc._backfill_web_view_links = AsyncMock()
+
+    with patch(
+        "app.modules.search.scene_service.diversify_results",
+        return_value=[],
+    ) as mock_diversify:
+        await svc.search(
+            query="vacation",
+            org_id=uuid4(),
+            alpha=0.5,
+            filters=SearchFilters(content_types=["image"]),
+            search_mode="metadata",
+            page_size=60,
+            max_per_video=6,
+        )
+
+    _, kwargs = mock_diversify.call_args
+    assert kwargs["target_count"] == 60
+    assert kwargs["max_per_video"] == 6
+
+
+@pytest.mark.asyncio
 async def test_search_clamps_absurd_page_size_at_service_layer():
     """Defense in depth: a direct service caller bypassing Pydantic is still clamped."""
     from app.modules.search.scene_service import SceneSearchService, _SearchContext
