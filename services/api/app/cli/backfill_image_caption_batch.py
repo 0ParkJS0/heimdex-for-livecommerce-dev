@@ -97,6 +97,11 @@ async def select_image_rows(
     Re-running prepare is safe — already-done rows drop out here.
     """
 
+    # Force the full model registry to load before running any query.
+    # Without this, SQLAlchemy fails to resolve relationships like
+    # Org.users because only DriveFile's module has been imported.
+    # Matches the pattern in app/cli/backfill.py:344.
+    import app.db.models  # noqa: F401
     from sqlalchemy import or_, select
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -428,6 +433,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 async def cmd_apply(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
 
+    # Force full model registry load before any DB access — same fix as
+    # in select_image_rows(). See backfill.py:344 for the pattern.
+    import app.db.models  # noqa: F401
     from openai import OpenAI
     from sqlalchemy import update
 
