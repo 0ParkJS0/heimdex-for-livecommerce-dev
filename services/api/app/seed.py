@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import random
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -17,6 +18,10 @@ from app.modules.text_templates.models import TextTemplate
 from app.modules.search.client import OpenSearchClient
 from app.modules.search.scene_client import SceneSearchClient
 from app.modules.search.embedding import generate_mock_embedding
+from app.modules.search.color_extraction import (
+    colors_to_hex,
+    rgb_to_hsl_histogram,
+)
 
 setup_logging()
 logger = get_logger(__name__)
@@ -139,6 +144,32 @@ ENGLISH_IMAGE_FILENAMES = [
     "COLLECTION_NAVY_COAT_model.jpg",
 ]
 
+# Representative RGB palettes for seeded color vectors. Keeps color search
+# feeling realistic (products in warm/cool ranges) without requiring real
+# images or a k-means pass over actual pixels.
+SEED_COLOR_PALETTES: list[list[tuple[int, int, int]]] = [
+    # Warm reds / coral (라이브커머스 뷰티)
+    [(214, 69, 65), (232, 122, 108), (248, 210, 200), (95, 30, 35), (255, 244, 240)],
+    # Pastel pinks
+    [(246, 180, 197), (255, 219, 226), (210, 120, 150), (255, 245, 248), (120, 70, 90)],
+    # Navy / blue denim
+    [(34, 52, 96), (88, 110, 156), (200, 210, 230), (10, 18, 40), (235, 240, 248)],
+    # Forest green
+    [(42, 89, 55), (95, 140, 90), (180, 200, 170), (20, 40, 25), (230, 235, 220)],
+    # Mustard / warm yellow
+    [(220, 170, 60), (240, 210, 130), (245, 235, 200), (110, 80, 20), (30, 28, 20)],
+    # Monochrome neutrals (black/white/gray)
+    [(30, 30, 32), (90, 90, 95), (180, 180, 185), (240, 240, 242), (140, 140, 145)],
+    # Beige / nude
+    [(220, 198, 170), (240, 222, 198), (180, 150, 118), (110, 80, 55), (250, 240, 228)],
+    # Teal / mint
+    [(58, 158, 160), (130, 200, 200), (210, 235, 232), (25, 80, 82), (240, 248, 246)],
+    # Purple / lavender
+    [(138, 88, 180), (190, 150, 222), (230, 215, 245), (60, 30, 90), (245, 238, 252)],
+    # Orange / terracotta
+    [(224, 118, 62), (244, 170, 120), (252, 220, 190), (120, 55, 22), (250, 235, 218)],
+]
+
 # Common product-photography aspect ratios in landscape/portrait/square.
 SEED_IMAGE_DIMENSIONS: list[tuple[int, int]] = [
     (1920, 1080),  # landscape 16:9
@@ -159,6 +190,32 @@ def _classify_orientation(width: int, height: int) -> str:
     if height > width:
         return "portrait"
     return "square"
+
+
+def _synthesize_color_data(
+    scene_id: str,
+) -> tuple[list[str], list[float]]:
+    """Pick a palette deterministically per scene_id, compute dominant hex +
+    27-dim HSL histogram using the same helpers the ingest pipeline uses.
+
+    Deterministic: re-running seed produces identical color_embedding vectors,
+    which keeps color-search regression tests stable.
+    """
+    seed_int = int(hashlib.md5(scene_id.encode("utf-8")).hexdigest()[:8], 16)
+    rng = random.Random(seed_int)
+
+    palette = list(rng.choice(SEED_COLOR_PALETTES))
+    rng.shuffle(palette)
+
+    # Dirichlet-like weights — one dominant color + smaller accents.
+    raw = [rng.random() for _ in palette]
+    raw[0] *= 3.0  # bias the first color to be dominant
+    total = sum(raw) or 1.0
+    weights = [w / total for w in raw]
+
+    histogram = rgb_to_hsl_histogram(palette, weights)
+    hex_colors = colors_to_hex(palette)
+    return hex_colors, histogram
 
 
 def _build_speaker_transcript(
@@ -532,6 +589,7 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                     )
 
                     embedding = generate_mock_embedding(transcript_raw)
+                    dominant_colors, color_embedding = _synthesize_color_data(scene_id)
 
                     doc = {
                         "org_id": org_id_str,
@@ -556,6 +614,8 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                         "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
                         "keyframe_timestamp_ms": (start_ms + end_ms) // 2,
                         "embedding_vector": embedding,
+                        "dominant_colors": dominant_colors,
+                        "color_embedding": color_embedding,
                     }
 
                     documents.append((f"{org_id_str}:{scene_id}", doc))
@@ -602,6 +662,7 @@ def _build_image_scene_doc(
     # Generate the semantic vector from the filename so text search over
     # images behaves sensibly (e.g. "립스틱" still surfaces image assets).
     embedding = generate_mock_embedding(filename)
+    dominant_colors, color_embedding = _synthesize_color_data(scene_id)
 
     scene_people = random.sample(
         cluster_ids, k=random.randint(0, min(2, len(cluster_ids)))
@@ -634,6 +695,8 @@ def _build_image_scene_doc(
         "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
         "keyframe_timestamp_ms": 0,
         "embedding_vector": embedding,
+        "dominant_colors": dominant_colors,
+        "color_embedding": color_embedding,
     }
 
     return (f"{org_id_str}:{scene_id}", doc)
