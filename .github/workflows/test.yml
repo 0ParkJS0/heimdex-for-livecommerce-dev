@@ -35,21 +35,29 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
-          cache-dependency-glob: "**/uv.lock"
+          # uv.lock is gitignored (project policy). Key the cache off
+          # pyproject.toml instead — same cache busts when deps change.
+          cache-dependency-glob: "services/api/pyproject.toml"
 
       - name: Set up Python
         run: uv python install 3.11
 
-      - name: Sync dependencies (with dev extras)
-        run: uv sync --extra dev
+      - name: Install dependencies (with dev extras)
+        # Use `uv pip install` rather than `uv sync` because `sync`
+        # requires a lockfile and uv.lock is not committed.
+        run: uv pip install --system -e ".[dev]"
 
       - name: Run pytest allowlist
+        env:
+          # `uv pip install --system` installs into the runner's system
+          # Python, so pytest is on PATH directly. No `uv run` needed.
+          PYTHONDONTWRITEBYTECODE: "1"
         # Curated list of files verified to pass without external services
         # (no minio, no opensearch, no SQS, no torch download). Add a file
         # here once it's been cleaned up and verified locally. The pytest.ini
         # `addopts` already filters out integration/quality markers.
         run: |
-          uv run pytest \
+          pytest \
             tests/test_moodboard_pagination.py \
             tests/test_visual_fusion_semantic.py \
             tests/test_search_analytics.py \
