@@ -113,6 +113,28 @@ TRAINING_VIDEO_TITLES = [
 ]
 
 
+def _build_speaker_transcript(
+    transcript_parts: list[str], rng: random.Random
+) -> tuple[str, int]:
+    """Assign existing transcript parts to SPEAKER_00/SPEAKER_01.
+
+    Produces the same \\n-delimited format the real diarization pipeline
+    emits so BM25 search over speaker_transcript finds the same tokens
+    as transcript_norm.
+    """
+    if not transcript_parts:
+        return "", 0
+
+    # 70% chance of dialog (2 speakers), 30% monologue (1 speaker).
+    speaker_count = 2 if rng.random() < 0.7 and len(transcript_parts) >= 2 else 1
+
+    lines: list[str] = []
+    for idx, part in enumerate(transcript_parts):
+        speaker_idx = idx % speaker_count
+        lines.append(f"SPEAKER_{speaker_idx:02d}: {part}")
+    return "\n".join(lines), speaker_count
+
+
 async def seed_database():
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
@@ -424,6 +446,10 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                     ]
                     transcript_raw = " ".join(transcript_parts)
 
+                    speaker_transcript, speaker_count = _build_speaker_transcript(
+                        transcript_parts, random
+                    )
+
                     scene_people = random.sample(
                         cluster_ids, k=random.randint(0, min(3, len(cluster_ids)))
                     )
@@ -442,6 +468,8 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                         "transcript_norm": transcript_raw.lower(),
                         "transcript_char_count": len(transcript_raw),
                         "speech_segment_count": num_speech_segments,
+                        "speaker_transcript": speaker_transcript,
+                        "speaker_count": speaker_count,
                         "source_type": source_type,
                         "required_drive_nickname": required_drive,
                         "people_cluster_ids": scene_people,
@@ -452,7 +480,7 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                         "embedding_vector": embedding,
                     }
 
-                    documents.append((scene_id, doc))
+                    documents.append((f"{str(org.id)}:{scene_id}", doc))
 
         batch_size = 100
         for i in range(0, len(documents), batch_size):
