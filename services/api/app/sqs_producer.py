@@ -55,6 +55,7 @@ _QUEUE_URL_ATTRS = {
     "color_extract": "sqs_visual_embed_queue_url",
     "export": "sqs_export_queue_url",
     "shorts_render": "sqs_shorts_render_queue_url",
+    "blur": "sqs_blur_queue_url",
 }
 
 # ── Internal helpers ───────────────────────────────────────────────────
@@ -556,6 +557,44 @@ def publish_scene_enrichment_jobs(
         )
         if published > 0:
             _wake_gpu_worker(job_type)
+
+
+def publish_blur_job(
+    *,
+    job_id: UUID,
+    file_id: UUID,
+    org_id: UUID,
+    video_id: str,
+    proxy_s3_key: str,
+    options: dict[str, Any],
+) -> None:
+    """Publish a user-triggered blur job to the blur queue.
+
+    Called from ``BlurService.create_blur_job`` AFTER the ``blur_jobs``
+    row is flushed. Fire-and-forget semantics match the rest of this
+    module; the caller is responsible for marking the row ``failed``
+    if publish blows up so the user sees the error instead of a
+    permanently stuck ``queued`` row.
+    """
+    settings = get_settings()
+    if not settings.sqs_enabled:
+        return
+
+    now = datetime.now(timezone.utc)
+    body = {
+        "version": "1",
+        "type": "blur.job_created",
+        "timestamp": now.isoformat(),
+        "job_id": str(job_id),
+        "file_id": str(file_id),
+        "org_id": str(org_id),
+        "video_id": video_id,
+        "source_s3_key": proxy_s3_key,
+        "source_kind": "proxy",
+        "options": options,
+    }
+    dedup_id = f"{job_id}:blur:{now.strftime('%Y%m%dT%H%M')}"
+    _publish("blur", body, dedup_id)
 
 
 def publish_shorts_render_job(

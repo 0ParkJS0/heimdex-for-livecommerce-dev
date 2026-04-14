@@ -1,0 +1,115 @@
+"""Public blur job routes.
+
+All routes require authentication and org context. Rate-limited per
+``(org, user)``. Scoped by ``file_id`` in the path so the caller's
+authority to operate on the underlying video is enforced at the
+drive-file repository layer (same pattern as shorts-render).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Annotated, cast
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, Response, status
+
+from app.dependencies import get_blur_service
+from app.modules.auth.service import get_current_user
+from app.modules.blur.rate_limit import require_blur_rate_limit
+from app.modules.blur.schemas import (
+    BlurJobListResponse,
+    BlurJobResponse,
+    CreateBlurJobRequest,
+)
+from app.modules.blur.service import BlurService
+from app.modules.tenancy.context import OrgContext
+from app.modules.tenancy.middleware import get_current_org
+from app.modules.users.models import User
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/blur", tags=["blur"])
+
+
+@router.post(
+    "/videos/{file_id}",
+    response_model=BlurJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_blur_job(
+    file_id: UUID,
+    body: CreateBlurJobRequest,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BlurService, Depends(get_blur_service)],
+    _rate_limit: Annotated[None, Depends(require_blur_rate_limit)] = None,
+) -> BlurJobResponse:
+    """Enqueue a user-triggered blur run for the given video file."""
+    return await service.create_blur_job(
+        org_id=org_ctx.org_id,
+        user_id=cast(UUID, user.id),
+        file_id=file_id,
+        payload=body,
+    )
+
+
+@router.get(
+    "/videos/{file_id}",
+    response_model=BlurJobListResponse,
+)
+async def list_blur_jobs_for_video(
+    file_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BlurService, Depends(get_blur_service)],
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> BlurJobListResponse:
+    return await service.list_blur_jobs_for_file(
+        org_id=org_ctx.org_id,
+        file_id=file_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=BlurJobResponse,
+)
+async def get_blur_job(
+    job_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BlurService, Depends(get_blur_service)],
+) -> BlurJobResponse:
+    return await service.get_blur_job(org_id=org_ctx.org_id, job_id=job_id)
+
+
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=BlurJobResponse,
+)
+async def cancel_blur_job(
+    job_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BlurService, Depends(get_blur_service)],
+) -> BlurJobResponse:
+    """Cancel a queued job. Returns 409 if the job is already running/done/failed/cancelled."""
+    return await service.cancel_blur_job(org_id=org_ctx.org_id, job_id=job_id)
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_blur_job(
+    job_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BlurService, Depends(get_blur_service)],
+) -> Response:
+    await service.delete_blur_job(org_id=org_ctx.org_id, job_id=job_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

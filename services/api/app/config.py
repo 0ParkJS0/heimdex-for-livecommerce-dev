@@ -199,6 +199,7 @@ class Settings(BaseSettings):
     sqs_visual_embed_queue_url: str = ""
     sqs_export_queue_url: str = ""
     sqs_shorts_render_queue_url: str = ""
+    sqs_blur_queue_url: str = ""
 
     # --- Aircloud GPU worker orchestration ---
     aircloud_enabled: bool = False
@@ -209,8 +210,18 @@ class Settings(BaseSettings):
     aircloud_endpoint_ocr: str = ""
     aircloud_endpoint_face: str = ""
     aircloud_endpoint_visual_embed: str = ""
+    aircloud_endpoint_blur: str = ""
     aircloud_wake_debounce_seconds: int = 300   # 5 min between wake-up calls per worker
     aircloud_cooldown_checks: int = 3           # 3 × 5 min = 15 min idle before stop
+
+    # --- PII blur (user-triggered, see app/modules/blur/) ---
+    # BLUR_ENABLED is the global kill switch. While false the
+    # /api/blur/videos/{id} router returns 404 and no SQS traffic
+    # or Aircloud wake-ups are produced.
+    blur_enabled: bool = False
+    blur_max_active_per_org: int = 5       # queued+running cap per org
+    blur_lease_seconds: int = 1800         # 30 min worker lease (matches SQS visibility)
+    blur_daily_budget_usd_per_org: float = 50.0  # reserved for a later circuit breaker
 
     # --- Video summary (OpenAI) ---
     openai_api_key: str = ""

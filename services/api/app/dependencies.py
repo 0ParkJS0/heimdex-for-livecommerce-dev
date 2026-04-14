@@ -173,6 +173,21 @@ def get_shorts_render_service(
     return ShortsRenderService(repo, scene_search)
 
 
+def get_blur_repository(db: AsyncSession = Depends(get_db_session)):
+    """Blur job repository factory."""
+    from app.modules.blur.repository import BlurJobRepository
+    return BlurJobRepository(db)
+
+
+def get_blur_service(
+    repo=Depends(get_blur_repository),
+    drive_file_repo=Depends(get_drive_file_repository),
+):
+    """Blur job service factory."""
+    from app.modules.blur.service import BlurService
+    return BlurService(repo, drive_file_repo)
+
+
 def get_text_template_repository(db: AsyncSession = Depends(get_db_session)):
     """Text template repository factory."""
     from app.modules.text_templates.repository import TextTemplateRepository
