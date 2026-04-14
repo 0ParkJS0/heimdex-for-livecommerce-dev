@@ -36,7 +36,11 @@ mpmath==1.3.0
 networkx==3.2.1
 numpy==2.4.4
 onnx==1.21.0
-onnxruntime==1.24.4
+# onnxruntime-gpu provides the same `onnxruntime` module, so installing
+# both CPU and GPU packages causes the CPU build to shadow the GPU one
+# at import time (observed on Aircloud 2026-04-14: insightface SCRFD
+# ran on CPUExecutionProvider despite torch.cuda.is_available()==True).
+# Keep only -gpu.
 onnxruntime-gpu==1.24.4
 opencv-python-headless==4.13.0.92
 packaging==24.1

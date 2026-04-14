@@ -22,6 +22,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     HF_HOME=/models/hf \
+    MPLCONFIGDIR=/tmp/matplotlib \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     LANG=C.UTF-8 \
@@ -71,10 +72,14 @@ COPY heimdex-media-pipelines/ /tmp/heimdex-media-pipelines/
 RUN pip install --no-cache-dir /tmp/heimdex-media-pipelines \
     && rm -rf /tmp/heimdex-media-pipelines
 
-# Pre-warm OWLv2 weights into the image so Aircloud cold-starts don't
-# pay the 400 MB download cost on every wake. Fails the build if the
-# HuggingFace weights are unreachable — that's intentional; we want
-# broken pulls visible at build time, not at 2 am during a blur run.
+# Create the runtime user BEFORE pre-warming so SCRFD weights land in
+# the home dir that the runtime FaceAnalysis() call actually reads from.
+RUN useradd -m -u 1000 appuser
+
+# Pre-warm OWLv2 weights into HF_HOME so Aircloud cold-starts don't pay
+# the 400 MB HuggingFace download cost on every wake. Fails the build if
+# the weights are unreachable — intentional; broken pulls must be
+# visible at build time, not at 2 am during a blur run.
 RUN mkdir -p /models/hf \
     && python -c "\
 from transformers import Owlv2Processor, Owlv2ForObjectDetection; \
@@ -82,18 +87,22 @@ Owlv2Processor.from_pretrained('google/owlv2-base-patch16-ensemble'); \
 Owlv2ForObjectDetection.from_pretrained('google/owlv2-base-patch16-ensemble'); \
 print('owlv2 cached')"
 
-# Pre-warm SCRFD (buffalo_l) so face detection cold-start is also fast.
-RUN mkdir -p /models/insightface \
+# Pre-warm SCRFD (buffalo_l) into appuser's ~/.insightface — which is
+# the default location insightface.FaceAnalysis looks up when called
+# without an explicit root=. Pre-warming to /models/insightface (as we
+# did before) was wasted because heimdex_media_pipelines.faces.detect
+# calls FaceAnalysis(name='buffalo_l') with no root, so insightface
+# falls back to ~/.insightface → /home/appuser/.insightface at runtime
+# and triggered a ~275 MB GitHub re-download on every cold start.
+RUN mkdir -p /home/appuser/.insightface/models \
     && python -c "\
 import insightface; \
-app = insightface.app.FaceAnalysis(name='buffalo_l', root='/models/insightface', providers=['CPUExecutionProvider']); \
+app = insightface.app.FaceAnalysis(name='buffalo_l', root='/home/appuser/.insightface', providers=['CPUExecutionProvider']); \
 app.prepare(ctx_id=-1, det_size=(640,640))"
-ENV INSIGHTFACE_HOME=/models/insightface
 
 COPY dev-heimdex-for-livecommerce/services/drive-blur-worker/src/ src/
 
-RUN useradd -m -u 1000 appuser \
-    && chown -R appuser:appuser /app /models
+RUN chown -R appuser:appuser /app /models /home/appuser
 USER appuser
 
 CMD ["python", "-m", "src.worker"]
