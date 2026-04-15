@@ -43,6 +43,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -f /tmp/get-pip.py \
     && rm -rf /var/lib/apt/lists/*
 
+# v0.10 layer export requires the ``ffv1`` encoder (per-category
+# grayscale masks written by the pipeline) and ``prores_ks`` (the
+# ProRes 4444 NLE-compatible layer produced by the export task). Fail
+# the build immediately if either is missing from the stock ffmpeg
+# package — discovering this at runtime inside Aircloud costs a full
+# GPU cold-start cycle just to learn the image is broken.
+RUN set -e; \
+    encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null)"; \
+    echo "$encoders" | grep -qw ffv1 || { echo "ERROR: ffmpeg build is missing the 'ffv1' encoder (required for per-category blur masks)"; exit 1; }; \
+    echo "$encoders" | grep -qw prores_ks || { echo "ERROR: ffmpeg build is missing the 'prores_ks' encoder (required for ProRes 4444 layer export)"; exit 1; }; \
+    echo "ffmpeg encoders ok: ffv1 + prores_ks"
+
 WORKDIR /app
 
 # Worker SDK — pip-installed from PyPI, pinned at the version that adds

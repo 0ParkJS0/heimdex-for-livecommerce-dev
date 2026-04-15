@@ -175,6 +175,11 @@ services:
       - SQS_BLUR_QUEUE_URL=${SQS_BLUR_QUEUE_URL:-}
       # PII blur (user-triggered, see app/modules/blur/)
       - BLUR_ENABLED=${BLUR_ENABLED:-false}
+      # BLUR_EXPORT_ENABLED gates the v0.10 ProRes 4444 layer export
+      # workflow (POST /api/blur/jobs/{id}/export). Stays dark until
+      # drive-blur-worker is on the dispatcher build AND contracts
+      # v0.10.0 is published to PyPI.
+      - BLUR_EXPORT_ENABLED=${BLUR_EXPORT_ENABLED:-false}
       - BLUR_MAX_ACTIVE_PER_ORG=${BLUR_MAX_ACTIVE_PER_ORG:-5}
       - BLUR_LEASE_SECONDS=${BLUR_LEASE_SECONDS:-1800}
       - BLUR_DAILY_BUDGET_USD_PER_ORG=${BLUR_DAILY_BUDGET_USD_PER_ORG:-50.0}
@@ -670,6 +675,11 @@ services:
       - SQS_BLUR_QUEUE_URL=${SQS_BLUR_QUEUE_URL:-}
       # Blur config
       - BLUR_ENABLED=${BLUR_ENABLED:-false}
+      # Same v0.10 gate as the api container. When false the
+      # dispatcher still routes blur.export_created messages but the
+      # API will never publish them, so the worker effectively only
+      # runs blur-job tasks.
+      - BLUR_EXPORT_ENABLED=${BLUR_EXPORT_ENABLED:-false}
       - DRIVE_BLUR_CONCURRENCY=${DRIVE_BLUR_CONCURRENCY:-1}
       - BLUR_OWL_MODEL=${BLUR_OWL_MODEL:-google/owlv2-base-patch16-ensemble}
       - BLUR_OWL_STRIDE=${BLUR_OWL_STRIDE:-5}

@@ -21,6 +21,10 @@ WORKER_SRC_DIRS=(
     "services/drive-caption-worker/src"
     "services/drive-stt-worker/src"
     "services/drive-ocr-worker/src"
+    # v0.10: drive-blur-worker joins the scan so the Phase 4 dispatcher
+    # + export_layer task cannot silently regress the workers-don't-
+    # touch-the-DB contract.
+    "services/drive-blur-worker/src"
 )
 
 # Worker package manifests (pyproject.toml / Dockerfile)
@@ -29,6 +33,7 @@ WORKER_PKG_DIRS=(
     "services/drive-caption-worker"
     "services/drive-stt-worker"
     "services/drive-ocr-worker"
+    "services/drive-blur-worker"
 )
 
 COMPOSE_FILE="docker-compose.yml"
@@ -39,6 +44,7 @@ WORKER_SERVICES=(
     "drive-caption-worker"
     "drive-stt-worker"
     "drive-ocr-worker"
+    "drive-blur-worker"
 )
 
 violations=0
