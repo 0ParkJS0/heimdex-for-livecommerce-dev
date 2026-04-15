@@ -15,6 +15,9 @@ import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 import { InlineEditField } from "./InlineEditField";
 import { TagEditor } from "./TagEditor";
 import { ReprocessDialog } from "./ReprocessDialog";
+import { BlurRunDialog } from "@/features/blur/components/BlurRunDialog";
+import { useBlurJobsForFile } from "@/features/blur/hooks/useBlurJob";
+import { createBlurJob, type BlurCategory } from "@/lib/api/blur";
 import { SceneGroupCard } from "./SceneGroupCard";
 import { VideoPeoplePanel } from "./VideoPeoplePanel";
 import { useOrgSettings } from "@/lib/orgSettings";
@@ -146,6 +149,9 @@ function VideoInfoPanel({
   seekKey,
   onReprocessClick,
   isReprocessing,
+  onBlurClick,
+  hasBlurJob,
+  blurDisabled,
 }: {
   videoId: string;
   meta: VideoScenesResponse | null;
@@ -154,6 +160,9 @@ function VideoInfoPanel({
   seekKey?: number;
   onReprocessClick: () => void;
   isReprocessing: boolean;
+  onBlurClick: () => void;
+  hasBlurJob: boolean;
+  blurDisabled: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const { settings } = useOrgSettings();
@@ -240,6 +249,19 @@ function VideoInfoPanel({
             className="ml-auto rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
           >
             장면 재분석
+          </button>
+        )}
+        {!blurDisabled && (
+          <button
+            type="button"
+            onClick={onBlurClick}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-xs font-medium hover:bg-gray-50",
+              isReprocessing ? "ml-auto" : "ml-0",
+              "border-gray-300 bg-white text-gray-700",
+            )}
+          >
+            {hasBlurJob ? "블러 상세 보기" : "블러 처리"}
           </button>
         )}
       </div>
@@ -1049,6 +1071,49 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
   const [reprocessDismissed, setReprocessDismissed] = useState(false);
   const [isReprocessDialogOpen, setIsReprocessDialogOpen] = useState(false);
 
+  // --- Blur subsystem: user-triggered only, feature-flag gated ---
+  // ``router`` is declared higher up in this component; we reuse it here.
+  const {
+    data: blurJobs,
+    disabled: blurDisabled,
+    refetch: refetchBlurJobs,
+  } = useBlurJobsForFile(videoId);
+  const hasBlurJob = Boolean(blurJobs && blurJobs.items.length > 0);
+  const [isBlurDialogOpen, setIsBlurDialogOpen] = useState(false);
+  const [isBlurSubmitting, setIsBlurSubmitting] = useState(false);
+  const [blurSubmitError, setBlurSubmitError] = useState<string | null>(null);
+
+  const handleBlurClick = useCallback(() => {
+    if (hasBlurJob) {
+      router.push(`/videos/${videoId}/blur`);
+    } else {
+      setBlurSubmitError(null);
+      setIsBlurDialogOpen(true);
+    }
+  }, [hasBlurJob, router, videoId]);
+
+  const handleBlurSubmit = useCallback(
+    async (categories: BlurCategory[]) => {
+      setIsBlurSubmitting(true);
+      setBlurSubmitError(null);
+      try {
+        await createBlurJob(
+          videoId,
+          { categories, do_faces: categories.includes("face") },
+          getAccessToken,
+        );
+        setIsBlurDialogOpen(false);
+        refetchBlurJobs();
+        router.push(`/videos/${videoId}/blur`);
+      } catch (err) {
+        setBlurSubmitError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setIsBlurSubmitting(false);
+      }
+    },
+    [videoId, getAccessToken, refetchBlurJobs, router],
+  );
+
   const handleViewChange = useCallback((newView: ViewMode) => {
     setViewRaw(newView);
     const params = new URLSearchParams(window.location.search);
@@ -1235,6 +1300,9 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
             seekKey={seekKey}
             onReprocessClick={() => setIsReprocessDialogOpen(true)}
             isReprocessing={isReprocessing}
+            onBlurClick={handleBlurClick}
+            hasBlurJob={hasBlurJob}
+            blurDisabled={blurDisabled}
           />
 
         </div>
@@ -1273,6 +1341,14 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
         isOpen={isReprocessDialogOpen}
         onClose={() => setIsReprocessDialogOpen(false)}
         onSubmit={handleReprocessSubmit}
+      />
+
+      <BlurRunDialog
+        isOpen={isBlurDialogOpen}
+        onClose={() => setIsBlurDialogOpen(false)}
+        onSubmit={handleBlurSubmit}
+        submitting={isBlurSubmitting}
+        submitError={blurSubmitError}
       />
     </div>
   );
