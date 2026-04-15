@@ -236,8 +236,15 @@ async def seed_database():
         await seed_text_templates(session, org.id)
 
         # Fixture video_id 앞쪽 7개를 Face용으로 공유 —
-        # FaceExemplar.video_id가 같은 fixture에서 만들어진 OpenSearch 장면과 조인됨
-        fixture_video_ids = list({f["video_id"] for f in _load_scene_fixtures()})
+        # FaceExemplar.video_id가 같은 fixture에서 만들어진 OpenSearch 장면과 조인됨.
+        #
+        # ``dict.fromkeys`` dedupes while preserving insertion order. A set
+        # comprehension would work in CPython but ``list(set)`` ordering
+        # depends on PYTHONHASHSEED so face↔scene joins could quietly shift
+        # between `make seed` runs, breaking the people-video view.
+        fixture_video_ids = list(
+            dict.fromkeys(f["video_id"] for f in _load_scene_fixtures())
+        )
         face_video_ids = fixture_video_ids[:7]
         await seed_faces(session, org.id, face_video_ids)
 
@@ -329,7 +336,20 @@ async def seed_faces(session: AsyncSession, org_id, face_video_ids: list[str]) -
 
     face_embeddings.json (실제 영상에서 InsightFace ArcFace로 추출한 512차원 벡터)을
     읽어서 FaceIdentity + FaceExemplar를 Postgres pgvector에 저장.
+
+    Idempotent: if the org already has any ``FaceIdentity`` rows, this
+    function logs and returns without touching the DB. ``make seed`` is
+    re-run frequently during local dev and we must not double-write the
+    ArcFace rows — each re-seed would otherwise silently duplicate every
+    identity + exemplar row, breaking the person-video count invariants.
     """
+    existing = await session.execute(
+        select(FaceIdentity).where(FaceIdentity.org_id == org_id).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        logger.info("seed_faces_skipped", reason="existing rows for org")
+        return
+
     with FACE_EMBEDDINGS_PATH.open(encoding="utf-8") as f:
         data = json.load(f)
 
@@ -490,19 +510,31 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
 
     client = SceneSearchClient()
 
-    # visual_embeddings.json에서 SigLIP2 768dim 벡터 풀 로드
+    # visual_embeddings.json에서 SigLIP2 768dim 벡터를 video_id 단위로 로드.
+    #
+    # Keeping the per-video structure (instead of flattening into a global
+    # pool) means every scene from the same video draws its visual embedding
+    # from that video's own keyframe pool. Vector search over a seeded video
+    # then returns the same video's other scenes as near-neighbours, which
+    # is the correct dev demo. Flattening and random-sampling across videos
+    # would return semantically unrelated neighbours and make visual-search
+    # look broken in local dev.
+    visual_embeddings_by_video: dict[str, list[list[float]]] = {}
+    visual_embedding_fallback_pool: list[list[float]] = []
     try:
         with VISUAL_EMBEDDINGS_PATH.open(encoding="utf-8") as f:
             visual_data = json.load(f)
-        # 영상별 임베딩을 전부 합쳐서 하나의 풀로 만듦
-        visual_embedding_pool = [
-            emb["embedding"]
-            for video_embs in visual_data.get("videos", {}).values()
-            for emb in video_embs
-        ]
-        logger.info("loaded_visual_embeddings", count=len(visual_embedding_pool))
+        for vid, video_embs in visual_data.get("videos", {}).items():
+            vecs = [emb["embedding"] for emb in video_embs if emb.get("embedding")]
+            if vecs:
+                visual_embeddings_by_video[vid] = vecs
+                visual_embedding_fallback_pool.extend(vecs)
+        logger.info(
+            "loaded_visual_embeddings",
+            videos=len(visual_embeddings_by_video),
+            total_vectors=len(visual_embedding_fallback_pool),
+        )
     except FileNotFoundError:
-        visual_embedding_pool = []
         logger.warning("visual_embeddings_not_found", path=str(VISUAL_EMBEDDINGS_PATH))
 
     try:
@@ -541,7 +573,17 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
             else:
                 video_count += 1
 
-            for fixture in video_fixtures:
+            # Resolve this video's visual-embedding pool ONCE so every
+            # scene in this video shares the same pool. Falls back to the
+            # flattened cross-video pool only if the fixture has no
+            # entry for this video_id (happens e.g. for image-only
+            # assets where keyframe extraction never ran).
+            video_visual_pool = visual_embeddings_by_video.get(
+                video_id,
+                visual_embedding_fallback_pool,
+            )
+
+            for scene_idx, fixture in enumerate(video_fixtures):
                 if fixture["content_type"] == "image":
                     doc_entry = _build_image_scene_doc(
                         fixture=fixture,
@@ -563,10 +605,16 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                         cluster_ids=cluster_ids,
                     )
 
-                # VAF 워커 산출물 주입 — helper에서 zero/empty placeholder로 넣어둔 자리
+                # VAF 워커 산출물 주입 — helper에서 zero/empty placeholder로 넣어둔 자리.
+                # Visual embedding is round-robin'd through this video's own
+                # keyframe pool (indexed by scene position) so scenes from
+                # the same video cluster together in vector space, making
+                # local vector-search demos return visually related results.
                 _, scene_doc = doc_entry
-                if visual_embedding_pool:
-                    scene_doc["visual_embedding"] = random.choice(visual_embedding_pool)
+                if video_visual_pool:
+                    scene_doc["visual_embedding"] = video_visual_pool[
+                        scene_idx % len(video_visual_pool)
+                    ]
                 scene_doc["keyword_tags"] = random.sample(KEYWORD_TAGS_POOL, k=random.randint(0, 3))
                 scene_doc["product_tags"] = random.sample(PRODUCT_TAGS_POOL, k=random.randint(0, 2))
                 scene_doc["product_entities"] = random.sample(PRODUCT_ENTITIES_POOL, k=random.randint(0, 2))

@@ -47,6 +47,15 @@ def main() -> int:
     parser.add_argument("--videos", required=True, help="Folder with original .mp4")
     parser.add_argument("--scenes", required=True, help="scenes.json path (in-place)")
     parser.add_argument("--preset", default="default")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Compute the new timestamps but do NOT write scenes.json. "
+            "Prints a summary of how many scenes would change. Safer "
+            "default when pointing --videos at a new asset folder."
+        ),
+    )
     args = parser.parse_args()
 
     videos_dir = Path(args.videos)
@@ -108,10 +117,16 @@ def main() -> int:
             sc["keyframe_timestamp_ms"] = int(orig.keyframe_timestamp_ms)
             updated += 1
 
-    scenes_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2)
-    )
-    logger.info("wrote %s updated_scenes=%d", scenes_path, updated)
+    if args.dry_run:
+        logger.info(
+            "dry_run_complete would_update=%d scenes_path=%s (no write)",
+            updated, scenes_path,
+        )
+    else:
+        scenes_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+        logger.info("wrote %s updated_scenes=%d", scenes_path, updated)
 
     if missing_videos:
         logger.warning("missing videos: %s", missing_videos)
