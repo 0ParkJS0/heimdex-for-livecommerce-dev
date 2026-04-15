@@ -1,4 +1,6 @@
 import asyncio
+import json
+import os
 import random
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -14,6 +16,7 @@ from app.modules.libraries.models import Library
 from app.modules.profiles.models import LibraryProfile, ProfileStatus
 from app.modules.people.models import DriveNicknameRegistry, PeopleClusterLabel
 from app.modules.text_templates.models import TextTemplate
+from app.modules.face.models import FaceIdentity, FaceExemplar
 from app.modules.search.client import OpenSearchClient
 from app.modules.search.scene_client import SceneSearchClient
 from app.modules.search.embedding import generate_mock_embedding
@@ -113,6 +116,49 @@ TRAINING_VIDEO_TITLES = [
 ]
 
 
+# --- AI Tags Pool (전부 한국어, vocabulary.py 기준) ---
+
+# 행동/상황 태그 (VLM_KEYWORD_TAGS 한국어 display name)
+KEYWORD_TAGS_POOL = [
+    "제품 시연", "제품 리뷰", "언박싱", "사용법/튜토리얼", "비교", "비포/애프터",
+    "가격 공개", "할인/특가", "세트/구성 소개", "한정 수량/타임딜",
+    "쿠폰/이벤트", "무료배송", "사은품 증정",
+    "질문/답변", "시청자 요청", "실시간 반응", "경품 추첨",
+    "클로즈업/디테일", "발색/테스트", "성분 설명", "제형/텍스처",
+    "사이즈 비교", "패키징", "착용/착화", "조리/시식",
+]
+
+# 제품 카테고리 태그 (VLM_PRODUCT_TAGS 한국어 display name)
+PRODUCT_TAGS_POOL = [
+    "스킨케어", "메이크업", "헤어케어", "바디케어", "향수/프래그런스", "네일", "뷰티 디바이스",
+    "의류", "신발", "가방", "액세서리/주얼리",
+    "식품", "건강식품/영양제", "가전", "주방용품", "인테리어/리빙", "반려동물",
+    "전자기기", "모바일 액세서리", "유아/아동",
+]
+
+# 구체적 제품명 풀 (자유 형식)
+PRODUCT_ENTITIES_POOL = [
+    "레티놀 세럼", "비타민C 앰플", "히알루론산 토너",
+    "매트 립스틱", "글로우 쿠션", "아이섀도 팔레트",
+    "다이슨 에어랩", "스타일러 고데기", "헤어 트리트먼트",
+    "센텔리안24 마데카 크림", "고주파 뷰티 디바이스", "LED 마스크",
+    "프리미엄 한우 세트", "건강즙 세트", "비타민 영양제",
+    "무선 청소기", "에어프라이어", "커피 머신",
+    "메디큐브 AGR", "클렌징 디바이스", "폼 클렌저", "클렌징 오일",
+    "크린랩", "주방용 랩", "위생 랩",
+]
+
+# AI 자유 형식 한국어 태그 (VLM이 상황 보고 자유롭게 붙이는 태그)
+AI_TAGS_POOL = [
+    "신제품 언박싱", "성분 설명", "실사용 후기", "가격 비교",
+    "한정판 출시", "베스트셀러 소개", "MD 추천템", "사은품 증정 이벤트",
+    "피부 타입별 추천", "데일리 메이크업", "프리미엄 라인",
+    "계절 한정", "시즌 오프", "선물용 추천",
+    "인플루언서 협업", "브랜드 앰버서더",
+]
+
+
+
 async def seed_database():
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
@@ -192,10 +238,15 @@ async def seed_database():
 
         await seed_text_templates(session, org.id)
 
+        # Face용 video_id를 미리 생성 — seed_scenes()와 공유해서
+        # FaceExemplar.video_id가 OpenSearch 장면 문서와 조인되도록 함
+        face_video_ids = [str(uuid4()) for _ in range(7)]
+        await seed_faces(session, org.id, face_video_ids)
+
         await session.commit()
-        
+
         await seed_opensearch(org, libraries, profiles, people_clusters, drive_entries)
-        await seed_scenes(org, libraries, profiles, people_clusters, drive_entries)
+        await seed_scenes(org, libraries, profiles, people_clusters, drive_entries, face_video_ids)
 
 
 SYSTEM_TEXT_PRESETS = [
@@ -248,7 +299,7 @@ SYSTEM_TEXT_PRESETS = [
 
 
 async def seed_text_templates(session: AsyncSession, org_id) -> None:
-    """Seed system preset text templates. Idempotent — skips existing by name."""
+    """시스템 프리셋 텍스트 템플릿 시딩. 이미 존재하는 이름은 건너뜀."""
     existing = await session.execute(
         select(TextTemplate).where(
             TextTemplate.org_id == org_id,
@@ -273,6 +324,56 @@ async def seed_text_templates(session: AsyncSession, org_id) -> None:
     if created:
         await session.flush()
     logger.info("seeded_text_templates", created=created, skipped=len(existing_names))
+
+
+async def seed_faces(session: AsyncSession, org_id, face_video_ids: list[str]) -> None:
+    """얼굴 임베딩 시드 데이터 생성.
+
+    face_embeddings.json (실제 영상에서 InsightFace ArcFace로 추출한 512차원 벡터)을
+    읽어서 FaceIdentity + FaceExemplar를 Postgres pgvector에 저장.
+    """
+    json_path = os.path.join(os.path.dirname(__file__), "seed_data", "face_embeddings.json")
+    with open(json_path) as f:
+        data = json.load(f)
+
+    identities_data = data["identities"] + data.get("merge_test_identities", [])
+    identity_count = 0
+    exemplar_count = 0
+
+    for i, ident_data in enumerate(identities_data):
+        video_id = face_video_ids[i % len(face_video_ids)]
+
+        # exemplar 중 가장 높은 품질 점수
+        best_quality = max(ex["quality"] for ex in ident_data["exemplars"])
+
+        identity = FaceIdentity(
+            org_id=org_id,
+            cluster_id=ident_data["cluster_id"],
+            centroid_embedding=ident_data["centroid_embedding"],
+            exemplar_count=len(ident_data["exemplars"]),
+            best_quality=best_quality,
+            best_thumbnail_video_id=video_id,
+        )
+        session.add(identity)
+        await session.flush()
+        identity_count += 1
+
+        for j, ex in enumerate(ident_data["exemplars"]):
+            scene_id = f"{video_id}_scene_{j:03d}"
+            exemplar = FaceExemplar(
+                identity_id=identity.id,
+                org_id=org_id,
+                video_id=video_id,
+                scene_id=scene_id,
+                embedding=ex["embedding"],
+                quality=ex["quality"],
+                bbox_json=ex["bbox"],
+            )
+            session.add(exemplar)
+            exemplar_count += 1
+
+    await session.flush()
+    logger.info("seeded_faces", identities=identity_count, exemplars=exemplar_count)
 
 
 async def seed_opensearch(org, libraries, profiles, people_clusters, drive_entries):
@@ -361,16 +462,33 @@ async def seed_opensearch(org, libraries, profiles, people_clusters, drive_entri
         await client.close()
 
 
-async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
-    """Seed the scenes index with fabricated scene documents.
+async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries, face_video_ids=None):
+    """OpenSearch 장면(scenes) 인덱스 시드 데이터 생성.
 
-    Each video gets 3-5 scenes (coarser than the 5-15 segments per video).
-    Scene transcripts are aggregated from random transcript samples,
-    simulating the real pipeline output.
+    영상당 3~5개 장면 생성. 장면 transcript는 랜덤 샘플을 합쳐서 만듦.
+
+    face_video_ids: seed_faces()와 공유하는 video UUID 목록.
+    이 ID로 장면을 만들어야 FaceExemplar.video_id와 OpenSearch 장면이 조인됨.
     """
     logger.info("seeding_scenes")
 
     client = SceneSearchClient()
+
+    # visual_embeddings.json에서 SigLIP2 768dim 벡터 풀 로드
+    visual_path = os.path.join(os.path.dirname(__file__), "seed_data", "visual_embeddings.json")
+    try:
+        with open(visual_path) as f:
+            visual_data = json.load(f)
+        # 영상별 임베딩을 전부 합쳐서 하나의 풀로 만듦
+        visual_embedding_pool = [
+            emb["embedding"]
+            for video_embs in visual_data.get("videos", {}).values()
+            for emb in video_embs
+        ]
+        logger.info("loaded_visual_embeddings", count=len(visual_embedding_pool))
+    except FileNotFoundError:
+        visual_embedding_pool = []
+        logger.warning("visual_embeddings_not_found", path=visual_path)
 
     try:
         await client.ensure_index_exists()
@@ -390,8 +508,18 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
             else:
                 title_pool = ENGLISH_VIDEO_TITLES
 
+            # 첫 번째 라이브러리에 face_video_ids 포함 → FaceExemplar와 조인 가능
+            if lib_idx == 0 and face_video_ids:
+                preset_video_ids = list(face_video_ids)
+                num_videos = max(num_videos, len(preset_video_ids))
+            else:
+                preset_video_ids = []
+
             for video_idx in range(num_videos):
-                video_id = str(uuid4())
+                if preset_video_ids:
+                    video_id = preset_video_ids.pop(0)
+                else:
+                    video_id = str(uuid4())
                 video_title = title_pool[video_idx % len(title_pool)]
 
                 source_type = random.choice(["gdrive", "removable_disk", "local"])
@@ -445,12 +573,20 @@ async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
                         "source_type": source_type,
                         "required_drive_nickname": required_drive,
                         "people_cluster_ids": scene_people,
+                        "keyword_tags": random.sample(KEYWORD_TAGS_POOL, k=random.randint(0, 3)),
+                        "product_tags": random.sample(PRODUCT_TAGS_POOL, k=random.randint(0, 2)),
+                        "product_entities": random.sample(PRODUCT_ENTITIES_POOL, k=random.randint(0, 2)),
+                        "ai_tags": random.sample(AI_TAGS_POOL, k=random.randint(0, 2)),
                         "capture_time": capture_time.isoformat(),
                         "ingest_time": datetime.now(timezone.utc).isoformat(),
                         "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
                         "keyframe_timestamp_ms": (start_ms + end_ms) // 2,
                         "embedding_vector": embedding,
                     }
+
+                    # visual_embedding (SigLIP2 768dim) — 풀에서 랜덤 할당
+                    if visual_embedding_pool:
+                        doc["visual_embedding"] = random.choice(visual_embedding_pool)
 
                     documents.append((scene_id, doc))
 
