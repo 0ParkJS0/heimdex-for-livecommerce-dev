@@ -158,3 +158,6 @@ e2e/artifacts/
 e2e/.omc/
 # Contains hardcoded staging password — keep local until sanitized
 e2e/premiere-export.spec.ts
+
+# Analytics seed generator output (local Parquet, uploaded to S3 manually)
+scripts/seed_output/
