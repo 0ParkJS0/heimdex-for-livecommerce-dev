@@ -313,7 +313,8 @@ class TestGoldenQueryQuality:
         
         org_id = uuid4()  # Should match test data
         
-        for alpha in golden.test_alphas:
+        alphas = golden.test_alphas if golden.test_alphas is not None else [0.0, 0.5, 1.0]
+        for alpha in alphas:
             response = await search_service.search(
                 query=golden.query,
                 org_id=org_id,
@@ -369,8 +370,9 @@ class TestPropertyBasedQuality:
     def test_diversification_max_same_video(self):
         """Verify: With sufficient video diversity, per-video limit is respected."""
         fixture = load_golden_queries_yaml()
-        config = fixture.get("config", {})
-        max_per_video = config.get("default_max_per_video", 4)
+        config_raw = fixture.get("config", {})
+        config = config_raw if isinstance(config_raw, dict) else {}
+        max_per_video = int(config.get("default_max_per_video", 4))
         
         ranked = []
         for v in range(10):
@@ -395,8 +397,9 @@ class TestPropertyBasedQuality:
     def test_quality_floor_respected(self):
         """Verify: Quality factor never drops below floor."""
         fixture = load_golden_queries_yaml()
-        config = fixture.get("config", {})
-        quality_floor = config.get("quality_floor", 0.7)
+        config_raw = fixture.get("config", {})
+        config = config_raw if isinstance(config_raw, dict) else {}
+        quality_floor = float(config.get("quality_floor", 0.7))
         
         from app.modules.search.fusion import compute_quality_factor
         
@@ -455,6 +458,14 @@ class TestPropertyBasedQuality:
 
 class TestRRFTuning:
     """Tests for experimenting with RRF parameter tuning."""
+
+    def test_rrf_k_20_has_stronger_separation_than_60(self):
+        from app.modules.search.fusion import rrf_score
+
+        spread_20 = rrf_score(1, 20) - rrf_score(10, 20)
+        spread_60 = rrf_score(1, 60) - rrf_score(10, 60)
+
+        assert spread_20 > spread_60
 
     @pytest.mark.parametrize("k", [30, 60, 100])
     def test_rrf_k_impact(self, k):

@@ -83,14 +83,14 @@ services:
       - EMBEDDING_MODEL=intfloat/multilingual-e5-large
       - EMBEDDING_DIMENSION=1024
       - EMBEDDING_DEVICE=cpu
-      - EMBEDDING_USE_MOCK=true
+      - EMBEDDING_USE_MOCK=${EMBEDDING_USE_MOCK:-true}
       # Auth0 configuration - set AUTH0_ENABLED=true and configure for production
       - AUTH0_ENABLED=false
       - AUTH0_DOMAIN=your-tenant.auth0.com
       - AUTH0_AUDIENCE=https://api.heimdex.io
       - AUTH0_ORG_CLAIM=https://heimdex.io/org_id
       # HuggingFace model cache directory (persists downloaded models)
-      - HF_HOME=/root/.cache/huggingface
+      - HF_HOME=/home/appuser/.cache/huggingface
     ports:
       - "8000:8000"
     volumes:
@@ -98,7 +98,7 @@ services:
       # Mount heimdex-media-contracts for runtime import (shorts scorer, scene schemas)
       - ../heimdex-media-contracts:/opt/heimdex-media-contracts:ro
       # Persistent volume for HuggingFace model cache (~2.4GB for multilingual-e5-large)
-      - huggingface_cache:/root/.cache/huggingface
+      - huggingface_cache:/home/appuser/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy

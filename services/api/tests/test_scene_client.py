@@ -30,6 +30,11 @@ class TestSceneSearchClient:
             settings.opensearch_index_prefix = "test_scenes"
             settings.ocr_search_enabled = True
             settings.ocr_bm25_boost = 0.6
+            settings.opensearch_bulk_refresh = "true"
+            settings.search_title_boost_enabled = False
+            settings.search_title_boost = 3.0
+            settings.search_tag_boost_enabled = False
+            settings.search_tag_boost = 2.0
             mock_settings.return_value = settings
 
             async_client = MagicMock()
@@ -125,6 +130,7 @@ class TestSceneSearchClient:
         assert props["scene_id"]["type"] == "keyword"
         assert props["video_id"]["type"] == "keyword"
         assert props["video_title"]["type"] == "keyword"
+        assert props["video_title_text"]["type"] == "text"
         assert props["org_id"]["type"] == "keyword"
         assert props["library_id"]["type"] == "keyword"
         assert props["start_ms"]["type"] == "integer"
@@ -139,6 +145,8 @@ class TestSceneSearchClient:
 
         assert props["ocr_text_norm"]["analyzer"] == props["transcript_norm"]["analyzer"]
         assert props["ocr_text_norm"]["search_analyzer"] == props["transcript_norm"]["search_analyzer"]
+        assert props["video_title_text"]["analyzer"] == props["transcript_norm"]["analyzer"]
+        assert props["video_title_text"]["search_analyzer"] == props["transcript_norm"]["search_analyzer"]
 
         # kNN vector
         emb = props["embedding_vector"]
@@ -386,6 +394,43 @@ class TestSceneSearchClient:
 
         mock_async.bulk.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_bulk_index_scenes_refresh_param(self, mock_scene_client):
+        """bulk_index_scenes should pass refresh param from settings (default: "true")."""
+        client, mock_async = mock_scene_client
+
+        mock_async.bulk = AsyncMock()
+
+        docs = [
+            ("scene1", {"scene_id": "scene1", "transcript_raw": "Hello"}),
+        ]
+        await client.bulk_index_scenes(docs)
+
+        mock_async.bulk.assert_called_once()
+        call_params = mock_async.bulk.call_args.kwargs["params"]
+        assert call_params == {"refresh": "true"}
+
+    @pytest.mark.asyncio
+    async def test_index_scene_refresh_param(self, mock_scene_client):
+        """index_scene should pass refresh param from settings (default: "true")."""
+        client, mock_async = mock_scene_client
+
+        mock_async.index = AsyncMock()
+
+        doc = {
+            "org_id": "org1",
+            "scene_id": "vid1_scene_000",
+            "video_id": "vid1",
+            "start_ms": 0,
+            "end_ms": 5000,
+            "transcript_raw": "테스트 대본",
+        }
+        await client.index_scene("vid1_scene_000", doc)
+
+        mock_async.index.assert_called_once()
+        call_params = mock_async.index.call_args.kwargs["params"]
+        assert call_params == {"refresh": "true"}
+
     # ------------------------------------------------------------------
     # Lexical search
     # ------------------------------------------------------------------
@@ -569,6 +614,108 @@ class TestSceneSearchClient:
         should_clauses = call_body["query"]["bool"]["should"]
         assert any("match" in c and "ocr_text_norm" in c["match"] for c in should_clauses)
         assert any("match_phrase" in c and "ocr_text_norm" in c["match_phrase"] for c in should_clauses)
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_default_excludes_title_boost_clause(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("sale off", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"].get("should", [])
+        assert all(not ("match" in c and "video_title_text" in c["match"]) for c in should_clauses)
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_enabled_adds_title_boost_clause_short_query(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.ocr_search_enabled = True
+            settings.ocr_bm25_boost = 0.6
+            settings.search_title_boost_enabled = True
+            settings.search_title_boost = 3.5
+            settings.search_tag_boost_enabled = False
+            settings.search_tag_boost = 2.0
+            mock_get_settings.return_value = settings
+            await client.search_lexical("sale off", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"].get("should", [])
+        title_matches = [
+            c for c in should_clauses if "match" in c and "video_title_text" in c["match"]
+        ]
+        assert len(title_matches) == 1
+        assert title_matches[0]["match"]["video_title_text"]["query"] == "sale off"
+        assert title_matches[0]["match"]["video_title_text"]["boost"] == 3.5
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_enabled_adds_title_boost_clause_long_query(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.ocr_search_enabled = False
+            settings.ocr_bm25_boost = 0.6
+            settings.search_title_boost_enabled = True
+            settings.search_title_boost = 3.0
+            settings.search_tag_boost_enabled = False
+            settings.search_tag_boost = 2.0
+            mock_get_settings.return_value = settings
+            await client.search_lexical("this is a long query string", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"].get("should", [])
+        title_matches = [
+            c for c in should_clauses if "match" in c and "video_title_text" in c["match"]
+        ]
+        assert len(title_matches) == 1
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_default_excludes_tag_boost_clauses(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        await client.search_lexical("skincare", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"].get("should", [])
+        tag_fields = {"keyword_tags", "product_tags", "product_entities"}
+        for clause in should_clauses:
+            if "term" in clause:
+                assert not any(field in clause["term"] for field in tag_fields)
+
+    @pytest.mark.asyncio
+    async def test_search_lexical_enabled_adds_tag_boost_clauses(self, mock_scene_client):
+        client, mock_async = mock_scene_client
+
+        mock_async.search = AsyncMock(return_value={"hits": {"hits": []}})
+
+        with patch("app.modules.search.scene_client.get_settings") as mock_get_settings:
+            settings = MagicMock()
+            settings.ocr_search_enabled = False
+            settings.ocr_bm25_boost = 0.6
+            settings.search_title_boost_enabled = False
+            settings.search_title_boost = 3.0
+            settings.search_tag_boost_enabled = True
+            settings.search_tag_boost = 2.5
+            mock_get_settings.return_value = settings
+            await client.search_lexical("Skincare", "org1", {})
+
+        call_body = mock_async.search.call_args.kwargs["body"]
+        should_clauses = call_body["query"]["bool"].get("should", [])
+        term_clauses = [c["term"] for c in should_clauses if "term" in c]
+
+        assert {"keyword_tags": {"value": "skincare", "boost": 2.5}} in term_clauses
+        assert {"product_tags": {"value": "skincare", "boost": 2.5}} in term_clauses
+        assert {"product_entities": {"value": "skincare", "boost": 2.5}} in term_clauses
 
     @pytest.mark.asyncio
     async def test_search_lexical_includes_org_filter(self, mock_scene_client):

@@ -17,6 +17,7 @@ Design decisions (from Oracle review):
 - SaaS applies its own normalize_transcript() on the raw text
 """
 import time as _time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -124,6 +125,7 @@ class SceneIngestService:
                 "library_id": str(request.library_id),
                 "video_id": request.video_id,
                 "video_title": request.video_title,
+                "video_title_text": unicodedata.normalize("NFC", request.video_title or ""),
                 "scene_id": scene.scene_id,
                 "start_ms": scene.start_ms,
                 "end_ms": scene.end_ms,

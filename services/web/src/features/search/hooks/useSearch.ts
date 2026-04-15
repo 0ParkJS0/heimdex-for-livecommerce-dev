@@ -28,6 +28,7 @@ export interface UseSearchReturn {
   includeOcr: boolean;
   orgSlug: string;
   searchMode: string;
+  embeddingMode: string | null;
 
   // Auth state
   isAuthenticated: boolean;
@@ -55,6 +56,7 @@ export function useSearch(): UseSearchReturn {
   const [includeOcr, setIncludeOcr] = useState(true);
   const [lastQuery, setLastQuery] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
+  const [embeddingMode, setEmbeddingMode] = useState<string | null>(null);
 
   const { isAuthenticated, isLoading: authLoading, user, login, logout, isAuth0Enabled } = useAuth();
   const { search, searchScenes } = useApi();
@@ -62,6 +64,14 @@ export function useSearch(): UseSearchReturn {
 
   useEffect(() => {
     setOrgSlug(getOrgSlug());
+  }, []);
+
+  useEffect(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
+    fetch(`${apiUrl}/health`)
+      .then((res) => res.json())
+      .then((data) => setEmbeddingMode(data.embedding_mode ?? null))
+      .catch(() => setEmbeddingMode(null));
   }, []);
 
   const handleSearch = useCallback(
@@ -124,6 +134,7 @@ export function useSearch(): UseSearchReturn {
     includeOcr,
     orgSlug,
     searchMode,
+    embeddingMode,
 
     // Auth state
     isAuthenticated,

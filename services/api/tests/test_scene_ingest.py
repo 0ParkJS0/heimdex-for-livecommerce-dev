@@ -352,9 +352,49 @@ class TestSceneIngestService:
         assert doc["library_id"] == str(lib_id)
         assert doc["video_id"] == "vid_abc"
         assert doc["video_title"] == "Sample Video"
+        assert doc["video_title_text"] == "Sample Video"
         assert doc["scene_id"] == "vid_abc_scene_0"
         assert doc["transcript_norm"] != ""  # Normalized
         assert "embedding_vector" in doc  # Has embedding for non-empty transcript
+
+    @pytest.mark.asyncio
+    async def test_ingest_nfc_normalizes_korean_video_title(
+        self, service, mock_db_session, mock_scene_client
+    ):
+        """video_title_text should NFC-normalize Korean NFD (decomposed jamo) titles."""
+        import unicodedata
+
+        org_id = uuid4()
+        lib_id = uuid4()
+        # "오설록" in NFD (decomposed jamo)
+        nfd_title = unicodedata.normalize("NFD", "오설록 티하우스")
+        nfc_title = unicodedata.normalize("NFC", nfd_title)
+        assert nfd_title != nfc_title  # Sanity: NFD differs from NFC
+
+        request = self._make_request(video_title=nfd_title, library_id=lib_id)
+
+        mock_lib = MagicMock()
+        mock_lib.id = lib_id
+        mock_lib.org_id = org_id
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_lib
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "app.modules.ingest.service.get_passage_embeddings_batch",
+            return_value=[[0.1] * 1024],
+        ):
+            await service.ingest_scenes(request, org_id)
+
+        mock_scene_client.bulk_index_scenes.assert_awaited_once()
+        call_args = mock_scene_client.bulk_index_scenes.call_args[0][0]
+        _, doc = call_args[0]
+
+        # video_title stays as-is (keyword field)
+        assert doc["video_title"] == nfd_title
+        # video_title_text must be NFC-normalized for Nori tokenizer
+        assert doc["video_title_text"] == nfc_title
+        assert doc["video_title_text"] == "오설록 티하우스"
 
     @pytest.mark.asyncio
     async def test_ingest_empty_transcript_omits_embedding(

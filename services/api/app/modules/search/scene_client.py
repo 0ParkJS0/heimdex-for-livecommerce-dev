@@ -183,6 +183,11 @@ class SceneSearchClient:
                 "library_id": {"type": "keyword"},
                 "video_id": {"type": "keyword"},
                 "video_title": {"type": "keyword"},
+                "video_title_text": {
+                    "type": "text",
+                    "analyzer": transcript_analyzer,
+                    "search_analyzer": transcript_analyzer,
+                },
                 # Scene identity
                 "scene_id": {"type": "keyword"},
                 # Temporal
@@ -342,7 +347,7 @@ class SceneSearchClient:
             index=self.index_name,
             id=doc_id,
             body=document,
-            params={"refresh": "true"},
+            params={"refresh": self.settings.opensearch_bulk_refresh},
         )
 
     async def bulk_index_scenes(self, documents: list[tuple[str, dict[str, Any]]]) -> None:
@@ -359,7 +364,7 @@ class SceneSearchClient:
             actions.append({"index": {"_index": self.index_name, "_id": doc_id}})
             actions.append(doc)
 
-        await self.client.bulk(body=actions, params={"refresh": "true"})
+        await self.client.bulk(body=actions, params={"refresh": self.settings.opensearch_bulk_refresh})
         logger.info("scene_bulk_indexed_documents", count=len(documents))
 
     # ------------------------------------------------------------------
@@ -382,6 +387,10 @@ class SceneSearchClient:
         filter_clauses, must_not_clauses = self._build_filter_clauses(filters)
         ocr_bm25_boost = settings.ocr_bm25_boost
         ocr_enabled = include_ocr if include_ocr is not None else settings.ocr_search_enabled
+        title_boost_enabled = bool(getattr(settings, "search_title_boost_enabled", False))
+        title_boost = float(getattr(settings, "search_title_boost", 3.0))
+        tag_boost_enabled = bool(getattr(settings, "search_tag_boost_enabled", False))
+        tag_boost = float(getattr(settings, "search_tag_boost", 2.0))
 
         match_query: dict[str, Any] = {
             "match": {
@@ -394,6 +403,14 @@ class SceneSearchClient:
         }
 
         query_word_count = len(query.split())
+        query_lower = query.lower()
+        tag_should_clauses: list[dict[str, Any]] = []
+        if tag_boost_enabled:
+            tag_should_clauses = [
+                {"term": {"keyword_tags": {"value": query_lower, "boost": tag_boost}}},
+                {"term": {"product_tags": {"value": query_lower, "boost": tag_boost}}},
+                {"term": {"product_entities": {"value": query_lower, "boost": tag_boost}}},
+            ]
 
         if query_word_count <= 3:
             should_clauses: list[dict[str, Any]] = [
@@ -433,6 +450,21 @@ class SceneSearchClient:
                     ]
                 )
 
+            if title_boost_enabled:
+                should_clauses.append(
+                    {
+                        "match": {
+                            "video_title_text": {
+                                "query": query,
+                                "boost": title_boost,
+                            }
+                        }
+                    }
+                )
+
+            if tag_should_clauses:
+                should_clauses.extend(tag_should_clauses)
+
             search_query: dict[str, Any] = {
                 "bool": {
                     "must": [{"term": {"org_id": org_id}}],
@@ -464,6 +496,25 @@ class SceneSearchClient:
                         }
                     }
                 ]
+
+            if title_boost_enabled:
+                if "should" not in search_query["bool"]:
+                    search_query["bool"]["should"] = []
+                search_query["bool"]["should"].append(
+                    {
+                        "match": {
+                            "video_title_text": {
+                                "query": query,
+                                "boost": title_boost,
+                            }
+                        }
+                    }
+                )
+
+            if tag_should_clauses:
+                if "should" not in search_query["bool"]:
+                    search_query["bool"]["should"] = []
+                search_query["bool"]["should"].extend(tag_should_clauses)
 
         if must_not_clauses:
             search_query["bool"]["must_not"] = must_not_clauses

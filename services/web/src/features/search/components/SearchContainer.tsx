@@ -7,6 +7,7 @@ import { AlphaSlider } from "./AlphaSlider";
 import { FilterPanel } from "./FilterPanel";
 import { SearchResults } from "./SearchResults";
 import { AgentTroubleshooting } from "./AgentTroubleshooting";
+import { MockEmbeddingWarning } from "./MockEmbeddingWarning";
 
 export function SearchContainer() {
   const {
@@ -17,6 +18,7 @@ export function SearchContainer() {
     error,
     showDebug,
     includeOcr,
+    embeddingMode,
     setAlpha,
     setShowDebug,
     setIncludeOcr,
@@ -26,6 +28,8 @@ export function SearchContainer() {
     logout,
   } = useSearch();
   const { isAvailable: agentAvailable, isChecking: agentChecking, recheck: agentRecheck } = useAgent();
+  const showMockEmbeddingWarning =
+    embeddingMode === "mock" && (showDebug || process.env.NODE_ENV === "development");
 
   const renderError = () => {
     if (!error) return null;
@@ -116,6 +120,8 @@ export function SearchContainer() {
         </div>
 
         {renderError()}
+
+        {showMockEmbeddingWarning && <MockEmbeddingWarning />}
 
         {!agentAvailable && !agentChecking && (
           <AgentTroubleshooting onRetry={agentRecheck} />
