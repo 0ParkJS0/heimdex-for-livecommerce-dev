@@ -42,6 +42,30 @@ from src.tasks.blur_video import (  # noqa: E402
     sqs_to_blur_claim,
 )
 
+# These tests use ``@patch("heimdex_worker_sdk.s3.S3Client")`` which
+# requires the real SDK module (with its ``s3`` submodule) to be
+# importable — the patch target is resolved via attribute lookup, not
+# the mocked sys.modules entry. On a bare laptop without the real
+# worker SDK installed, the imports succeed (via docker-compose
+# volume mount) but this top-level attribute path doesn't exist, so
+# pytest bails with ``AttributeError: module 'heimdex_worker_sdk' has
+# no attribute 's3'``.
+#
+# The newer ``test_blur_video_integration.py`` uses a different stub
+# strategy (``monkeypatch.setitem(sys.modules, ...)``) that runs on
+# any host. These class-based tests stay for in-container runs where
+# the real SDK is present.
+try:
+    import heimdex_worker_sdk.s3  # noqa: F401
+    _HAS_WORKER_SDK = True
+except Exception:
+    _HAS_WORKER_SDK = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_WORKER_SDK,
+    reason="heimdex_worker_sdk.s3 not importable on this host — run inside the worker container or see test_blur_video_integration.py",
+)
+
 
 # ---------- fixtures ----------
 
