@@ -886,6 +886,15 @@ export default function DashboardContent({
     setCurrentPage(1);
   }, [setCurrentPage]);
 
+  const lastPageViewSig = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isSearchMode || !activeQuery || !searchResponse) return;
+    const sig = `${activeQuery}|${currentPage}|${colorFamily ?? ""}`;
+    if (lastPageViewSig.current === sig) return;
+    lastPageViewSig.current = sig;
+    trackSearchPageView({ pageNumber: currentPage, colorFamily, query: activeQuery });
+  }, [isSearchMode, activeQuery, searchResponse, currentPage, colorFamily]);
+
   const videoCount = isSearchMode ? sortedSearchResults.length : totalVideos;
   const libraryCount = stats?.total_libraries ?? 0;
   const hasResults = isSearchMode
@@ -1267,7 +1276,6 @@ export default function DashboardContent({
                 totalPages={totalPages}
                 onPageChange={(page) => {
                   setCurrentPage(page);
-                  trackSearchPageView({ pageNumber: page, colorFamily, query: activeQuery });
                 }}
               />
             ) : hasMore ? (

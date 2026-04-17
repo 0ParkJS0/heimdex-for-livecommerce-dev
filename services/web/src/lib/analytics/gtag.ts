@@ -40,17 +40,17 @@ export function trackColorSearch(colorFamily: string, hasQuery: boolean) {
   });
 }
 
-/** Fired when user navigates to a new page of search results (pagination / "더보기"). */
+/** Fired when search results render (initial search + pagination / "더보기").
+ *  Empty params are omitted so GA4 BQ `IS NOT NULL` filters behave correctly. */
 export function trackSearchPageView(params: {
   pageNumber: number;
   colorFamily?: string;
   query?: string;
 }) {
-  gtag("event", "search_page_view", {
-    page_number: params.pageNumber,
-    color_family: params.colorFamily ?? "",
-    query: params.query ?? "",
-  });
+  const eventParams: Record<string, unknown> = { page_number: params.pageNumber };
+  if (params.colorFamily) eventParams.color_family = params.colorFamily;
+  if (params.query) eventParams.query = params.query;
+  gtag("event", "search_page_view", eventParams);
 }
 
 /** Fired when user clicks a search result. */
@@ -61,11 +61,12 @@ export function trackSearchResultClick(params: {
   query?: string;
   videoId?: string;
 }) {
-  gtag("event", "search_result_click", {
+  const eventParams: Record<string, unknown> = {
     page_number: params.pageNumber,
     position: params.position,
-    color_family: params.colorFamily ?? "",
-    query: params.query ?? "",
-    video_id: params.videoId ?? "",
-  });
+  };
+  if (params.colorFamily) eventParams.color_family = params.colorFamily;
+  if (params.query) eventParams.query = params.query;
+  if (params.videoId) eventParams.video_id = params.videoId;
+  gtag("event", "search_result_click", eventParams);
 }

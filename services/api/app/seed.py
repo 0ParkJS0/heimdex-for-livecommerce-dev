@@ -1,6 +1,8 @@
 import asyncio
+import json
 import random
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -14,6 +16,7 @@ from app.modules.libraries.models import Library
 from app.modules.profiles.models import LibraryProfile, ProfileStatus
 from app.modules.people.models import DriveNicknameRegistry, PeopleClusterLabel
 from app.modules.text_templates.models import TextTemplate
+from app.modules.face.models import FaceIdentity, FaceExemplar
 from app.modules.search.client import OpenSearchClient
 from app.modules.search.scene_client import SceneSearchClient
 from app.modules.search.embedding import generate_mock_embedding
@@ -62,55 +65,97 @@ ENGLISH_TRANSCRIPTS = [
     "Let's review the action items from yesterday's meeting.",
 ]
 
-# Human-readable video titles for seed data (simulates agent-derived filenames)
-KOREAN_VIDEO_TITLES = [
-    "2025년 1분기 전사 회의",
-    "신규 프로젝트 킥오프 미팅",
-    "마케팅 전략 수정 회의",
-    "고객 피드백 분석 결과 공유",
-    "제품 출시 최종 점검",
-    "팀 워크샵 아이디어 발표",
-    "클라우드 마이그레이션 완료 보고",
-    "AI 추천 시스템 기술 세미나",
-    "보안 취약점 패치 리뷰",
-    "UX 개선 A/B 테스트 결과",
-    "데이터베이스 최적화 성과 발표",
-    "모바일 앱 업데이트 데모",
-    "고객지원 프로세스 개선 회의",
-    "신규 파트너십 논의",
-    "분기별 실적 보고",
+# Seed fixtures (scene metadata + color data generated offline from real
+# live-commerce footage by scripts/extract_seed_fixtures.py).
+FIXTURES_DIR = Path(__file__).parent / "db" / "seed" / "fixtures"
+FIXTURE_PATH = FIXTURES_DIR / "scenes.json"
+FACE_EMBEDDINGS_PATH = FIXTURES_DIR / "face_embeddings.json"
+VISUAL_EMBEDDINGS_PATH = FIXTURES_DIR / "visual_embeddings.json"
+
+
+def _load_scene_fixtures() -> list[dict]:
+    """Load the seed scene fixtures produced by extract_seed_fixtures.py.
+
+    Each entry carries the complete color signal (dominant_colors,
+    color_embedding, color_family) and temporal anchors (start_ms, end_ms,
+    keyframe_timestamp_ms) derived from real assets. Seed runtime only adds
+    org/library ids and the random metadata fields (transcript, speaker,
+    people, source_type) on top.
+    """
+    with FIXTURE_PATH.open(encoding="utf-8") as f:
+        return json.load(f)["scenes"]
+
+
+def _classify_orientation(width: int, height: int) -> str:
+    """Map image dimensions to landscape/portrait/square (matches ingest)."""
+    if width > height:
+        return "landscape"
+    if height > width:
+        return "portrait"
+    return "square"
+
+
+def _build_speaker_transcript(transcript_parts: list[str]) -> tuple[str, int]:
+    """Assign existing transcript parts to SPEAKER_00/SPEAKER_01.
+
+    Produces the same \\n-delimited format the real diarization pipeline
+    emits so BM25 search over speaker_transcript finds the same tokens
+    as transcript_norm.
+    """
+    if not transcript_parts:
+        return "", 0
+
+    # 70% chance of dialog (2 speakers), 30% monologue (1 speaker).
+    speaker_count = 2 if random.random() < 0.7 and len(transcript_parts) >= 2 else 1
+
+    lines: list[str] = []
+    for idx, part in enumerate(transcript_parts):
+        speaker_idx = idx % speaker_count
+        lines.append(f"SPEAKER_{speaker_idx:02d}: {part}")
+    return "\n".join(lines), speaker_count
+
+
+# --- AI Tags Pool (전부 한국어, vocabulary.py 기준) ---
+
+# 행동/상황 태그 (VLM_KEYWORD_TAGS 한국어 display name)
+KEYWORD_TAGS_POOL = [
+    "제품 시연", "제품 리뷰", "언박싱", "사용법/튜토리얼", "비교", "비포/애프터",
+    "가격 공개", "할인/특가", "세트/구성 소개", "한정 수량/타임딜",
+    "쿠폰/이벤트", "무료배송", "사은품 증정",
+    "질문/답변", "시청자 요청", "실시간 반응", "경품 추첨",
+    "클로즈업/디테일", "발색/테스트", "성분 설명", "제형/텍스처",
+    "사이즈 비교", "패키징", "착용/착화", "조리/시식",
 ]
 
-ENGLISH_VIDEO_TITLES = [
-    "Q1 2025 Quarterly Results Review",
-    "Product Roadmap Planning Session",
-    "Customer Satisfaction Deep Dive",
-    "Scalability Workshop Part 1",
-    "Feature Launch Retrospective",
-    "Team Collaboration Best Practices",
-    "Security Audit Findings Review",
-    "Platform Migration Status Update",
-    "User Engagement Analytics Demo",
-    "Sprint Planning - Week 12",
-    "Onboarding Training Session",
-    "API Integration Workshop",
-    "Performance Optimization Results",
-    "Cross-Team Sync Meeting",
-    "Year-End Review Presentation",
+# 제품 카테고리 태그 (VLM_PRODUCT_TAGS 한국어 display name)
+PRODUCT_TAGS_POOL = [
+    "스킨케어", "메이크업", "헤어케어", "바디케어", "향수/프래그런스", "네일", "뷰티 디바이스",
+    "의류", "신발", "가방", "액세서리/주얼리",
+    "식품", "건강식품/영양제", "가전", "주방용품", "인테리어/리빙", "반려동물",
+    "전자기기", "모바일 액세서리", "유아/아동",
 ]
 
-TRAINING_VIDEO_TITLES = [
-    "New Employee Onboarding Guide",
-    "Git Workflow Training",
-    "Cloud Infrastructure Basics",
-    "CI/CD Pipeline Setup Tutorial",
-    "Code Review Best Practices",
-    "Incident Response Playbook",
-    "Data Privacy Compliance Training",
-    "Agile Methodology Overview",
-    "Kubernetes Deployment Training",
-    "Monitoring and Alerting Setup",
+# 구체적 제품명 풀 (자유 형식)
+PRODUCT_ENTITIES_POOL = [
+    "레티놀 세럼", "비타민C 앰플", "히알루론산 토너",
+    "매트 립스틱", "글로우 쿠션", "아이섀도 팔레트",
+    "다이슨 에어랩", "스타일러 고데기", "헤어 트리트먼트",
+    "센텔리안24 마데카 크림", "고주파 뷰티 디바이스", "LED 마스크",
+    "프리미엄 한우 세트", "건강즙 세트", "비타민 영양제",
+    "무선 청소기", "에어프라이어", "커피 머신",
+    "메디큐브 AGR", "클렌징 디바이스", "폼 클렌저", "클렌징 오일",
+    "크린랩", "주방용 랩", "위생 랩",
 ]
+
+# AI 자유 형식 한국어 태그 (VLM이 상황 보고 자유롭게 붙이는 태그)
+AI_TAGS_POOL = [
+    "신제품 언박싱", "성분 설명", "실사용 후기", "가격 비교",
+    "한정판 출시", "베스트셀러 소개", "MD 추천템", "사은품 증정 이벤트",
+    "피부 타입별 추천", "데일리 메이크업", "프리미엄 라인",
+    "계절 한정", "시즌 오프", "선물용 추천",
+    "인플루언서 협업", "브랜드 앰버서더",
+]
+
 
 
 async def seed_database():
@@ -142,9 +187,7 @@ async def seed_database():
         logger.info("created_users", count=2)
         
         libraries = [
-            Library(org_id=org.id, name="회사 회의 영상", created_by_user_id=admin.id),
-            Library(org_id=org.id, name="Product Demos", created_by_user_id=admin.id),
-            Library(org_id=org.id, name="Training Videos", created_by_user_id=member.id),
+            Library(org_id=org.id, name="라이브커머스 영상", created_by_user_id=admin.id),
         ]
         session.add_all(libraries)
         await session.flush()
@@ -192,8 +235,21 @@ async def seed_database():
 
         await seed_text_templates(session, org.id)
 
+        # Fixture video_id 앞쪽 7개를 Face용으로 공유 —
+        # FaceExemplar.video_id가 같은 fixture에서 만들어진 OpenSearch 장면과 조인됨.
+        #
+        # ``dict.fromkeys`` dedupes while preserving insertion order. A set
+        # comprehension would work in CPython but ``list(set)`` ordering
+        # depends on PYTHONHASHSEED so face↔scene joins could quietly shift
+        # between `make seed` runs, breaking the people-video view.
+        fixture_video_ids = list(
+            dict.fromkeys(f["video_id"] for f in _load_scene_fixtures())
+        )
+        face_video_ids = fixture_video_ids[:7]
+        await seed_faces(session, org.id, face_video_ids)
+
         await session.commit()
-        
+
         await seed_opensearch(org, libraries, profiles, people_clusters, drive_entries)
         await seed_scenes(org, libraries, profiles, people_clusters, drive_entries)
 
@@ -248,7 +304,7 @@ SYSTEM_TEXT_PRESETS = [
 
 
 async def seed_text_templates(session: AsyncSession, org_id) -> None:
-    """Seed system preset text templates. Idempotent — skips existing by name."""
+    """시스템 프리셋 텍스트 템플릿 시딩. 이미 존재하는 이름은 건너뜀."""
     existing = await session.execute(
         select(TextTemplate).where(
             TextTemplate.org_id == org_id,
@@ -273,6 +329,68 @@ async def seed_text_templates(session: AsyncSession, org_id) -> None:
     if created:
         await session.flush()
     logger.info("seeded_text_templates", created=created, skipped=len(existing_names))
+
+
+async def seed_faces(session: AsyncSession, org_id, face_video_ids: list[str]) -> None:
+    """얼굴 임베딩 시드 데이터 생성.
+
+    face_embeddings.json (실제 영상에서 InsightFace ArcFace로 추출한 512차원 벡터)을
+    읽어서 FaceIdentity + FaceExemplar를 Postgres pgvector에 저장.
+
+    Idempotent: if the org already has any ``FaceIdentity`` rows, this
+    function logs and returns without touching the DB. ``make seed`` is
+    re-run frequently during local dev and we must not double-write the
+    ArcFace rows — each re-seed would otherwise silently duplicate every
+    identity + exemplar row, breaking the person-video count invariants.
+    """
+    existing = await session.execute(
+        select(FaceIdentity).where(FaceIdentity.org_id == org_id).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        logger.info("seed_faces_skipped", reason="existing rows for org")
+        return
+
+    with FACE_EMBEDDINGS_PATH.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    identities_data = data["identities"] + data.get("merge_test_identities", [])
+    identity_count = 0
+    exemplar_count = 0
+
+    for i, ident_data in enumerate(identities_data):
+        video_id = face_video_ids[i % len(face_video_ids)]
+
+        # exemplar 중 가장 높은 품질 점수
+        best_quality = max(ex["quality"] for ex in ident_data["exemplars"])
+
+        identity = FaceIdentity(
+            org_id=org_id,
+            cluster_id=ident_data["cluster_id"],
+            centroid_embedding=ident_data["centroid_embedding"],
+            exemplar_count=len(ident_data["exemplars"]),
+            best_quality=best_quality,
+            best_thumbnail_video_id=video_id,
+        )
+        session.add(identity)
+        await session.flush()
+        identity_count += 1
+
+        for j, ex in enumerate(ident_data["exemplars"]):
+            scene_id = f"{video_id}_scene_{j:03d}"
+            exemplar = FaceExemplar(
+                identity_id=identity.id,
+                org_id=org_id,
+                video_id=video_id,
+                scene_id=scene_id,
+                embedding=ex["embedding"],
+                quality=ex["quality"],
+                bbox_json=ex["bbox"],
+            )
+            session.add(exemplar)
+            exemplar_count += 1
+
+    await session.flush()
+    logger.info("seeded_faces", identities=identity_count, exemplars=exemplar_count)
 
 
 async def seed_opensearch(org, libraries, profiles, people_clusters, drive_entries):
@@ -362,107 +480,298 @@ async def seed_opensearch(org, libraries, profiles, people_clusters, drive_entri
 
 
 async def seed_scenes(org, libraries, profiles, people_clusters, drive_entries):
-    """Seed the scenes index with fabricated scene documents.
+    """OpenSearch scenes 인덱스 시드 데이터 생성 (fixture 기반).
 
-    Each video gets 3-5 scenes (coarser than the 5-15 segments per video).
-    Scene transcripts are aggregated from random transcript samples,
-    simulating the real pipeline output.
+    scenes.json (scripts/extract_seed_fixtures.py + recover_timestamps.py
+    로 실제 라이브커머스 자산에서 추출)이 재시드해도 변하지 않아야 하는
+    필드의 소유자:
+      - scene_id / video_id / video_title
+      - content_type ("video" | "image")
+      - start_ms / end_ms / keyframe_timestamp_ms
+      - image_width / image_height
+      - dominant_colors + color_embedding (27차원 HSL 히스토그램)
+
+    런타임에서 채우는 랜덤 필드: transcript, speaker_transcript,
+    people_cluster_ids, source_type, required_drive, capture_time.
+
+    VAF 워커 산출물은 seed 풀에서 주입:
+      - visual_embedding (SigLIP2 768dim — visual_embeddings.json 풀)
+      - keyword_tags / product_tags / product_entities / ai_tags
+        (이 모듈 상단의 한국어 풀)
+
+    Face 쪽 video_id는 seed_database에서 fixture video_id 앞쪽 7개를
+    face_video_ids로 전달 → FaceExemplar.video_id가 같은 fixture에서
+    만들어진 OpenSearch 장면 문서와 조인됨.
+
+    같은 video_id의 모든 장면은 source_type / required_drive /
+    capture_time을 공유 (실 파이프라인이 영상 단위로 부여하는 방식 반영).
     """
     logger.info("seeding_scenes")
 
     client = SceneSearchClient()
 
+    # visual_embeddings.json에서 SigLIP2 768dim 벡터를 video_id 단위로 로드.
+    #
+    # Keeping the per-video structure (instead of flattening into a global
+    # pool) means every scene from the same video draws its visual embedding
+    # from that video's own keyframe pool. Vector search over a seeded video
+    # then returns the same video's other scenes as near-neighbours, which
+    # is the correct dev demo. Flattening and random-sampling across videos
+    # would return semantically unrelated neighbours and make visual-search
+    # look broken in local dev.
+    visual_embeddings_by_video: dict[str, list[list[float]]] = {}
+    visual_embedding_fallback_pool: list[list[float]] = []
+    try:
+        with VISUAL_EMBEDDINGS_PATH.open(encoding="utf-8") as f:
+            visual_data = json.load(f)
+        for vid, video_embs in visual_data.get("videos", {}).items():
+            vecs = [emb["embedding"] for emb in video_embs if emb.get("embedding")]
+            if vecs:
+                visual_embeddings_by_video[vid] = vecs
+                visual_embedding_fallback_pool.extend(vecs)
+        logger.info(
+            "loaded_visual_embeddings",
+            videos=len(visual_embeddings_by_video),
+            total_vectors=len(visual_embedding_fallback_pool),
+        )
+    except FileNotFoundError:
+        logger.warning("visual_embeddings_not_found", path=str(VISUAL_EMBEDDINGS_PATH))
+
     try:
         await client.ensure_index_exists()
 
-        documents: list[tuple[str, dict]] = []
+        fixtures = _load_scene_fixtures()
         cluster_ids = [p.person_cluster_id for p in people_clusters]
         drive_nicknames = {d.source_fingerprint_hash: d.nickname for d in drive_entries}
 
-        for lib_idx, (library, profile) in enumerate(zip(libraries, profiles)):
-            num_videos = random.randint(5, 10)
-            is_korean_lib = lib_idx == 0
+        library = libraries[0]
+        org_id_str = str(org.id)
 
-            if lib_idx == 0:
-                title_pool = KOREAN_VIDEO_TITLES
-            elif lib_idx == 2:
-                title_pool = TRAINING_VIDEO_TITLES
+        scenes_by_video: dict[str, list[dict]] = {}
+        for fixture in fixtures:
+            scenes_by_video.setdefault(fixture["video_id"], []).append(fixture)
+
+        documents: list[tuple[str, dict]] = []
+        video_count = 0
+        image_count = 0
+
+        for video_id, video_fixtures in scenes_by_video.items():
+            source_type = random.choice(["gdrive", "removable_disk", "local"])
+            required_drive = None
+            if source_type == "removable_disk":
+                fingerprint = random.choice(list(drive_nicknames.keys()))
+                required_drive = drive_nicknames[fingerprint]
+
+            capture_time = datetime.now(timezone.utc) - timedelta(
+                days=random.randint(1, 365),
+                hours=random.randint(0, 23),
+            )
+
+            is_image = video_fixtures[0]["content_type"] == "image"
+            if is_image:
+                image_count += len(video_fixtures)
             else:
-                title_pool = ENGLISH_VIDEO_TITLES
+                video_count += 1
 
-            for video_idx in range(num_videos):
-                video_id = str(uuid4())
-                video_title = title_pool[video_idx % len(title_pool)]
+            # Resolve this video's visual-embedding pool ONCE so every
+            # scene in this video shares the same pool. Falls back to the
+            # flattened cross-video pool only if the fixture has no
+            # entry for this video_id (happens e.g. for image-only
+            # assets where keyframe extraction never ran).
+            video_visual_pool = visual_embeddings_by_video.get(
+                video_id,
+                visual_embedding_fallback_pool,
+            )
 
-                source_type = random.choice(["gdrive", "removable_disk", "local"])
-                required_drive = None
-                if source_type == "removable_disk":
-                    fingerprint = random.choice(list(drive_nicknames.keys()))
-                    required_drive = drive_nicknames[fingerprint]
-
-                capture_time = datetime.now(timezone.utc) - timedelta(
-                    days=random.randint(1, 365),
-                    hours=random.randint(0, 23),
-                )
-
-                num_scenes = random.randint(3, 5)
-                current_ms = 0
-
-                for scene_idx in range(num_scenes):
-                    scene_id = f"{video_id}_scene_{scene_idx:03d}"
-
-                    duration_ms = random.randint(10000, 90000)
-                    start_ms = current_ms
-                    end_ms = current_ms + duration_ms
-                    current_ms = end_ms
-
-                    num_speech_segments = random.randint(2, 4)
-                    transcript_pool = KOREAN_TRANSCRIPTS if (is_korean_lib or random.random() < 0.3) else ENGLISH_TRANSCRIPTS
-                    transcript_parts = [
-                        random.choice(transcript_pool)
-                        for _ in range(num_speech_segments)
-                    ]
-                    transcript_raw = " ".join(transcript_parts)
-
-                    scene_people = random.sample(
-                        cluster_ids, k=random.randint(0, min(3, len(cluster_ids)))
+            for scene_idx, fixture in enumerate(video_fixtures):
+                if fixture["content_type"] == "image":
+                    doc_entry = _build_image_scene_doc(
+                        fixture=fixture,
+                        org_id_str=org_id_str,
+                        library=library,
+                        source_type=source_type,
+                        required_drive=required_drive,
+                        capture_time=capture_time,
+                        cluster_ids=cluster_ids,
+                    )
+                else:
+                    doc_entry = _build_video_scene_doc(
+                        fixture=fixture,
+                        org_id_str=org_id_str,
+                        library=library,
+                        source_type=source_type,
+                        required_drive=required_drive,
+                        capture_time=capture_time,
+                        cluster_ids=cluster_ids,
                     )
 
-                    embedding = generate_mock_embedding(transcript_raw)
+                # VAF 워커 산출물 주입 — helper에서 zero/empty placeholder로 넣어둔 자리.
+                # Visual embedding is round-robin'd through this video's own
+                # keyframe pool (indexed by scene position) so scenes from
+                # the same video cluster together in vector space, making
+                # local vector-search demos return visually related results.
+                _, scene_doc = doc_entry
+                if video_visual_pool:
+                    scene_doc["visual_embedding"] = video_visual_pool[
+                        scene_idx % len(video_visual_pool)
+                    ]
+                scene_doc["keyword_tags"] = random.sample(KEYWORD_TAGS_POOL, k=random.randint(0, 3))
+                scene_doc["product_tags"] = random.sample(PRODUCT_TAGS_POOL, k=random.randint(0, 2))
+                scene_doc["product_entities"] = random.sample(PRODUCT_ENTITIES_POOL, k=random.randint(0, 2))
+                scene_doc["ai_tags"] = random.sample(AI_TAGS_POOL, k=random.randint(0, 2))
 
-                    doc = {
-                        "org_id": str(org.id),
-                        "library_id": str(library.id),
-                        "video_id": video_id,
-                        "video_title": video_title,
-                        "scene_id": scene_id,
-                        "start_ms": start_ms,
-                        "end_ms": end_ms,
-                        "transcript_raw": transcript_raw,
-                        "transcript_norm": transcript_raw.lower(),
-                        "transcript_char_count": len(transcript_raw),
-                        "speech_segment_count": num_speech_segments,
-                        "source_type": source_type,
-                        "required_drive_nickname": required_drive,
-                        "people_cluster_ids": scene_people,
-                        "capture_time": capture_time.isoformat(),
-                        "ingest_time": datetime.now(timezone.utc).isoformat(),
-                        "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
-                        "keyframe_timestamp_ms": (start_ms + end_ms) // 2,
-                        "embedding_vector": embedding,
-                    }
-
-                    documents.append((scene_id, doc))
+                documents.append(doc_entry)
 
         batch_size = 100
         for i in range(0, len(documents), batch_size):
             batch = documents[i : i + batch_size]
             await client.bulk_index_scenes(batch)
 
-        logger.info("scene_seeding_complete", total_documents=len(documents))
+        logger.info(
+            "scene_seeding_complete",
+            total_documents=len(documents),
+            video_assets=video_count,
+            image_assets=image_count,
+        )
 
     finally:
         await client.close()
+
+
+def _build_video_scene_doc(
+    *,
+    fixture: dict,
+    org_id_str: str,
+    library,
+    source_type: str,
+    required_drive: str | None,
+    capture_time: datetime,
+    cluster_ids: list[str],
+) -> tuple[str, dict]:
+    """Build a video-type scene document from a fixture entry.
+
+    transcript / speaker_transcript / people_cluster_ids are generated
+    here — the real pipeline sources them from STT + diarization, which
+    the color-focused seed does not model. visual_embedding /
+    keyword_tags / product_tags / ai_tags are zero/empty placeholders
+    because those fields belong to Jaehee's workers.
+    """
+    scene_id = fixture["scene_id"]
+    video_id = fixture["video_id"]
+
+    num_speech_segments = random.randint(2, 4)
+    transcript_parts = [
+        random.choice(KOREAN_TRANSCRIPTS)
+        for _ in range(num_speech_segments)
+    ]
+    transcript_raw = " ".join(transcript_parts)
+    speaker_transcript, speaker_count = _build_speaker_transcript(transcript_parts)
+    embedding = generate_mock_embedding(transcript_raw)
+
+    scene_people = random.sample(
+        cluster_ids, k=random.randint(0, min(3, len(cluster_ids)))
+    )
+
+    doc = {
+        "org_id": org_id_str,
+        "library_id": str(library.id),
+        "video_id": video_id,
+        "video_title": fixture["video_title"],
+        "scene_id": scene_id,
+        "start_ms": fixture["start_ms"],
+        "end_ms": fixture["end_ms"],
+        "keyframe_timestamp_ms": fixture["keyframe_timestamp_ms"],
+        "transcript_raw": transcript_raw,
+        "transcript_norm": transcript_raw.lower(),
+        "transcript_char_count": len(transcript_raw),
+        "speech_segment_count": num_speech_segments,
+        "speaker_transcript": speaker_transcript,
+        "speaker_count": speaker_count,
+        "content_type": "video",
+        "source_type": source_type,
+        "required_drive_nickname": required_drive,
+        "people_cluster_ids": scene_people,
+        "capture_time": capture_time.isoformat(),
+        "ingest_time": datetime.now(timezone.utc).isoformat(),
+        "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
+        "embedding_vector": embedding,
+        "dominant_colors": fixture["dominant_colors"],
+        "color_embedding": fixture["color_embedding"],
+        "visual_embedding": [0.0] * 768,
+        "keyword_tags": [],
+        "product_tags": [],
+        "ai_tags": [],
+    }
+
+    return (f"{org_id_str}:{scene_id}", doc)
+
+
+def _build_image_scene_doc(
+    *,
+    fixture: dict,
+    org_id_str: str,
+    library,
+    source_type: str,
+    required_drive: str | None,
+    capture_time: datetime,
+    cluster_ids: list[str],
+) -> tuple[str, dict]:
+    """Build a single-scene image asset document from a fixture entry.
+
+    Image scenes have no spoken transcript or speaker data; filename_text
+    carries the primary text signal for BM25 search (matches ingest).
+    """
+    scene_id = fixture["scene_id"]
+    video_id = fixture["video_id"]
+    filename = fixture["video_title"]
+    width = fixture["image_width"]
+    height = fixture["image_height"]
+    orientation = _classify_orientation(width, height)
+
+    # Feed the filename into the semantic vector so text search over
+    # images still surfaces them (e.g. "립스틱" hits the lipstick image).
+    embedding = generate_mock_embedding(filename)
+
+    scene_people = random.sample(
+        cluster_ids, k=random.randint(0, min(2, len(cluster_ids)))
+    )
+
+    doc = {
+        "org_id": org_id_str,
+        "library_id": str(library.id),
+        "video_id": video_id,
+        "video_title": filename,
+        "scene_id": scene_id,
+        "start_ms": 0,
+        "end_ms": 0,
+        "keyframe_timestamp_ms": 0,
+        "transcript_raw": "",
+        "transcript_norm": "",
+        "transcript_char_count": 0,
+        "speech_segment_count": 0,
+        "speaker_transcript": "",
+        "speaker_count": 0,
+        "content_type": "image",
+        "filename_text": filename,
+        "image_width": width,
+        "image_height": height,
+        "image_orientation": orientation,
+        "source_type": source_type,
+        "required_drive_nickname": required_drive,
+        "people_cluster_ids": scene_people,
+        "capture_time": capture_time.isoformat(),
+        "ingest_time": datetime.now(timezone.utc).isoformat(),
+        "thumbnail_url": f"https://placeholder.heimdex.local/thumb/{scene_id}.jpg",
+        "embedding_vector": embedding,
+        "dominant_colors": fixture["dominant_colors"],
+        "color_embedding": fixture["color_embedding"],
+        "visual_embedding": [0.0] * 768,
+        "keyword_tags": [],
+        "product_tags": [],
+        "ai_tags": [],
+    }
+
+    return (f"{org_id_str}:{scene_id}", doc)
 
 
 async def main():
