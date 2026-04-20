@@ -347,6 +347,9 @@ app.include_router(internal_blur_router)
 from app.modules.blur.export_internal_router import router as internal_blur_export_router
 app.include_router(internal_blur_export_router)
 
+from app.modules.worker_events.internal_router import router as internal_worker_events_router
+app.include_router(internal_worker_events_router)
+
 app.include_router(basket_router, prefix="/api")
 app.include_router(thumbnails_public_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")
