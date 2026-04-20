@@ -102,13 +102,24 @@ describe("postAutoRender", () => {
 });
 
 describe("probeAutoShortsAvailability", () => {
-  it("returns false when backend 404s", async () => {
+  it("returns true on 200 (feature enabled)", async () => {
+    const mock = mockFetchOnce(200, { enabled: true });
+    await expect(probeAutoShortsAvailability(getToken)).resolves.toBe(true);
+    // Hits the dedicated GET endpoint, not auto-select
+    const [url, init] = mock.mock.calls[0];
+    expect(String(url)).toContain("/api/shorts/auto-availability");
+    expect(init.method).toBe("GET");
+    // No body sent
+    expect(init.body).toBeUndefined();
+  });
+
+  it("returns false on 404 (feature disabled)", async () => {
     mockFetchOnce(404, { detail: "Not Found" });
     await expect(probeAutoShortsAvailability(getToken)).resolves.toBe(false);
   });
 
-  it("returns true when backend 422s (feature live, bad body)", async () => {
-    mockFetchOnce(422, { detail: "validation" });
+  it("returns true on 401 — auth hiccup shouldn't hide CTAs", async () => {
+    mockFetchOnce(401, { detail: "unauth" });
     await expect(probeAutoShortsAvailability(getToken)).resolves.toBe(true);
   });
 

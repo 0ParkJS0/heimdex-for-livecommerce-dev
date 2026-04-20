@@ -61,6 +61,29 @@ def _enforce_feature_flag() -> None:
         )
 
 
+@router.get(
+    "/auto-availability",
+    status_code=status.HTTP_200_OK,
+)
+async def auto_availability(
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, bool]:
+    """Feature-detect probe for the frontend.
+
+    200 ``{"enabled": true}`` when the master flag is on; 404 when off.
+    Authoritative — checks the flag BEFORE any body validation so the
+    signal is reliable across flag flips (unlike sending an invalid
+    body to auto-select, where Pydantic fires 422 first regardless of
+    the flag state).
+
+    Intentionally has no body + no rate-limit dependency so rendering
+    a CTA doesn't burn user render budget.
+    """
+    _enforce_feature_flag()
+    return {"enabled": True}
+
+
 @router.post(
     "/auto-select",
     response_model=AutoSelectResponse,

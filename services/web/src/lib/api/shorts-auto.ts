@@ -118,33 +118,19 @@ export async function postAutoRender(
 }
 
 /**
- * Lightweight feature-detect. Calls auto-select with a deliberately
- * invalid body so the backend short-circuits to 422 or 404:
- *   - 404 → feature is disabled
- *   - any 4xx other than 404 → feature is enabled (our bad input)
- *   - 401/503 → treat as available to avoid hiding CTAs on transient
- *     errors; real failures surface on the actual request.
- *
- * Cheaper than a dedicated /api/config endpoint (zero backend changes)
- * and the 422 path means we don't consume rate-limit budget on a
- * successful call.
+ * Feature-detect probe. Hits the dedicated availability endpoint which
+ * checks the master flag BEFORE any body validation, so the 200/404
+ * signal is reliable. Returns true on any non-404 response (including
+ * 401/5xx/network errors) so transient failures don't hide CTAs.
  */
 export async function probeAutoShortsAvailability(
   getToken: TokenGetter,
 ): Promise<boolean> {
   const headers = await authHeaders(getToken);
   try {
-    const res = await fetch(`${getApiBaseUrl()}/api/shorts/auto-select`, {
-      method: "POST",
+    const res = await fetch(`${getApiBaseUrl()}/api/shorts/auto-availability`, {
+      method: "GET",
       headers,
-      body: JSON.stringify({
-        // Intentionally malformed — triggers a 422 if the feature is live
-        // and a 404 when the flag is off. Any 5xx or network error also
-        // falls through to "available" so we don't hide the feature on
-        // transient issues.
-        video_id: "",
-        mode: "both",
-      }),
     });
     if (res.status === 404) return false;
     return true;
