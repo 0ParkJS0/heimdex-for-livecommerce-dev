@@ -67,12 +67,18 @@ def record_worker_event(
     duration_ms: int | None = None,
     message: str | None = None,
     metadata: dict[str, Any] | None = None,
-) -> asyncio.Task[None]:
+) -> asyncio.Task[None] | None:
     """Schedule a worker event write as a background task.
 
     Returns the Task so callers can await/cancel if needed; most call sites
-    fire and forget.
+    fire and forget.  Returns ``None`` when recording is disabled via
+    ``settings.analytics_enabled=False`` (shared kill switch with search events).
     """
+    from app.config import get_settings
+
+    if not get_settings().analytics_enabled:
+        return None
+
     return asyncio.create_task(
         _record_worker_event(
             service=service,
