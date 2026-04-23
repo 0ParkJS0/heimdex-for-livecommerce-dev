@@ -41,11 +41,21 @@ export function AutoSelectPreview({
   }
 
   const totalSeconds = Math.round(selection.total_duration_ms / 1000);
+  const scorer = selection.scorer ?? "pure";
   return (
     <section aria-label="자동 생성된 쇼츠 미리보기" className="space-y-4">
       <div className="flex items-center justify-between px-1">
-        <h2 className="text-sm font-medium text-gray-700">
+        <h2 className="flex items-center gap-2 text-sm font-medium text-gray-700">
           {selection.clips.length}개 클립 · 총 {totalSeconds}초
+          {scorer === "llm" && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+              title="AI가 캡션과 STT를 분석해 장면을 골랐습니다"
+              aria-label="AI 자동 선택"
+            >
+              AI 선택
+            </span>
+          )}
         </h2>
       </div>
       <div className="grid gap-3">

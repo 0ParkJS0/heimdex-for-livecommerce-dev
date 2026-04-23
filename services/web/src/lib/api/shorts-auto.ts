@@ -138,3 +138,31 @@ export async function probeAutoShortsAvailability(
     return true;
   }
 }
+
+/**
+ * Richer availability probe that returns both ``enabled`` and
+ * ``llm_enabled`` flags. Used by the UI to decide whether to show the
+ * "AI mode" toggle. Falls back to ``{enabled: true, llm_enabled: false}``
+ * on any non-404 error (same as the simpler probe — never hide CTAs
+ * on transient failures, but don't silently claim AI is available).
+ */
+export async function fetchAutoShortsAvailability(
+  getToken: TokenGetter,
+): Promise<{ enabled: boolean; llm_enabled: boolean }> {
+  const headers = await authHeaders(getToken);
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/api/shorts/auto-availability`, {
+      method: "GET",
+      headers,
+    });
+    if (res.status === 404) return { enabled: false, llm_enabled: false };
+    if (!res.ok) return { enabled: true, llm_enabled: false };
+    const body = (await res.json()) as Partial<{ enabled: boolean; llm_enabled: boolean }>;
+    return {
+      enabled: body.enabled ?? true,
+      llm_enabled: body.llm_enabled ?? false,
+    };
+  } catch {
+    return { enabled: true, llm_enabled: false };
+  }
+}

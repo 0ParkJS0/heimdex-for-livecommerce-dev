@@ -4,47 +4,52 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
-import { probeAutoShortsAvailability } from "@/lib/api/shorts-auto";
+import { fetchAutoShortsAvailability } from "@/lib/api/shorts-auto";
 
 type Availability = "unknown" | "available" | "disabled";
 
 interface Ctx {
   availability: Availability;
+  llmEnabled: boolean;
   isLoading: boolean;
 }
 
 const AutoShortsAvailabilityContext = createContext<Ctx>({
   availability: "unknown",
+  llmEnabled: false,
   isLoading: true,
 });
 
 /**
- * Probes /api/shorts/auto-select once per session to decide whether to
- * render entry-point CTAs. The probe uses a deliberately invalid body
- * so the backend short-circuits on 422/404 without consuming rate-limit
- * budget. See `probeAutoShortsAvailability` for semantics.
+ * Probes /api/shorts/auto-availability once per session to decide whether
+ * to render entry-point CTAs and whether to show the AI-mode toggle.
  *
- * Mount this provider near the app root (or on each page that renders
- * an auto-shorts CTA). Multiple providers on the same tree are
- * harmless — each probes once.
+ * Two flags, one probe:
+ *   - `availability` drives CTA visibility (feature master switch)
+ *   - `llmEnabled`   drives AI-mode toggle visibility (LLM rollout flag)
+ *
+ * Treats probe failure as "available, llm off" — don't hide CTAs on
+ * transient errors, but don't claim the AI path exists when we can't
+ * confirm it. Multiple providers on the same tree are harmless.
  */
 export function AutoShortsAvailabilityProvider({ children }: { children: ReactNode }) {
   const { getAccessToken } = useAuth();
   const [availability, setAvailability] = useState<Availability>("unknown");
+  const [llmEnabled, setLlmEnabled] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    probeAutoShortsAvailability(getAccessToken)
-      .then((ok) => {
+    fetchAutoShortsAvailability(getAccessToken)
+      .then((result) => {
         if (cancelled) return;
-        setAvailability(ok ? "available" : "disabled");
+        setAvailability(result.enabled ? "available" : "disabled");
+        setLlmEnabled(result.llm_enabled);
       })
       .catch(() => {
-        // Treat probe failure as "available" — don't hide CTAs on
-        // transient errors; real requests will surface the issue.
         if (cancelled) return;
         setAvailability("available");
+        setLlmEnabled(false);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -54,7 +59,10 @@ export function AutoShortsAvailabilityProvider({ children }: { children: ReactNo
     };
   }, [getAccessToken]);
 
-  const value = useMemo(() => ({ availability, isLoading }), [availability, isLoading]);
+  const value = useMemo(
+    () => ({ availability, llmEnabled, isLoading }),
+    [availability, llmEnabled, isLoading],
+  );
 
   return (
     <AutoShortsAvailabilityContext.Provider value={value}>

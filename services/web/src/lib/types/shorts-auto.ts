@@ -29,7 +29,21 @@ export interface ClipMemberResponse {
   start_ms: number;
   end_ms: number;
   score: number;
+  /**
+   * Short per-pick reason from the LLM scorer. Absent when the pure
+   * scorer produced the clip. Safe to render inline as a tooltip.
+   */
+  reason?: string | null;
 }
+
+/**
+ * Which scene-selection path actually produced the clips.
+ * - "pure": deterministic heuristic scorer (always available)
+ * - "llm":  OpenAI-based scorer (gated by AUTO_SHORTS_LLM_ENABLED + rollout)
+ * Surfaced so the UI can show an "AI selected" badge and subtly explain
+ * when the LLM path fell back to pure on an error.
+ */
+export type AutoShortsScorer = "pure" | "llm";
 
 export interface AutoClipResponse {
   scene_ids: string[];
@@ -58,4 +72,20 @@ export interface AutoSelectResponse {
   clips: AutoClipResponse[];
   total_duration_ms: number;
   skipped_reason: AutoSelectSkippedReason | string | null;
+  /**
+   * Which scorer actually produced ``clips``. Defaults to "pure" for
+   * backward compat with older backends — required-but-optional in TS
+   * so a stale server doesn't break the type contract.
+   */
+  scorer?: AutoShortsScorer;
+}
+
+/**
+ * Shape returned by GET /api/shorts/auto-availability.
+ * ``llm_enabled`` is only true when the master LLM flag is on AND
+ * rollout_pct > 0, so a 0% rollout correctly hides the AI toggle.
+ */
+export interface AutoShortsAvailability {
+  enabled: boolean;
+  llm_enabled: boolean;
 }
