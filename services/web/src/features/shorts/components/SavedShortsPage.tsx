@@ -11,6 +11,7 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ExportModal } from "@/features/basket/ExportModal";
 import type { BasketItem } from "@/features/basket/useSceneBasket";
 import { getRenderJobStatus, type RenderJobResponse } from "@/lib/api/highlight-reel";
+import { Pagination } from "@/components/ui/Pagination";
 
 interface SavedShort {
   id: string;
@@ -373,7 +374,6 @@ export function SavedShortsPage() {
 
   const today = new Date();
   const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  const btnBase = "inline-flex h-8 w-8 items-center justify-center rounded text-sm transition-colors";
 
   const isRendering = (item: DisplayItem) => item.type === "render" && (item.status === "queued" || item.status === "rendering");
   const isCompleted = (item: DisplayItem) => item.type === "render" && item.status === "completed";
@@ -589,15 +589,13 @@ export function SavedShortsPage() {
           overrideItems={exportItems}
         />
 
-        <nav className="mt-8 flex items-center justify-center gap-1">
-          <button type="button" disabled={currentPage === 1} onClick={() => setCurrentPage(1)} className={cn(btnBase, currentPage === 1 ? "cursor-not-allowed text-gray-300" : "text-gray-500 hover:bg-gray-100")}>&laquo;</button>
-          <button type="button" disabled={currentPage === 1} onClick={() => setCurrentPage((p) => p - 1)} className={cn(btnBase, currentPage === 1 ? "cursor-not-allowed text-gray-300" : "text-gray-500 hover:bg-gray-100")}>&lsaquo;</button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-            <button key={p} type="button" onClick={() => setCurrentPage(p)} className={cn(btnBase, currentPage === p ? "bg-indigo-500 font-medium text-white" : "text-gray-600 hover:bg-gray-100")}>{p}</button>
-          ))}
-          <button type="button" disabled={currentPage === totalPages} onClick={() => setCurrentPage((p) => p + 1)} className={cn(btnBase, currentPage === totalPages ? "cursor-not-allowed text-gray-300" : "text-gray-500 hover:bg-gray-100")}>&rsaquo;</button>
-          <button type="button" disabled={currentPage === totalPages} onClick={() => setCurrentPage(totalPages)} className={cn(btnBase, currentPage === totalPages ? "cursor-not-allowed text-gray-300" : "text-gray-500 hover:bg-gray-100")}>&raquo;</button>
-        </nav>
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          className="mt-8"
+          ariaLabel="저장된 쇼츠 페이지"
+        />
       </div>
     </div>
   );
