@@ -22,6 +22,14 @@ export interface AutoSelectRequest {
 export interface AutoRenderRequest extends AutoSelectRequest {
   title?: string | null;
   auto_caption?: boolean;
+  /**
+   * Optional explicit scene_ids to render as the short. When set,
+   * backend skips auto-select and composes exactly these scenes in
+   * order. Used by the per-clip render buttons so the user picks
+   * which of the previewed clips actually gets rendered.
+   * Omit to render the top-scoring clip from a fresh auto-select.
+   */
+  scene_ids?: string[] | null;
 }
 
 export interface ClipMemberResponse {

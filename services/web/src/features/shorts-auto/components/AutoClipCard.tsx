@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -12,6 +13,12 @@ interface AutoClipCardProps {
   index: number;
   clip: AutoClipResponse;
   videoId: string;
+  /** Called when the user clicks "이 클립 렌더링". Fires the single-clip render flow. */
+  onRender?: () => void;
+  /** Deep link into the shorts editor pre-populated with this clip's scenes. */
+  editorHref?: string;
+  /** True while any clip on the page is currently rendering. Disables all render buttons. */
+  isRendering?: boolean;
 }
 
 function formatHMS(ms: number): string {
@@ -32,7 +39,14 @@ const CHIP_VARIANT_STYLES: Record<ReasonChip["variant"], string> = {
   neutral: "bg-gray-100 text-gray-700 border border-gray-200",
 };
 
-export function AutoClipCard({ index, clip, videoId }: AutoClipCardProps) {
+export function AutoClipCard({
+  index,
+  clip,
+  videoId,
+  onRender,
+  editorHref,
+  isRendering = false,
+}: AutoClipCardProps) {
   const { visible, overflow } = reasonChipsFor(clip.reasons, 3);
   const scorePct = Math.round(Math.min(1, Math.max(0, clip.score)) * 100);
   const representativeSceneId = clip.scene_ids[0];
@@ -169,10 +183,39 @@ export function AutoClipCard({ index, clip, videoId }: AutoClipCardProps) {
             )}
           </div>
         )}
-        <div className="mt-auto flex items-center gap-2 text-[11px] text-gray-400">
-          <span>{clip.scene_ids.length}개 장면</span>
-          <span>·</span>
-          <span>{clip.is_continuous ? "연속" : "선별"}</span>
+        <div className="mt-auto flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+            <span>{clip.scene_ids.length}개 장면</span>
+            <span>·</span>
+            <span>{clip.is_continuous ? "연속" : "선별"}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {editorHref && (
+              <Link
+                href={editorHref}
+                className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
+                aria-label={`클립 ${index + 1} 편집`}
+              >
+                편집
+              </Link>
+            )}
+            {onRender && (
+              <button
+                type="button"
+                onClick={onRender}
+                disabled={isRendering}
+                aria-label={`클립 ${index + 1} 렌더링`}
+                className={cn(
+                  "inline-flex items-center rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                  isRendering
+                    ? "cursor-not-allowed bg-gray-200 text-gray-400"
+                    : "bg-indigo-500 text-white hover:bg-indigo-600",
+                )}
+              >
+                {isRendering ? "요청 중..." : "렌더링"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
       </div>

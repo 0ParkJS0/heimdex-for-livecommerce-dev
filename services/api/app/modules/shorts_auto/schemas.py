@@ -91,3 +91,10 @@ class AutoRenderRequest(AutoSelectRequest):
     # this per-request opt-in. Until P4 ships, the service rejects True
     # with 422 even if the global flag flips.
     auto_caption: bool = False
+    # Optional: explicit scene_ids to render as the short. When provided,
+    # auto-select is SKIPPED and the backend fetches these exact scenes
+    # from OpenSearch, composes them as one clip, and renders. Enables
+    # per-clip UX where the user picks one of the previewed clips.
+    # When omitted, the service falls back to rendering the top-scoring
+    # clip from a fresh auto-select run.
+    scene_ids: list[str] | None = Field(default=None, min_length=1, max_length=40)

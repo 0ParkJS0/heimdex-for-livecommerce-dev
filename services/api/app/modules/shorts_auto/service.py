@@ -305,7 +305,15 @@ class ShortsAutoService:
         user_id: UUID,
         req: AutoRenderRequest,
     ) -> RenderJobResponse:
-        """Run auto-select then delegate to the existing render pipeline."""
+        """Render ONE clip as one short. Two paths:
+
+        1. Explicit ``scene_ids`` — render exactly those scenes in the
+           order supplied. Used by the per-clip render buttons in the
+           UI. Skips auto-select entirely.
+        2. No ``scene_ids`` — run auto-select, render the top-scoring
+           clip. Historical back-to-back-all-clips concatenation is
+           gone; each render is ONE short.
+        """
         if req.auto_caption:
             # Auto-caption is P4. Reject explicitly so callers get a
             # clean signal instead of silently dropping the flag.
@@ -314,34 +322,23 @@ class ShortsAutoService:
                 detail="auto_caption is not yet enabled (deferred to phase 4)",
             )
 
-        select_req = AutoSelectRequest(
-            video_id=req.video_id,
-            mode=req.mode,
-            person_cluster_id=req.person_cluster_id,
-            count=req.count,
-            target_duration_sec=req.target_duration_sec,
-            min_duration_sec=req.min_duration_sec,
-            prefer_continuous=req.prefer_continuous,
-        )
-        selection = await self.auto_select(org_id, user_id, select_req)
-        # ``count`` is a hint, not a hard floor. The user-visible goal is
-        # a single rendered short; CompositionSpec packs whatever clips
-        # we have onto the timeline regardless of how many. We only 422
-        # when there's genuinely nothing to render. A stricter ratio
-        # check (e.g. < 50% of requested) is a candidate for later if
-        # render quality suffers from sparse selections.
-        if not selection.clips:
+        if req.scene_ids:
+            clip = await self._build_clip_from_scene_ids(
+                org_id=org_id,
+                video_id=req.video_id,
+                scene_ids=req.scene_ids,
+            )
+        else:
+            clip = await self._select_top_clip(org_id, user_id, req)
+
+        if clip is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    "no qualifying clips "
-                    f"({selection.skipped_reason or 'low corpus'}) "
-                    f"[scorer={selection.scorer}]"
-                ),
+                detail="no scenes available to render",
             )
 
-        composition = self._compose(req, selection.clips)
-        title = req.title or f"Auto {req.mode.value} ({len(selection.clips)} clips)"
+        composition = self._compose_single_clip(req, clip)
+        title = req.title or f"Auto {req.mode.value} ({len(clip.members)} scenes)"
         payload = RenderJobCreate(
             video_id=req.video_id,
             title=title,
@@ -354,7 +351,8 @@ class ShortsAutoService:
             user_id=str(user_id),
             video_id=req.video_id,
             mode=req.mode.value,
-            clip_count=len(selection.clips),
+            scene_count=len(clip.members),
+            source="scene_ids" if req.scene_ids else "top_clip",
         )
         return await self.shorts_render_service.create_render_job(
             org_id=org_id,
@@ -362,80 +360,141 @@ class ShortsAutoService:
             payload=payload,
         )
 
-    def _compose(
+    async def _build_clip_from_scene_ids(
+        self,
+        *,
+        org_id: UUID,
+        video_id: str,
+        scene_ids: list[str],
+    ) -> AutoClipResponse | None:
+        """Look up specific scenes by id + compose them into one clip.
+
+        Preserves the caller-supplied scene_id order (scene_ids passed
+        are the definitive ordering). Skips auto-select — client knows
+        which scenes they want. Returns None when zero lookups hit.
+        """
+        # Reuse the selector's OS client; a no-mode fetch would return
+        # nothing, so we query by video_id + filter to the requested
+        # scene_ids client-side. Small corpus, simple.
+        from heimdex_media_contracts.shorts.scorer import ScoringMode
+
+        # Fetch all scenes for this video (scoped) then pick the matching ids.
+        scenes = await self.selector.fetch_candidates(
+            org_id=org_id,
+            video_id=video_id,
+            mode=ScoringMode.BOTH,
+        )
+        by_id = {s.scene_id: s for s in scenes}
+        ordered = [by_id[sid] for sid in scene_ids if sid in by_id]
+        if not ordered:
+            return None
+
+        members = [
+            ClipMemberResponse(
+                scene_id=s.scene_id,
+                start_ms=s.start_ms,
+                end_ms=s.end_ms,
+                score=1.0,  # user selected them; score is moot
+            )
+            for s in ordered
+        ]
+        scene_id_list = [m.scene_id for m in members]
+        total_ms = sum(m.end_ms - m.start_ms for m in members)
+        indices = sorted(s.index for s in ordered)
+        is_continuous = all(
+            indices[i + 1] - indices[i] == 1 for i in range(len(indices) - 1)
+        )
+        return AutoClipResponse(
+            scene_ids=scene_id_list,
+            members=members,
+            start_ms=members[0].start_ms,
+            end_ms=members[-1].end_ms,
+            duration_ms=total_ms,
+            score=1.0,
+            reasons=[],
+            is_continuous=is_continuous,
+        )
+
+    async def _select_top_clip(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        req: AutoRenderRequest,
+    ) -> AutoClipResponse | None:
+        """Run auto-select and return the first (top-scoring) clip only."""
+        select_req = AutoSelectRequest(
+            video_id=req.video_id,
+            mode=req.mode,
+            person_cluster_id=req.person_cluster_id,
+            count=req.count,
+            target_duration_sec=req.target_duration_sec,
+            min_duration_sec=req.min_duration_sec,
+            prefer_continuous=req.prefer_continuous,
+        )
+        selection = await self.auto_select(org_id, user_id, select_req)
+        if not selection.clips:
+            return None
+        return selection.clips[0]
+
+    def _compose_single_clip(
         self,
         req: AutoRenderRequest,
-        clips: list[AutoClipResponse],
+        clip: AutoClipResponse,
     ) -> CompositionSpec:
-        """Build a CompositionSpec from selected clips.
+        """Build a CompositionSpec from ONE clip's members.
 
-        Emits one ``SceneClipSpec`` per ``ClipMemberResponse`` so each
-        SceneClipSpec's source span stays inside its named scene's bounds
-        — required by ``ShortsRenderService._validate_scene_clips``.
-
-        Clips are packed back-to-back on the composition timeline in the
-        order they appear (chronological, set by the concatenator).
-        Within a clip, members are already chronologically sorted.
-
-        ``CompositionSpec._validate_max_duration`` enforces a 5-min hard
-        cap (300_000 ms). ``count=5`` × ``target_duration_sec=60`` can hit
-        exactly 300s; overshoot headroom in the concatenator can push
-        individual clips above 60s. If the cumulative timeline would
-        exceed the cap, we truncate the trailing member's ``end_ms`` to
-        fit — done here so the concatenator stays mode-agnostic and the
-        trimming logic is next to the constraint it enforces.
+        One SceneClipSpec per ``ClipMemberResponse`` so each span stays
+        inside its named scene's bounds (required by
+        ``ShortsRenderService._validate_scene_clips``). Members are
+        packed back-to-back on the composition timeline in the
+        caller-supplied order. ``CompositionSpec._validate_max_duration``
+        enforces a 5-min hard cap; we trim the trailing member's
+        ``end_ms`` to fit rather than dropping scenes silently.
         """
         scene_clips: list[SceneClipSpec] = []
         timeline_cursor_ms = 0
         max_total_ms = 5 * 60 * 1000  # mirrors composition.schemas cap
 
-        truncated = False
-        for clip in clips:
-            if truncated:
-                break
-            for member in clip.members:
-                member_duration = member.end_ms - member.start_ms
-                if member_duration <= 0:
-                    # Defensive: skip zero/negative spans that would trip
-                    # the SceneClipSpec end_ms > start_ms validator.
-                    continue
+        for member in clip.members:
+            member_duration = member.end_ms - member.start_ms
+            if member_duration <= 0:
+                # Defensive: skip zero/negative spans that would trip
+                # the SceneClipSpec end_ms > start_ms validator.
+                continue
 
-                # If this member would push the timeline past the 5-min cap,
-                # truncate it to fit and stop emitting.
-                if timeline_cursor_ms + member_duration > max_total_ms:
-                    allowed = max_total_ms - timeline_cursor_ms
-                    if allowed <= 0:
-                        truncated = True
-                        break
-                    adjusted_end = member.start_ms + allowed
-                    if adjusted_end <= member.start_ms:
-                        truncated = True
-                        break
-                    scene_clips.append(
-                        SceneClipSpec(
-                            scene_id=member.scene_id,
-                            video_id=req.video_id,
-                            source_type="gdrive",  # v2: source-detect from drive_files
-                            start_ms=member.start_ms,
-                            end_ms=adjusted_end,
-                            timeline_start_ms=timeline_cursor_ms,
-                        )
-                    )
-                    timeline_cursor_ms += allowed
-                    truncated = True
+            # If this member would push the timeline past the 5-min cap,
+            # truncate it to fit and stop emitting.
+            if timeline_cursor_ms + member_duration > max_total_ms:
+                allowed = max_total_ms - timeline_cursor_ms
+                if allowed <= 0:
                     break
-
+                adjusted_end = member.start_ms + allowed
+                if adjusted_end <= member.start_ms:
+                    break
                 scene_clips.append(
                     SceneClipSpec(
                         scene_id=member.scene_id,
                         video_id=req.video_id,
-                        source_type="gdrive",  # v2: source-detect from drive_files
+                        source_type="gdrive",
                         start_ms=member.start_ms,
-                        end_ms=member.end_ms,
+                        end_ms=adjusted_end,
                         timeline_start_ms=timeline_cursor_ms,
                     )
                 )
-                timeline_cursor_ms += member_duration
+                timeline_cursor_ms += allowed
+                break
+
+            scene_clips.append(
+                SceneClipSpec(
+                    scene_id=member.scene_id,
+                    video_id=req.video_id,
+                    source_type="gdrive",
+                    start_ms=member.start_ms,
+                    end_ms=member.end_ms,
+                    timeline_start_ms=timeline_cursor_ms,
+                )
+            )
+            timeline_cursor_ms += member_duration
 
         return CompositionSpec(
             output=OutputSpec(),  # default 9:16 720p

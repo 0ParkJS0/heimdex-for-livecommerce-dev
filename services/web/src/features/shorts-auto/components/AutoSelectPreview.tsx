@@ -9,6 +9,12 @@ interface AutoSelectPreviewProps {
   selection: AutoSelectResponse | null;
   mode: ScoringModeRequest;
   isLoading: boolean;
+  /** Per-clip render callback. Fires the single-clip render flow. */
+  onRenderClip: (clipSceneIds: string[]) => void;
+  /** Build the editor-deep-link URL for one clip's scene_ids. */
+  buildEditorHref: (clipSceneIds: string[]) => string;
+  /** True while ANY clip is in-flight for render. Disables all render buttons. */
+  isRendering: boolean;
 }
 
 export function AutoSelectPreview({
@@ -16,6 +22,9 @@ export function AutoSelectPreview({
   selection,
   mode,
   isLoading,
+  onRenderClip,
+  buildEditorHref,
+  isRendering,
 }: AutoSelectPreviewProps) {
   if (isLoading) {
     return (
@@ -57,10 +66,21 @@ export function AutoSelectPreview({
             </span>
           )}
         </h2>
+        <p className="text-xs text-gray-500">
+          각 클립을 개별 쇼츠로 렌더링하거나 편집할 수 있어요.
+        </p>
       </div>
       <div className="grid gap-3">
         {selection.clips.map((clip, i) => (
-          <AutoClipCard key={clip.scene_ids.join("-")} index={i} clip={clip} videoId={videoId} />
+          <AutoClipCard
+            key={clip.scene_ids.join("-")}
+            index={i}
+            clip={clip}
+            videoId={videoId}
+            onRender={() => onRenderClip(clip.scene_ids)}
+            editorHref={buildEditorHref(clip.scene_ids)}
+            isRendering={isRendering}
+          />
         ))}
       </div>
     </section>

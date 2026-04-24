@@ -47,6 +47,9 @@ describe("AutoSelectPreview scorer chip", () => {
         selection={makeSelection("llm")}
         mode="both"
         isLoading={false}
+        onRenderClip={() => {}}
+        buildEditorHref={() => "/export/shorts/editor?videoId=vid"}
+        isRendering={false}
       />,
     );
     expect(screen.getByText("AI 선택")).toBeInTheDocument();
@@ -59,6 +62,9 @@ describe("AutoSelectPreview scorer chip", () => {
         selection={makeSelection("pure")}
         mode="both"
         isLoading={false}
+        onRenderClip={() => {}}
+        buildEditorHref={() => "/export/shorts/editor?videoId=vid"}
+        isRendering={false}
       />,
     );
     expect(screen.queryByText("AI 선택")).not.toBeInTheDocument();
@@ -71,6 +77,9 @@ describe("AutoSelectPreview scorer chip", () => {
         selection={makeSelection(undefined)}
         mode="both"
         isLoading={false}
+        onRenderClip={() => {}}
+        buildEditorHref={() => "/export/shorts/editor?videoId=vid"}
+        isRendering={false}
       />,
     );
     expect(screen.queryByText("AI 선택")).not.toBeInTheDocument();

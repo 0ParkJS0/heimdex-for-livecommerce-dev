@@ -263,7 +263,7 @@ class TestAutoRender:
                 ),
             )
         assert exc.value.status_code == 422
-        assert "no qualifying clips" in exc.value.detail
+        assert "no scenes available" in exc.value.detail
 
     async def test_under_count_selection_still_renders(self):
         """Pre-change this returned 422 (4 < 5). Now accepted — we

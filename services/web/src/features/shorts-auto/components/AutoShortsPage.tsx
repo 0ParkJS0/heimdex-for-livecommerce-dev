@@ -72,33 +72,24 @@ export function AutoShortsPage() {
     });
   }, [canSubmit, autoSelect, videoId, mode, personClusterId]);
 
-  const handleRender = useCallback(async () => {
+  const handleRenderClip = useCallback(async (clipSceneIds: string[]) => {
     if (!canSubmit || autoRender.isLoading) return;
     const job = await autoRender.mutate({
       video_id: videoId,
       mode,
       person_cluster_id: mode === "human" ? personClusterId : null,
+      scene_ids: clipSceneIds,
     });
     if (job) {
       router.push("/export/shorts");
     }
   }, [canSubmit, autoRender, videoId, mode, personClusterId, router]);
 
-  const sceneIdsForEditor = useMemo(() => {
-    const selection = autoSelect.data;
-    if (!selection) return "";
-    const ids: string[] = [];
-    for (const clip of selection.clips) {
-      for (const member of clip.members) {
-        ids.push(member.scene_id);
-      }
-    }
-    return ids.join(",");
-  }, [autoSelect.data]);
-
-  const editorHref = sceneIdsForEditor
-    ? `/export/shorts/editor?videoId=${encodeURIComponent(videoId)}&sceneIds=${encodeURIComponent(sceneIdsForEditor)}`
-    : "";
+  const buildEditorHref = useCallback(
+    (clipSceneIds: string[]): string =>
+      `/export/shorts/editor?videoId=${encodeURIComponent(videoId)}&sceneIds=${encodeURIComponent(clipSceneIds.join(","))}`,
+    [videoId],
+  );
 
   const selectErrorMessage = describeError(autoSelect.error, "자동 생성에 실패했습니다.");
   const renderErrorMessage = describeError(autoRender.error, "쇼츠 렌더링 요청에 실패했습니다.");
@@ -198,46 +189,18 @@ export function AutoShortsPage() {
           selection={autoSelect.data}
           mode={mode}
           isLoading={autoSelect.isLoading}
+          onRenderClip={(clipSceneIds) => {
+            void handleRenderClip(clipSceneIds);
+          }}
+          buildEditorHref={buildEditorHref}
+          isRendering={autoRender.isLoading}
         />
+        {renderErrorMessage && (
+          <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+            {renderErrorMessage}
+          </p>
+        )}
       </div>
-
-      {autoSelect.data && autoSelect.data.clips.length > 0 && (
-        <section className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-6">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm text-gray-700">마음에 드나요? 바로 렌더링하거나 타임라인에서 직접 편집할 수 있어요.</p>
-            {renderErrorMessage && (
-              <p role="alert" className="mt-2 text-xs text-red-600">{renderErrorMessage}</p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {editorHref && (
-              <Link
-                href={editorHref}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100"
-              >
-                타임라인에서 편집
-                <ChevronRightIcon className="h-4 w-4" />
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={handleRender}
-              disabled={autoRender.isLoading}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                autoRender.isLoading
-                  ? "cursor-not-allowed bg-gray-200 text-gray-400"
-                  : "bg-indigo-500 text-white hover:bg-indigo-600",
-              )}
-            >
-              {autoRender.isLoading ? (
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              ) : null}
-              {autoRender.isLoading ? "렌더링 요청 중..." : "바로 렌더링"}
-            </button>
-          </div>
-        </section>
-      )}
     </div>
   );
 }
