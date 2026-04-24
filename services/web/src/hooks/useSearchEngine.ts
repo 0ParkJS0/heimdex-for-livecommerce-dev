@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { searchScenes } from "@/lib/api/search";
+import { searchScenes, SearchRateLimitError } from "@/lib/api/search";
 import type { GroupBy } from "@/features/search/hooks/useSearch";
 import type {
   SceneResult,
@@ -81,6 +81,16 @@ export interface UseSearchEngineReturn {
    * candidate list.
    */
   handlePageChange: (page: number) => Promise<void>;
+  /**
+   * Epoch ms when the most recent search/pagination request was
+   * rejected with 429. ``null`` when no recent rate-limit event. UI
+   * components compute whether the banner should still render via
+   * ``Date.now() - rateLimitedAt < rateLimitRetryAfter * 1000``.
+   */
+  rateLimitedAt: number | null;
+  /** Seconds (from the backend's ``Retry-After`` header) the client
+   *  should wait before its next request lands. */
+  rateLimitRetryAfter: number;
   /** Sort value before entering search mode (for restoring on clear) */
   sortBeforeSearch: SortOption;
 }
@@ -119,6 +129,11 @@ export function useSearchEngine(
   const [searchResponse, setSearchResponse] = useState<AnySearchResponse | null>(null);
   const [activeQuery, setActiveQuery] = useState(initialQuery ?? "");
   const [currentPage, setCurrentPage] = useState(1);
+  // Rate-limit surface state — populated on 429, consumed by the UI to
+  // render a transient banner. Keeps ``searchResponse`` untouched so
+  // the previously-rendered results stay visible through the throttle.
+  const [rateLimitedAt, setRateLimitedAt] = useState<number | null>(null);
+  const [rateLimitRetryAfter, setRateLimitRetryAfter] = useState<number>(60);
   const sortBeforeSearchRef = useRef<SortOption>(sortBy);
 
   // Guard against races when the user clicks pages faster than the
@@ -196,6 +211,18 @@ export function useSearchEngine(
     setCurrentPage(1);
   }, [searchMode]);
 
+  // ── Auto-dismiss the rate-limit banner after Retry-After seconds ────────
+  // Keeps DashboardContent free of banner bookkeeping; the hook owns the
+  // transient state + its lifetime.
+  useEffect(() => {
+    if (rateLimitedAt == null) return;
+    const handle = setTimeout(
+      () => setRateLimitedAt(null),
+      rateLimitRetryAfter * 1000,
+    );
+    return () => clearTimeout(handle);
+  }, [rateLimitedAt, rateLimitRetryAfter]);
+
   // ── Core search ─────────────────────────────────────────────────────────
   const performSearch = useCallback(
     async (
@@ -254,8 +281,16 @@ export function useSearchEngine(
         if (thisRequestId !== requestIdRef.current) return;
         setSearchResponse(res);
         setActiveQuery(q);
-      } catch {
+      } catch (err) {
         if (thisRequestId !== requestIdRef.current) return;
+        if (err instanceof SearchRateLimitError) {
+          // Preserve previous results + surface the event to the UI.
+          // The user sees their old page still rendered AND a banner
+          // explaining why the new request didn't land.
+          setRateLimitedAt(Date.now());
+          setRateLimitRetryAfter(err.retryAfterSeconds);
+          return;
+        }
         const emptyResponse: SceneSearchResponse = {
           results: [],
           total_candidates: 0,
@@ -343,7 +378,14 @@ export function useSearchEngine(
         );
         setSearchResponse(res);
         setActiveQuery("");
-      } catch {
+      } catch (err) {
+        if (err instanceof SearchRateLimitError) {
+          // Preserve previous results; surface the event to the UI
+          // (same rationale as performSearch's catch).
+          setRateLimitedAt(Date.now());
+          setRateLimitRetryAfter(err.retryAfterSeconds);
+          return;
+        }
         const emptyResponse: SceneSearchResponse = {
           results: [],
           total_candidates: 0,
@@ -402,6 +444,8 @@ export function useSearchEngine(
     totalPages,
     setCurrentPage,
     handlePageChange,
+    rateLimitedAt,
+    rateLimitRetryAfter,
     sortBeforeSearch: sortBeforeSearchRef.current,
   };
 }
