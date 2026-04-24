@@ -1,6 +1,9 @@
 "use client";
 
+import { useRef, useState } from "react";
+
 import { cn } from "@/lib/utils";
+import { getCloudPlaybackUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { reasonChipsFor, type ReasonChip } from "../lib/reason-chip-copy";
 import type { AutoClipResponse } from "@/lib/types";
@@ -33,19 +36,67 @@ export function AutoClipCard({ index, clip, videoId }: AutoClipCardProps) {
   const { visible, overflow } = reasonChipsFor(clip.reasons, 3);
   const scorePct = Math.round(Math.min(1, Math.max(0, clip.score)) * 100);
   const representativeSceneId = clip.scene_ids[0];
+  const [isPlaying, setIsPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const playbackUrl = getCloudPlaybackUrl(videoId, clip.start_ms);
+
+  // LLM-produced clips stitch non-adjacent picks; (start_ms..end_ms) is
+  // the source-time envelope, not a continuous playable span. We play
+  // from the clip's first pick start_ms and let the user scrub; a full
+  // multi-member player would require client-side concat which is a
+  // bigger feature. Duration-bound the video by pausing at end_ms on
+  // continuous clips (when start..end actually corresponds to one span).
+  const continuousEndMs = clip.is_continuous ? clip.end_ms : null;
+
+  function handleTimeUpdate() {
+    if (continuousEndMs === null || !videoRef.current) return;
+    if (videoRef.current.currentTime * 1000 >= continuousEndMs) {
+      videoRef.current.pause();
+    }
+  }
+
+  function togglePlay() {
+    setIsPlaying((prev) => !prev);
+  }
 
   return (
     <article
       aria-label={`자동 선택 장면 ${index + 1}`}
-      className="flex w-full gap-0 overflow-hidden rounded-xl border border-gray-200 bg-white"
+      className="flex w-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white"
     >
+      <div className="flex w-full gap-0">
       <div className="w-[180px] flex-shrink-0">
-        <SceneThumbnail
-          videoId={videoId}
-          sceneId={representativeSceneId}
-          agentAvailable={true}
-          className="aspect-video w-full"
-        />
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={isPlaying ? "미리보기 닫기" : "클립 미리보기 재생"}
+          aria-expanded={isPlaying}
+          className="group relative block h-full w-full"
+        >
+          <SceneThumbnail
+            videoId={videoId}
+            sceneId={representativeSceneId}
+            agentAvailable={true}
+            className="aspect-video w-full"
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/20">
+            <span
+              aria-hidden="true"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-indigo-700 opacity-0 shadow transition group-hover:opacity-100"
+            >
+              {isPlaying ? (
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                  <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
+            </span>
+          </div>
+        </button>
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2 p-3">
         <div className="flex items-center justify-between">
@@ -99,6 +150,23 @@ export function AutoClipCard({ index, clip, videoId }: AutoClipCardProps) {
           <span>{clip.is_continuous ? "연속" : "선별"}</span>
         </div>
       </div>
+      </div>
+      {isPlaying && (
+        <div className="border-t border-gray-200 bg-black">
+          <video
+            ref={videoRef}
+            src={playbackUrl}
+            controls
+            autoPlay
+            onTimeUpdate={handleTimeUpdate}
+            onEnded={() => setIsPlaying(false)}
+            className="aspect-video w-full"
+            aria-label={`클립 ${index + 1} 미리보기`}
+          >
+            브라우저가 비디오 재생을 지원하지 않습니다.
+          </video>
+        </div>
+      )}
     </article>
   );
 }

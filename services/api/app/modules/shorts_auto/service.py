@@ -48,6 +48,7 @@ from heimdex_media_contracts.composition import (
 )
 from heimdex_media_contracts.shorts.concatenator import (
     AutoClip,
+    ClipMember,
     build_clips,
 )
 from heimdex_media_contracts.shorts.scorer import ScoringMode
@@ -79,6 +80,72 @@ def _auto_clip_to_response(clip: AutoClip) -> AutoClipResponse:
         reasons=clip.reasons,
         is_continuous=clip.is_continuous,
     )
+
+
+def _build_llm_single_clip(
+    scored: list[Any],
+    *,
+    target_duration_sec: int,
+) -> list[AutoClip]:
+    """Build one AutoClip from all LLM-picked (eligible) scenes.
+
+    Bypasses ``build_clips`` because the LLM curates — it hand-picks
+    the scenes that should form the short, so packing them into
+    independently-validated sub-clips fights the curation. Instead we
+    take every eligible scene, sort chronologically, and make one clip
+    whose members are the picks. If the LLM picked so many scenes that
+    the total runs over ``target_duration_sec * 2``, the trailing picks
+    are dropped to stay near target — same spirit as the 5-min
+    composition cap that lives in ``_compose``.
+    """
+    picks = sorted(
+        (s for s in scored if s.breakdown.eligible),
+        key=lambda s: s.scene.start_ms,
+    )
+    if not picks:
+        return []
+
+    hard_cap_ms = target_duration_sec * 1000 * 2  # 2× target ≈ runaway guard
+    members: list[ClipMember] = []
+    total_ms = 0
+    for s in picks:
+        dur = s.scene.end_ms - s.scene.start_ms
+        if dur <= 0:
+            continue
+        if total_ms + dur > hard_cap_ms and members:
+            break
+        members.append(
+            ClipMember(
+                scene_id=s.scene.scene_id,
+                start_ms=s.scene.start_ms,
+                end_ms=s.scene.end_ms,
+                score=float(s.breakdown.total),
+            )
+        )
+        total_ms += dur
+
+    if not members:
+        return []
+
+    scores = [m.score for m in members]
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    scene_ids = [m.scene_id for m in members]
+    # ``is_continuous`` reflects whether picks are adjacent scene indices
+    # — LLM picks are often NOT contiguous so default to False.
+    indices = sorted(s.scene.index for s in picks[: len(members)])
+    is_continuous = all(indices[i + 1] - indices[i] == 1 for i in range(len(indices) - 1))
+    return [
+        AutoClip(
+            scene_ids=scene_ids,
+            members=members,
+            start_ms=members[0].start_ms,
+            end_ms=members[-1].end_ms,
+            duration_ms=total_ms,
+            score=avg_score,
+            reasons=[r for s in picks[: len(members)] for r in s.breakdown.reasons][:5],
+            is_continuous=is_continuous,
+        )
+    ]
 
 
 def _empty_response(req: AutoSelectRequest, reason: str) -> AutoSelectResponse:
@@ -181,14 +248,25 @@ class ShortsAutoService:
         if eligible_count == 0:
             return _empty_response(req, "no_scenes_passed_eligibility")
 
-        # Concatenate.
-        clips = build_clips(
-            scored,
-            count=req.count,
-            target_duration_ms=req.target_duration_sec * 1000,
-            min_duration_ms=req.min_duration_sec * 1000,
-            prefer_continuous=req.prefer_continuous,
-        )
+        # Concatenate. The LLM scorer curates — it picks a small set of
+        # scenes intended as the entire short, with non-picks marked
+        # eligible=False. ``build_clips`` treats each eligible scene as
+        # a candidate and tries to pack ``count`` × ``target_duration``
+        # worth of clips from them; with a curated handful of picks it
+        # nearly always returns 0 clips against the default min_duration
+        # floor. So on the LLM path we build ONE chronological clip
+        # from the picks directly — matches the user mental model of a
+        # single ~60s short. Pure scorer keeps ``build_clips`` intact.
+        if scorer_used == "llm":
+            clips = _build_llm_single_clip(scored, target_duration_sec=req.target_duration_sec)
+        else:
+            clips = build_clips(
+                scored,
+                count=req.count,
+                target_duration_ms=req.target_duration_sec * 1000,
+                min_duration_ms=req.min_duration_sec * 1000,
+                prefer_continuous=req.prefer_continuous,
+            )
 
         if not clips:
             return _empty_response(req, "no_clips_met_min_duration")
@@ -246,7 +324,20 @@ class ShortsAutoService:
             prefer_continuous=req.prefer_continuous,
         )
         selection = await self.auto_select(org_id, user_id, select_req)
-        if len(selection.clips) < req.count:
+        # LLM path produces exactly one curated clip regardless of
+        # ``count`` — a 60s short is one clip. Enforce ``count`` only on
+        # the pure-scorer path where ``build_clips`` genuinely packs
+        # multiple independent clips.
+        if selection.scorer == "llm":
+            if not selection.clips:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=(
+                        "LLM scorer produced no clips "
+                        f"({selection.skipped_reason or 'no_llm_picks'})"
+                    ),
+                )
+        elif len(selection.clips) < req.count:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
