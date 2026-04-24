@@ -102,6 +102,11 @@ services:
       - RERANKER_SERVICE_URL=${RERANKER_SERVICE_URL:-}
       - RERANKER_TIMEOUT_MS=${RERANKER_TIMEOUT_MS:-5000}
       - RERANKER_USE_MOCK=${RERANKER_USE_MOCK:-false}
+      # Search rate limiting — per-(org, user) sliding window. Livenow
+      # customer support incident 2026-04-24 drove the per-user switch;
+      # the previous per-org bucket starved concurrent teammates.
+      - SEARCH_RATE_LIMIT_MAX_REQUESTS=${SEARCH_RATE_LIMIT_MAX_REQUESTS:-60}
+      - SEARCH_RATE_LIMIT_WINDOW_SECONDS=${SEARCH_RATE_LIMIT_WINDOW_SECONDS:-60}
       # Speech-aware scene splitting + VLM tags
       - DRIVE_SPEECH_SPLIT_ENABLED=${DRIVE_SPEECH_SPLIT_ENABLED:-false}
       - VLM_TAGS_ENABLED=${VLM_TAGS_ENABLED:-false}

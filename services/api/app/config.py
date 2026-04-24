@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # Invariant: search_*_top_k must stay ≥ 3 × search_page_size_max so the
     # RRF candidate pool always exceeds what diversification consumes.
     search_page_size_max: int = 120
+    # Search rate limiting — per-(org, user) in-memory sliding window.
+    # Keyed on user (not org) so a team of concurrent researchers at
+    # one customer doesn't starve each other out of a shared bucket.
+    # Ops can raise temporarily via env without a redeploy.
+    search_rate_limit_max_requests: int = 60
+    search_rate_limit_window_seconds: int = 60
     ocr_search_enabled: bool = True
     ocr_bm25_boost: float = 0.6
     opensearch_facet_size: int = 500
