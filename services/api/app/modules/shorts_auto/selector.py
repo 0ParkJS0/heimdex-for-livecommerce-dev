@@ -146,6 +146,25 @@ class AutoShortsSelector:
         out: list[SceneDocument] = []
         for hit in hits:
             src = hit.get("_source") or {}
+            # OpenSearch mapping doesn't store ``index`` separately — the
+            # value is embedded in scene_id as the trailing ``_scene_NNN``
+            # suffix (see drive-worker/src/tasks/process.py where ids are
+            # built). SceneDocument.index is required, so derive it here
+            # before handing to Pydantic. Any scene_id that doesn't match
+            # the pattern is skipped + logged so one drift doesn't fail
+            # the whole request.
+            if "index" not in src:
+                derived = _derive_index_from_scene_id(src.get("scene_id"))
+                if derived is None:
+                    logger.warning(
+                        "auto_shorts_selector_scene_id_parse_failed",
+                        extra={
+                            "scene_id": src.get("scene_id"),
+                            "video_id": video_id,
+                        },
+                    )
+                    continue
+                src = {**src, "index": derived}
             try:
                 out.append(SceneDocument(**src))
             except Exception:
@@ -158,3 +177,21 @@ class AutoShortsSelector:
                 )
                 continue
         return out
+
+
+def _derive_index_from_scene_id(scene_id: Any) -> int | None:
+    """Extract the numeric index from a ``{video_id}_scene_NNN`` scene_id.
+
+    Returns ``None`` when the input isn't a string or doesn't contain
+    the expected suffix — caller skips such scenes.
+    """
+    if not isinstance(scene_id, str):
+        return None
+    marker = "_scene_"
+    pos = scene_id.rfind(marker)
+    if pos < 0:
+        return None
+    try:
+        return int(scene_id[pos + len(marker):])
+    except ValueError:
+        return None
