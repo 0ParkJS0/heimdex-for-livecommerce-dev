@@ -498,6 +498,39 @@ class TestRouterSearchModePassthrough:
         call_kwargs = mock_scene_search_service.search.call_args.kwargs
         assert call_kwargs["search_mode"] == "metadata"
 
+    @pytest.mark.asyncio
+    async def test_scenes_endpoint_passes_offset(
+        self, mock_scene_search_service, mock_user, mock_org_ctx,
+    ):
+        """POST /api/search/scenes MUST forward offset to the service.
+
+        Regression guard for the customer-visible bug where clicking
+        page 2 re-rendered page 1: the /scenes route silently dropped
+        ``request.offset`` while /search did not, so the frontend's
+        offset=20 never reached the OS query.
+        """
+        from app.modules.search.router import search_scenes
+
+        request = MagicMock(
+            q="센트룸",
+            alpha=0.5,
+            filters=SearchFilters(),
+            include_ocr=None,
+            group_by="video",
+            search_mode="metadata",
+            offset=20,
+        )
+
+        await search_scenes(
+            request=request,
+            org_ctx=mock_org_ctx,
+            user=mock_user,
+            scene_search_service=mock_scene_search_service,
+        )
+
+        call_kwargs = mock_scene_search_service.search.call_args.kwargs
+        assert call_kwargs["offset"] == 20
+
 
 # ---------------------------------------------------------------------------
 # Test: Filters applied in all modes
