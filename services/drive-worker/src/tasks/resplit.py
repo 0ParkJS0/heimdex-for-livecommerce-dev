@@ -15,6 +15,7 @@ from heimdex_media_pipelines.transcoding import probe_video
 from heimdex_worker_sdk.drive_keys import (
     enrichment_keyframe_s3_key,
     enrichment_keyframe_s3_prefix,
+    scene_manifest_s3_key,
     stt_result_s3_key as stt_result_s3_key_fn,
     thumbnail_s3_key,
     thumbnail_s3_prefix,
@@ -155,6 +156,26 @@ def handle_resplit(
             library_id=library_id,
             duration_ms=probe.duration_ms,
             scenes=scenes,
+        )
+
+        # The STT worker reads ``scenes.json`` from
+        # ``scene_manifest_s3_key(org, video)`` to map whisper segments
+        # onto scene boundaries. Resplit used to skip this upload —
+        # which meant post-resplit STT wrote transcripts against the
+        # PRE-resplit scene_ids, and all new scenes came back empty.
+        # Bug surfaced 2026-04-24 on staging devorg after the full-
+        # pipeline reprocess: every scene had transcript_raw='' and
+        # speech_segment_count=0 even though the video-level STT
+        # result existed on S3.
+        _upload_scene_manifest(
+            s3=s3,
+            org_id_str=org_id,
+            video_id=video_id,
+            video_title=video_title,
+            library_id=library_id,
+            duration_ms=probe.duration_ms,
+            scenes=scenes,
+            temp_dir=temp_dir,
         )
 
         eff_keyframe_prefix = _keyframe_prefix(source_type, org_id, video_id)
@@ -311,6 +332,41 @@ def _post_scenes_batched(
         )
 
     return total_indexed
+
+
+def _upload_scene_manifest(
+    s3: S3Client,
+    org_id_str: str,
+    video_id: str,
+    video_title: str,
+    library_id: str | None,
+    duration_ms: int,
+    scenes: list[dict[str, Any]],
+    temp_dir: Path,
+) -> None:
+    """Write scenes.json to ``scene_manifest_s3_key``.
+
+    Mirrors the transcode worker's helper. Same schema — total_duration_ms
+    + scenes list of dicts carrying scene_id/index/start_ms/end_ms/
+    keyframe_timestamp_ms. The STT worker reads only those fields;
+    extra keys we write (tags, transcript_raw, etc.) are harmlessly
+    ignored.
+    """
+    manifest = {
+        "video_id": video_id,
+        "video_title": video_title,
+        "library_id": str(library_id) if library_id else None,
+        "total_duration_ms": duration_ms,
+        "scenes": scenes,
+    }
+    manifest_path = temp_dir / "scenes.json"
+    manifest_path.write_text(json.dumps(manifest))
+    key = scene_manifest_s3_key(org_id_str, video_id)
+    s3.upload_file(manifest_path, key, content_type="application/json")
+    logger.info(
+        "resplit_scene_manifest_uploaded",
+        extra={"video_id": video_id, "s3_key": key, "scene_count": len(scenes)},
+    )
 
 
 def _build_ingest_scene_dicts(
