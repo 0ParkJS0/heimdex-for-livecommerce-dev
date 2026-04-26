@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     auth0_audience: str = ""
     auth0_algorithms: str = "RS256"
     auth0_org_claim: str = "https://heimdex.io/org_id"
+
+    # --- Generic OIDC (on-prem) ---
+    # When set, these override Auth0 domain derivation. AUTH0_ENABLED
+    # remains the master switch for "external OIDC is active".
+    # If oidc_issuer is set, JWKS URI and issuer validation use it
+    # instead of deriving from auth0_domain.
+    oidc_issuer: str = ""       # e.g. "https://keycloak.company.local/realms/heimdex"
+    oidc_jwks_uri: str = ""     # auto-discovered from {oidc_issuer}/.well-known/openid-configuration if empty
+    oidc_org_claim: str = ""    # claim path for org_id — falls back to auth0_org_claim if empty
     
     # Embedding model configuration
     embedding_model: str = "intfloat/multilingual-e5-large"
@@ -379,11 +388,14 @@ class Settings(BaseSettings):
             )
 
         if self.auth0_enabled:
-            if not self.auth0_domain or "your-tenant" in self.auth0_domain:
+            has_auth0 = self.auth0_domain and "your-tenant" not in self.auth0_domain
+            has_oidc = bool(self.oidc_issuer)
+            if not has_auth0 and not has_oidc:
                 errors.append(
-                    "AUTH0_DOMAIN is missing or contains the placeholder 'your-tenant'. "
-                    + "Set AUTH0_DOMAIN to your real Auth0 tenant domain "
-                    + "(e.g. AUTH0_DOMAIN=mycompany.auth0.com)."
+                    "AUTH0_DOMAIN or OIDC_ISSUER must be configured when AUTH0_ENABLED=true. "
+                    + "Set AUTH0_DOMAIN for Auth0 (e.g. mycompany.auth0.com) or "
+                    + "OIDC_ISSUER for a generic OIDC provider "
+                    + "(e.g. https://keycloak.company.local/realms/heimdex)."
                 )
 
         if errors:

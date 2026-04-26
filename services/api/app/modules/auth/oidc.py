@@ -1,7 +1,10 @@
 """
-Auth0 OIDC token validation service.
+OIDC token validation service.
 
-Validates JWT access tokens issued by Auth0 using JWKS (RS256).
+Validates JWT access tokens issued by any OIDC provider (Auth0, Keycloak,
+Azure AD, etc.) using JWKS (RS256).  Auth0 remains the default for cloud
+deployments; on-prem deployments set OIDC_ISSUER to use a generic provider.
+
 Caches JWKS keys to avoid repeated HTTP calls.
 """
 import threading
@@ -56,8 +59,57 @@ def close_http_client() -> None:
 
 
 def _get_jwks_uri() -> str:
+    """Resolve JWKS URI from config.
+
+    Priority: OIDC_JWKS_URI > OIDC_ISSUER discovery > Auth0 domain derivation.
+    """
     settings = get_settings()
+
+    if settings.oidc_jwks_uri:
+        return settings.oidc_jwks_uri
+
+    if settings.oidc_issuer:
+        return _discover_jwks_uri(settings.oidc_issuer)
+
     return f"https://{settings.auth0_domain}/.well-known/jwks.json"
+
+
+def _get_issuer() -> str:
+    """Resolve expected JWT issuer.
+
+    Priority: OIDC_ISSUER > Auth0 domain derivation.
+    """
+    settings = get_settings()
+    if settings.oidc_issuer:
+        return settings.oidc_issuer
+    return f"https://{settings.auth0_domain}/"
+
+
+def _get_org_claim() -> str:
+    """Resolve the claim name for org_id in JWT payload."""
+    settings = get_settings()
+    if settings.oidc_org_claim:
+        return settings.oidc_org_claim
+    return settings.auth0_org_claim
+
+
+@lru_cache(maxsize=4)
+def _discover_jwks_uri(issuer: str) -> str:
+    """Discover JWKS URI from OIDC issuer via .well-known/openid-configuration."""
+    discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        client = _get_http_client()
+        response = client.get(discovery_url)
+        response.raise_for_status()
+        config = response.json()
+        jwks_uri = config.get("jwks_uri")
+        if not jwks_uri:
+            raise ValueError(f"No jwks_uri in OIDC discovery response from {discovery_url}")
+        logger.info("oidc_discovery_complete", issuer=issuer, jwks_uri=jwks_uri)
+        return jwks_uri
+    except httpx.HTTPError as e:
+        logger.error("oidc_discovery_failed", issuer=issuer, error=str(e))
+        raise ValueError(f"OIDC discovery failed for {issuer}: {e}") from e
 
 
 def _fetch_jwks() -> dict[str, Any]:
@@ -123,34 +175,50 @@ class Auth0TokenPayload:
 
 
 def validate_auth0_token(token: str) -> Auth0TokenPayload:
+    """Validate a JWT from any configured OIDC provider.
+
+    Name kept as ``validate_auth0_token`` for backward compatibility —
+    all call sites import this name. Works with Auth0, Keycloak, Azure AD,
+    or any OIDC provider that publishes a JWKS endpoint.
+    """
     settings = get_settings()
-    
+
     if not settings.auth0_enabled:
-        raise ValueError("Auth0 is not enabled")
-    
-    if not settings.auth0_domain or not settings.auth0_audience:
-        raise ValueError("Auth0 domain and audience must be configured")
-    
+        raise ValueError("OIDC authentication is not enabled")
+
+    # Auth0 path: domain + audience required.
+    # Generic OIDC path: oidc_issuer is sufficient.
+    if not settings.oidc_issuer and (not settings.auth0_domain or not settings.auth0_audience):
+        raise ValueError("Auth0 domain/audience or OIDC issuer must be configured")
+
+    audience = settings.auth0_audience  # Works for both Auth0 and generic OIDC
+    issuer = _get_issuer()
+
     signing_key = _get_signing_key(token)
-    
+
     try:
         payload = jwt.decode(
             token,
             signing_key,
             algorithms=[settings.auth0_algorithms],
-            audience=settings.auth0_audience,
-            issuer=f"https://{settings.auth0_domain}/",
+            audience=audience,
+            issuer=issuer,
         )
     except JWTError as e:
-        logger.warning("auth0_token_validation_failed", error=str(e))
+        logger.warning("oidc_token_validation_failed", error=str(e), issuer=issuer)
         raise ValueError(f"Token validation failed: {e}") from e
-    
-    # Auth0 Organizations puts org_id at the top level of the JWT.
-    # Fall back to custom claim for backward compatibility.
-    org_id = payload.get("org_id") or payload.get(settings.auth0_org_claim)
-    email = payload.get("email") or payload.get(f"{settings.auth0_domain}/email")
+
+    # Resolve org_id: check "org_id" (Auth0 orgs), then custom claim.
+    org_claim = _get_org_claim()
+    org_id = payload.get("org_id") or payload.get(org_claim)
+
+    # Resolve email: standard claim, then Auth0 namespace fallback.
+    email = payload.get("email")
+    if not email and settings.auth0_domain:
+        email = payload.get(f"{settings.auth0_domain}/email")
+
     permissions = payload.get("permissions", [])
-    
+
     return Auth0TokenPayload(
         sub=payload["sub"],
         org_id=org_id,
@@ -158,6 +226,10 @@ def validate_auth0_token(token: str) -> Auth0TokenPayload:
         permissions=permissions,
         raw_claims=payload,
     )
+
+
+# Alias for new code that prefers a generic name.
+validate_oidc_token = validate_auth0_token
 
 
 def fetch_userinfo(token: str) -> dict[str, Any]:
@@ -184,7 +256,11 @@ def fetch_userinfo(token: str) -> dict[str, Any]:
                 return entry.data
 
     settings = get_settings()
-    userinfo_url = f"https://{settings.auth0_domain}/userinfo"
+    if settings.oidc_issuer:
+        # Generic OIDC: derive userinfo from issuer (standard path)
+        userinfo_url = f"{settings.oidc_issuer.rstrip('/')}/protocol/openid-connect/userinfo"
+    else:
+        userinfo_url = f"https://{settings.auth0_domain}/userinfo"
 
     try:
         client = _get_http_client()
