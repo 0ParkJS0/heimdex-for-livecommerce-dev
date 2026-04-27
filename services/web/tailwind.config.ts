@@ -9,6 +9,10 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        pretendard: ["var(--font-pretendard)", "system-ui", "sans-serif"],
+        "noto-kr": ["var(--font-noto-kr)", "system-ui", "sans-serif"],
+      },
       colors: {
         primary: {
           50: "#eff6ff",
