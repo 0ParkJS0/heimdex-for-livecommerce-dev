@@ -51,7 +51,7 @@ class TestSceneSearchClient:
         """Index names follow {prefix}_scenes / {prefix}_scenes_{version} pattern."""
         client, _ = mock_scene_client
         assert client.alias_name == "test_scenes_scenes"
-        assert client.index_name == "test_scenes_scenes_v4"
+        assert client.index_name == "test_scenes_scenes_v5"
         assert client.EMBEDDING_DIMENSION == 1024
 
     # ------------------------------------------------------------------
@@ -510,7 +510,12 @@ class TestSceneSearchClient:
         call_body = mock_async.search.call_args.kwargs["body"]
         query = call_body["query"]["bool"]
         assert "should" in query
-        assert len(query["should"]) == 4
+        # Production search currently fans out across 6 lexical fields:
+        # video_title.nori, ocr_text_norm, scene_caption, video_summary,
+        # speaker_transcript, ai_tags.nori. The per-clause assertions below
+        # cover the four with explicit boosts; the count assertion just
+        # locks the total fan-out.
+        assert len(query["should"]) == 6
         title_clauses = [c for c in query["should"] if "match" in c and "video_title.nori" in c["match"]]
         ocr_clauses = [c for c in query["should"] if "match" in c and "ocr_text_norm" in c["match"]]
         caption_clauses = [c for c in query["should"] if "match" in c and "scene_caption" in c["match"]]
