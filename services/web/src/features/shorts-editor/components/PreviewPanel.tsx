@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import type { EditorClip, EditorSubtitle } from "../lib/types";
 import { getActiveSubtitles } from "../lib/source-time";
@@ -73,6 +73,8 @@ export function PreviewPanel({
   const progressPct = totalDurationMs > 0 ? (playheadMs / totalDurationMs) * 100 : 0;
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isHovering, setIsHovering] = useState(false);
+  const showTransport = isHovering || isPlaying;
   const dragRef = useRef<{
     mode: "move" | "resize";
     subtitleIndex: number;
@@ -170,7 +172,11 @@ export function PreviewPanel({
   }, []);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
+    <div
+      className="flex h-full flex-col items-center justify-center gap-3 p-4"
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
       {/* Preview container — matches org aspect ratio */}
       <div
         ref={containerRef}
@@ -217,29 +223,39 @@ export function PreviewPanel({
               onPointerUp={handlePointerUp}
               onClick={(e) => e.stopPropagation()}
             >
-              <p
-                className={cn(
-                  "whitespace-pre-wrap text-center select-none",
-                  isSelected && "ring-2 ring-indigo-400 ring-offset-1 rounded",
-                )}
-                style={{
-                  fontFamily: sub.style.fontFamily,
-                  fontSize: `${Math.max(8, sub.style.fontSizePx * 0.5)}px`,
-                  color: sub.style.fontColor,
-                  fontWeight: sub.style.fontWeight,
-                  textAlign: "center",
-                  padding: "2px 6px",
-                  borderRadius: "2px",
-                  ...(sub.style.backgroundColor
-                    ? {
-                        backgroundColor: sub.style.backgroundColor,
-                        opacity: sub.style.backgroundOpacity,
-                      }
-                    : {}),
-                }}
-              >
-                {sub.text}
-              </p>
+              {sub.text === "" ? (
+                <div
+                  aria-label="empty text overlay placeholder"
+                  className={cn(
+                    "h-16 w-16 rounded bg-red-500",
+                    isSelected && "ring-2 ring-indigo-400 ring-offset-1",
+                  )}
+                />
+              ) : (
+                <p
+                  className={cn(
+                    "whitespace-pre-wrap select-none text-center",
+                    isSelected && "rounded ring-2 ring-indigo-400 ring-offset-1",
+                  )}
+                  style={{
+                    fontFamily: sub.style.fontFamily,
+                    fontSize: `${Math.max(8, sub.style.fontSizePx * 0.5)}px`,
+                    color: sub.style.fontColor,
+                    fontWeight: sub.style.fontWeight,
+                    textAlign: "center",
+                    padding: "2px 6px",
+                    borderRadius: "2px",
+                    ...(sub.style.backgroundColor
+                      ? {
+                          backgroundColor: sub.style.backgroundColor,
+                          opacity: sub.style.backgroundOpacity,
+                        }
+                      : {}),
+                  }}
+                >
+                  {sub.text}
+                </p>
+              )}
 
               {/* Resize corner handles */}
               {isSelected && (
@@ -282,10 +298,15 @@ export function PreviewPanel({
         />
       </div>
 
-      {/* Transport controls */}
-      <div className="flex w-full max-w-[280px] flex-col gap-2">
+      {/* Transport controls — fade on idle, always shown while playing */}
+      <div
+        className={cn(
+          "flex w-full max-w-[280px] flex-col gap-2 transition-opacity duration-200",
+          showTransport ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+      >
         {/* Progress bar */}
-        <div className="relative h-1 w-full rounded-full bg-gray-700">
+        <div className="relative h-1 w-full rounded-full bg-gray-300">
           <div
             className="absolute left-0 top-0 h-full rounded-full bg-indigo-500 transition-[width] duration-75"
             style={{ width: `${Math.min(100, progressPct)}%` }}
@@ -301,14 +322,14 @@ export function PreviewPanel({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               clips.length > 0
-                ? "bg-white text-gray-900 hover:bg-gray-200"
-                : "bg-gray-700 text-gray-500 cursor-not-allowed",
+                ? "bg-gray-900 text-white hover:bg-gray-700"
+                : "cursor-not-allowed bg-gray-200 text-gray-400",
             )}
           >
             {isPlaying ? <PauseIcon /> : <PlayIcon />}
           </button>
 
-          <span className="font-mono text-xs text-gray-400">
+          <span className="font-mono text-xs text-gray-600">
             {formatTimelineTimestamp(playheadMs)} / {formatTimelineTimestamp(totalDurationMs)}
           </span>
         </div>

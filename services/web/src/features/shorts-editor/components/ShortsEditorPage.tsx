@@ -14,7 +14,7 @@ import { EditorHeader } from "./EditorHeader";
 import { PreviewPanel } from "./PreviewPanel";
 import { TimelinePanel } from "./TimelinePanel";
 import { ClipProperties } from "./ClipProperties";
-import { SubtitleStylePanel } from "./SubtitleStylePanel";
+import { TextOverlayPanel } from "./TextOverlayPanel";
 import { SceneListPanel } from "./SceneListPanel";
 
 function BackArrowIcon() {
@@ -269,16 +269,14 @@ export function ShortsEditorPage() {
               onRemove={editor.removeClip}
             />
           ) : (
-            <SubtitleStylePanel
-              title={title}
-              onTitleChange={setTitle}
-              videoTitle={meta?.video_title ?? null}
+            <TextOverlayPanel
               subtitle={
                 state.selectedSubtitleIndex != null && state.selectedSubtitleIndex < state.subtitles.length
                   ? state.subtitles[state.selectedSubtitleIndex]
                   : null
               }
               subtitleIndex={state.selectedSubtitleIndex}
+              onAddOverlay={editor.addOverlayAtPlayhead}
               onUpdateSubtitle={editor.updateSubtitle}
               onRemoveSubtitle={editor.removeSubtitle}
             />
@@ -343,6 +341,9 @@ export function ShortsEditorPage() {
             onReorderClips={editor.reorderClips}
             onUpdateSubtitle={editor.updateSubtitle}
             onAddSubtitle={editor.addSubtitle}
+            onRemoveClip={editor.removeClip}
+            onRemoveSubtitle={editor.removeSubtitle}
+            onTogglePlay={() => setPlaying(!state.isPlaying)}
             onSeek={setPlayhead}
             onZoomChange={editor.setZoom}
           />
