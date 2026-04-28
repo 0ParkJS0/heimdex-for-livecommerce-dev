@@ -173,6 +173,20 @@ def get_shorts_render_service(
     return ShortsRenderService(repo, scene_search)
 
 
+def get_subtitle_preset_repository(db: AsyncSession = Depends(get_db_session)):
+    """Subtitle preset repository factory."""
+    from app.modules.subtitle_presets.repository import SubtitlePresetRepository
+    return SubtitlePresetRepository(db)
+
+
+def get_subtitle_preset_service(
+    repo=Depends(get_subtitle_preset_repository),
+):
+    """Subtitle preset service factory."""
+    from app.modules.subtitle_presets.service import SubtitlePresetService
+    return SubtitlePresetService(repo)
+
+
 def get_blur_repository(db: AsyncSession = Depends(get_db_session)):
     """Blur job repository factory."""
     from app.modules.blur.repository import BlurJobRepository
