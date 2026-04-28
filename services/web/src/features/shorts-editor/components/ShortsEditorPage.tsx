@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -17,6 +17,8 @@ import { ClipProperties } from "./ClipProperties";
 import { TextOverlayPanel } from "./TextOverlayPanel";
 import { OverlayPanel } from "./OverlayPanel";
 import { isShortsEditorV2Enabled } from "@/lib/feature-flags";
+import type { EditorSubtitle } from "../lib/types";
+import type { EditorTextOverlay } from "../lib/overlay-types";
 import { SceneListPanel } from "./SceneListPanel";
 
 function BackArrowIcon() {
@@ -83,6 +85,131 @@ export function ShortsEditorPage() {
       });
     },
     [state.subtitles, updateSubtitle],
+  );
+
+  // ---------------------------------------------------------------------
+  // V2 timeline bridge
+  // ---------------------------------------------------------------------
+  // The TimelinePanel (and SubtitleTrack inside it) only knows about V1
+  // subtitles. In V2 mode we project the overlays[] slice into a
+  // subtitle-shaped array so the timeline shows V2 text overlays as
+  // blocks, the "+ 자막" button creates V2 overlays, and selection /
+  // resize / drag callbacks dispatch V2 actions instead of V1.
+  //
+  // Background overlays are deliberately NOT projected here — the timeline
+  // only has a single "subtitle" lane and showing background blocks there
+  // would conflate two visually-distinct things. Backgrounds live on the
+  // canvas + are managed via the panel only.
+  const v2Enabled = isShortsEditorV2Enabled();
+
+  const v2TextOverlays = useMemo(
+    () =>
+      v2Enabled
+        ? state.overlays.filter(
+            (o): o is EditorTextOverlay => o.kind === "text",
+          )
+        : [],
+    [v2Enabled, state.overlays],
+  );
+
+  const timelineSubtitles: EditorSubtitle[] = useMemo(() => {
+    if (!v2Enabled) return state.subtitles;
+    return v2TextOverlays.map((o) => ({
+      id: o.id,
+      text: o.text,
+      startMs: o.startMs,
+      endMs: o.endMs,
+      // SubtitleBlock only reads {text, startMs, endMs}. Style is included
+      // for type compatibility; the timeline doesn't render with it.
+      style: {
+        fontFamily: o.fontFamily,
+        fontSizePx: o.fontSizePx,
+        fontColor: o.fontColor,
+        fontWeight: o.fontWeight,
+        positionX: o.transform.x,
+        positionY: o.transform.y,
+        backgroundColor: o.highlightColor,
+        backgroundOpacity: o.highlightOpacity,
+      },
+    }));
+  }, [v2Enabled, state.subtitles, v2TextOverlays]);
+
+  const timelineSelectedSubtitleIndex: number | null = useMemo(() => {
+    if (!v2Enabled) return state.selectedSubtitleIndex;
+    if (state.selectedOverlayId == null) return null;
+    const idx = v2TextOverlays.findIndex(
+      (o) => o.id === state.selectedOverlayId,
+    );
+    return idx >= 0 ? idx : null;
+  }, [
+    v2Enabled,
+    state.selectedSubtitleIndex,
+    state.selectedOverlayId,
+    v2TextOverlays,
+  ]);
+
+  const handleTimelineAddSubtitle = useCallback(
+    (sub: EditorSubtitle) => {
+      if (v2Enabled) {
+        // Discard the synthesized V1 subtitle's id/style; create a V2
+        // text overlay at the same timing instead. (UX regression: double-
+        // clicking the track ignores the click position and uses playhead;
+        // SubtitleTrack constructs `sub` with click-derived timing but we
+        // currently only have addTextOverlayAtPlayhead — TODO: extend the
+        // hook to accept explicit timing.)
+        editor.addTextOverlayAtPlayhead();
+      } else {
+        editor.addSubtitle(sub);
+      }
+    },
+    [v2Enabled, editor],
+  );
+
+  const handleTimelineSelectSubtitle = useCallback(
+    (index: number | null) => {
+      if (v2Enabled) {
+        if (index == null) {
+          editor.selectOverlay(null);
+          return;
+        }
+        const overlay = v2TextOverlays[index];
+        if (overlay) editor.selectOverlay(overlay.id);
+      } else {
+        editor.selectSubtitle(index);
+      }
+    },
+    [v2Enabled, editor, v2TextOverlays],
+  );
+
+  const handleTimelineUpdateSubtitle = useCallback(
+    (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) => {
+      if (v2Enabled) {
+        const overlay = v2TextOverlays[index];
+        if (!overlay) return;
+        const overlayUpdates: Partial<EditorTextOverlay> = {};
+        if (updates.text !== undefined) overlayUpdates.text = updates.text;
+        if (updates.startMs !== undefined) overlayUpdates.startMs = updates.startMs;
+        if (updates.endMs !== undefined) overlayUpdates.endMs = updates.endMs;
+        if (Object.keys(overlayUpdates).length > 0) {
+          editor.updateOverlay(overlay.id, overlayUpdates);
+        }
+      } else {
+        editor.updateSubtitle(index, updates);
+      }
+    },
+    [v2Enabled, editor, v2TextOverlays],
+  );
+
+  const handleTimelineRemoveSubtitle = useCallback(
+    (index: number) => {
+      if (v2Enabled) {
+        const overlay = v2TextOverlays[index];
+        if (overlay) editor.removeOverlay(overlay.id);
+      } else {
+        editor.removeSubtitle(index);
+      }
+    },
+    [v2Enabled, editor, v2TextOverlays],
   );
 
   // Load from scene IDs (entry from ShortsCreatePage or ShortsPlanPanel)
@@ -208,18 +335,21 @@ export function ShortsEditorPage() {
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (state.selectedClipIndex != null) {
           editor.removeClip(state.selectedClipIndex);
+        } else if (v2Enabled && state.selectedOverlayId != null) {
+          editor.removeOverlay(state.selectedOverlayId);
         } else if (state.selectedSubtitleIndex != null) {
           editor.removeSubtitle(state.selectedSubtitleIndex);
         }
       } else if (e.key === "Escape") {
         editor.selectClip(null);
-        editor.selectSubtitle(null);
+        if (v2Enabled) editor.selectOverlay(null);
+        else editor.selectSubtitle(null);
       }
     };
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [state.isPlaying, state.selectedClipIndex, state.selectedSubtitleIndex, setPlaying, editor]);
+  }, [state.isPlaying, state.selectedClipIndex, state.selectedSubtitleIndex, state.selectedOverlayId, v2Enabled, setPlaying, editor]);
 
   if (isLoading) {
     return (
@@ -270,7 +400,7 @@ export function ShortsEditorPage() {
               onVolumeChange={editor.setClipVolume}
               onRemove={editor.removeClip}
             />
-          ) : isShortsEditorV2Enabled() ? (
+          ) : v2Enabled ? (
             <OverlayPanel
               state={state}
               onAddTextOverlay={editor.addTextOverlayAtPlayhead}
@@ -343,21 +473,21 @@ export function ShortsEditorPage() {
         timeline={
           <TimelinePanel
             clips={state.clips}
-            subtitles={state.subtitles}
+            subtitles={timelineSubtitles}
             zoom={state.zoom}
             playheadMs={state.playheadMs}
             isPlaying={state.isPlaying}
             totalDurationMs={state.totalDurationMs}
             selectedClipIndex={state.selectedClipIndex}
-            selectedSubtitleIndex={state.selectedSubtitleIndex}
+            selectedSubtitleIndex={timelineSelectedSubtitleIndex}
             onSelectClip={editor.selectClip}
-            onSelectSubtitle={editor.selectSubtitle}
+            onSelectSubtitle={handleTimelineSelectSubtitle}
             onTrimClip={editor.trimClip}
             onReorderClips={editor.reorderClips}
-            onUpdateSubtitle={editor.updateSubtitle}
-            onAddSubtitle={editor.addSubtitle}
+            onUpdateSubtitle={handleTimelineUpdateSubtitle}
+            onAddSubtitle={handleTimelineAddSubtitle}
             onRemoveClip={editor.removeClip}
-            onRemoveSubtitle={editor.removeSubtitle}
+            onRemoveSubtitle={handleTimelineRemoveSubtitle}
             onTogglePlay={() => setPlaying(!state.isPlaying)}
             onSeek={setPlayhead}
             onZoomChange={editor.setZoom}
