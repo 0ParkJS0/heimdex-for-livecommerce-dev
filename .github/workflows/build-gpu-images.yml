@@ -138,6 +138,13 @@ jobs:
           context: .
           file: dev-heimdex-for-livecommerce/services/drive-${{ matrix.worker }}-worker/Dockerfile.gpu
           push: true
+          # Suppress BuildKit provenance/SBOM attestations. They produce a second
+          # `unknown/unknown` manifest in the OCI image index, which breaks
+          # Aircloud's /prepare_github_container_registry_image parser with
+          # `list index out of range` (incident 2026-04-28). Re-enable once
+          # Aircloud's prep service handles OCI image indexes correctly.
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.worker }}-worker-gpu:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.worker }}-worker-gpu:${{ github.sha }}
