@@ -4,8 +4,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV HF_HOME=/models/huggingface
-ENV TRANSFORMERS_OFFLINE=1
-ENV HF_HUB_OFFLINE=1
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
@@ -41,6 +39,13 @@ RUN --mount=type=secret,id=hf_token mkdir -p "${HF_HOME}" \
     && python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
 AutoTokenizer.from_pretrained('BAAI/bge-reranker-base'); \
 AutoModelForSequenceClassification.from_pretrained('BAAI/bge-reranker-base')"
+
+# Lock to baked cache for runtime: skip the HEAD-revision check on every cold
+# start (slow + flaky on Aircloud egress) and prevent any silent updates.
+# MUST be set after the bake step above, otherwise from_pretrained() refuses
+# to download into a cold cache (LocalEntryNotFoundError on fresh build).
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_HUB_OFFLINE=1
 
 COPY dev-heimdex-for-livecommerce/services/drive-reranker-worker/src/ src/
 
