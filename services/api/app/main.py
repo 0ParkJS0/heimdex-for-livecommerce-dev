@@ -24,6 +24,7 @@ from app.modules.people.router import router as people_router
 from app.modules.search.router import router as search_router
 from app.modules.shorts.router import router as shorts_router
 from app.modules.shorts_render.router import router as shorts_render_router
+from app.modules.subtitle_presets.router import router as subtitle_presets_router
 from app.modules.shorts_auto.router import router as shorts_auto_router
 from app.modules.blur.router import router as blur_router
 from app.modules.text_templates.router import router as text_templates_router
@@ -376,6 +377,7 @@ app.include_router(highlight_reel_router, prefix="/api/people/{person_cluster_id
 app.include_router(search_router, prefix="/api")
 app.include_router(shorts_router, prefix="/api")
 app.include_router(shorts_render_router, prefix="/api")
+app.include_router(subtitle_presets_router, prefix="/api")
 app.include_router(shorts_auto_router, prefix="/api")
 app.include_router(text_templates_router, prefix="/api")
 
