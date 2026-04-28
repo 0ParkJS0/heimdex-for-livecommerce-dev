@@ -11,9 +11,12 @@ interface EditorLayoutProps {
 
 export function EditorLayout({ leftPanel, preview, rightPanel, timeline }: EditorLayoutProps) {
   return (
-    <div className="grid h-[calc(100vh-64px)] grid-cols-[300px_1fr_420px] grid-rows-[1fr_260px] gap-0 overflow-hidden">
-      {/* Left panel — text overlay authoring or clip properties */}
-      <div className="overflow-y-auto border-r border-gray-200 bg-white">
+    <div className="grid h-[calc(100vh-64px)] grid-cols-[360px_1fr_420px] grid-rows-[1fr_260px] gap-0 overflow-hidden">
+      {/* Left panel — overlay authoring (V2) or clip properties.
+          Widened from 300px → 360px so V2 transform/effects sections fit
+          without horizontal overflow (3-column X/Y/rotation row, stroke
+          stepper + color swatch row). */}
+      <div className="overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-white">
         {leftPanel}
       </div>
 
