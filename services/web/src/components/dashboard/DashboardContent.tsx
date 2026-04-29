@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { useBrowseData } from "@/hooks/useBrowseData";
+import {
+  useBrowseData,
+  buildBrowseCacheKey,
+  BROWSE_CACHE_NAMESPACE,
+} from "@/hooks/useBrowseData";
+import { useBackNavScroll } from "@/hooks/useBackNavScroll";
 import { useSearchEngine } from "@/hooks/useSearchEngine";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -676,6 +681,28 @@ export default function DashboardContent({
     [sourceFilters],
   );
 
+  // Single key shared by browse data + scroll restore. Includes the
+  // page identity (`defaultContentType`) so /videos and /images don't
+  // step on each other's snapshots when both render this component.
+  const browseCacheKey = useMemo(
+    () =>
+      `${defaultContentType ?? "all"}::${buildBrowseCacheKey({
+        contentTypes: browseContentTypes,
+        sourceTypes: browseSourceTypes,
+        dateStart,
+        dateEnd,
+        sortBy: videoSortBy,
+      })}`,
+    [
+      defaultContentType,
+      browseContentTypes,
+      browseSourceTypes,
+      dateStart,
+      dateEnd,
+      videoSortBy,
+    ],
+  );
+
   const {
     videos,
     totalVideos,
@@ -692,9 +719,19 @@ export default function DashboardContent({
     sortBy: videoSortBy,
     enabled: !isSearchMode,
     getAccessToken,
+    cacheKey: browseCacheKey,
   });
 
   const isLoading = isSearchMode ? isSearchLoading : isBrowseLoading;
+
+  // Restore browse scroll position on back-nav. Gate on browse mode +
+  // hydrated content; the hook itself owns save/restore lifecycle so
+  // useBrowseData stays unaware of scroll concerns.
+  useBackNavScroll(
+    BROWSE_CACHE_NAMESPACE,
+    browseCacheKey,
+    !isSearchMode && !isBrowseLoading && videos.length > 0,
+  );
 
   const toggleSource = useCallback((type: SourceType) => {
     setSourceFilters((prev) => {
