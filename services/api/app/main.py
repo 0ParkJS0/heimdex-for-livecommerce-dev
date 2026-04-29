@@ -26,6 +26,12 @@ from app.modules.shorts.router import router as shorts_router
 from app.modules.shorts_render.router import router as shorts_render_router
 from app.modules.subtitle_presets.router import router as subtitle_presets_router
 from app.modules.shorts_auto.router import router as shorts_auto_router
+from app.modules.shorts_auto_product.router import (
+    router as shorts_auto_product_router,
+)
+from app.modules.shorts_auto_product.internal_router import (
+    router as internal_shorts_auto_product_router,
+)
 from app.modules.blur.router import router as blur_router
 from app.modules.text_templates.router import router as text_templates_router
 from app.modules.basket.router import router as basket_router
@@ -379,6 +385,13 @@ app.include_router(shorts_router, prefix="/api")
 app.include_router(shorts_render_router, prefix="/api")
 app.include_router(subtitle_presets_router, prefix="/api")
 app.include_router(shorts_auto_router, prefix="/api")
+# shorts-auto product mode v2 — public + internal worker callbacks.
+# Behind ``auto_shorts_product_v2_enabled`` feature flag at the
+# service layer; until that flips, every endpoint 404s with
+# "product mode v2 is not enabled" so the v1 product mode UI stays
+# unchanged.
+app.include_router(shorts_auto_product_router, prefix="/api")
+app.include_router(internal_shorts_auto_product_router)
 app.include_router(text_templates_router, prefix="/api")
 
 from app.modules.shorts_render.internal_router import router as internal_shorts_render_router

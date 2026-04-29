@@ -321,6 +321,82 @@ class Settings(BaseSettings):
     auto_shorts_llm_rollout_pct: int = 0  # 0-100, hashed on (org_id, video_id)
     auto_shorts_llm_prompt_version: str = "2026-04-24-v1"
 
+    # --- Auto-shorts product mode v2 (per-video product catalog +
+    # SAM2/SigLIP2 tracking + product-anchored clip output). All flags
+    # off by default; product-mode requests fall back to the v1
+    # heuristic+LLM path when ``auto_shorts_product_v2_enabled`` is
+    # False or the org is outside the rollout bucket. Plan:
+    # ``.claude/plans/shorts-auto-product-v2.md``.
+    #
+    # Cost cap is a SEPARATE bucket from auto_shorts_llm /
+    # image_caption / video_summary — this pipeline burns Aircloud GPU
+    # minutes (SAM2 + SigLIP2) plus gpt-4o-mini for enumeration and
+    # subset picking, and we want the per-feature ledger to be
+    # interpretable.
+    auto_shorts_product_v2_enabled: bool = False
+    auto_shorts_product_v2_rollout_pct: int = 0  # 0-100; hashed on org_id
+
+    # Per-org per-day cost cap; 80% triggers Slack warn, 100% returns 402.
+    auto_shorts_product_v2_daily_budget_usd: float = 50.0
+    auto_shorts_product_v2_budget_alert_pct: int = 80
+
+    # Concurrency cap. 4th in-flight scan from the same org returns 429.
+    auto_shorts_product_v2_max_concurrent_per_org: int = 3
+
+    # Cap on LLM-vision calls per video (60 keyframes × 1 batch of 10 ≈
+    # 6 calls = ~$0.03 with gpt-4o-mini). Bound the worst-case spend on
+    # multi-hour livecommerce streams.
+    auto_shorts_product_v2_max_keyframes_per_video: int = 60
+
+    # Allowed clip durations in seconds. Locked to {30, 60, 90} per
+    # plan §1 to match Reels / Shorts / TikTok native lengths. Comma-
+    # separated env value parses to set; mirrored on the migration's
+    # CHECK constraint and the contracts ``DurationPresetSec`` literal.
+    auto_shorts_product_v2_duration_presets_sec: str = "30,60,90"
+
+    # Pipeline + prompt versions. Bumping any of these invalidates
+    # cached catalog entries (the API surfaces a "newer scan available"
+    # banner; never auto-rescans). Kept in sync with:
+    #   * heimdex_media_contracts.product.EnumerationPrompt.VERSION
+    #   * heimdex_media_pipelines.product_enum.ENUMERATION_VERSION
+    #   * heimdex_media_pipelines.product_track.TRACKER_VERSION
+    auto_shorts_product_v2_enumeration_prompt_version: str = "v1.0"
+    auto_shorts_product_v2_enumeration_version: str = "v1.0"
+    auto_shorts_product_v2_tracker_version: str = "v1.0"
+
+    # Idempotency window for the scan endpoint — same (video_id,
+    # user_id) within this window returns the existing job_id.
+    auto_shorts_product_v2_scan_idempotency_seconds: int = 60
+
+    # Worker queues. Empty strings disable enqueue (workers can be
+    # provisioned ahead of being wired up).
+    sqs_product_enumerate_queue_url: str = ""
+    sqs_product_track_queue_url: str = ""
+
+    # Aircloud container UUIDs (from infra provisioning). drive-worker's
+    # gpu_orchestrator extends to monitor these so first message wakes
+    # the endpoint within ~5 min and 15 min idle stops it.
+    aircloud_endpoint_product_enumerate: str = ""
+    aircloud_endpoint_product_track: str = ""
+
+    # SigLIP2 variant pinned to the deployed drive-visual-embed-worker
+    # model. Used by the workers, but mirrored here so the API can
+    # cross-check at startup that contracts agree on the same shape
+    # before the worker images bake the pin.
+    auto_shorts_product_v2_siglip2_model_id: str = "google/siglip2-base-patch16-256"
+
+    # Externally-reachable base URL for ``/internal/products/*``
+    # callbacks. Workers POST here. Empty string disables enqueue.
+    # Local dev: ``http://api:8000``. Staging:
+    # ``https://devorg.app.heimdexdemo.dev``. Production: per-tenant.
+    auto_shorts_product_v2_callback_base_url: str = ""
+
+    # Per-stage worker lease lengths (seconds). Heartbeats extend the
+    # lease by this amount on every progress callback. Match the SQS
+    # visibility timeouts on the corresponding queues.
+    auto_shorts_product_v2_enumerate_lease_seconds: int = 600
+    auto_shorts_product_v2_track_lease_seconds: int = 1800
+
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"

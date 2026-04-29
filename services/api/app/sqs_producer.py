@@ -101,6 +101,8 @@ _QUEUE_URL_ATTRS = {
     "export": "sqs_export_queue_url",
     "shorts_render": "sqs_shorts_render_queue_url",
     "blur": "sqs_blur_queue_url",
+    "product_enumerate": "sqs_product_enumerate_queue_url",
+    "product_track": "sqs_product_track_queue_url",
 }
 
 # ── Internal helpers ───────────────────────────────────────────────────
@@ -825,3 +827,87 @@ def publish_shorts_render_job(
         message_id=resp.get("MessageId"),
         job_id=str(job_id),
     )
+
+
+def publish_product_enumerate_job(
+    *,
+    job_id: UUID,
+    org_id: UUID,
+    video_id: UUID,
+    requested_by_user_id: UUID,
+    enumeration_version: str,
+    enumeration_prompt_version: str,
+    max_keyframes: int,
+    callback_base_url: str,
+) -> None:
+    """Publish a shorts-auto-product enumeration job.
+
+    Called from ``ProductScanService.enqueue_scan`` AFTER the
+    ``product_scan_jobs`` row is flushed. Fire-and-forget; the caller
+    marks the job ``failed`` if publish blows up so the user sees an
+    error instead of a permanently stuck ``queued`` row.
+
+    Body shape MUST match
+    ``heimdex_media_contracts.product.ProductEnumerateJob``.
+    """
+    settings = get_settings()
+    if settings.queue_backend != "rabbitmq" and not settings.sqs_enabled:
+        return
+
+    now = datetime.now(timezone.utc)
+    body = {
+        "version": "1",
+        "type": "product.enumerate_job",
+        "timestamp": now.isoformat(),
+        "job_id": str(job_id),
+        "org_id": str(org_id),
+        "video_id": str(video_id),
+        "requested_by_user_id": str(requested_by_user_id),
+        "enumeration_version": enumeration_version,
+        "enumeration_prompt_version": enumeration_prompt_version,
+        "max_keyframes": max_keyframes,
+        "callback_base_url": callback_base_url,
+    }
+    dedup_id = f"{job_id}:product-enum:{now.strftime('%Y%m%dT%H%M')}"
+    _publish("product_enumerate", body, dedup_id)
+
+
+def publish_product_track_job(
+    *,
+    job_id: UUID,
+    org_id: UUID,
+    video_id: UUID,
+    catalog_entry_id: UUID,
+    requested_by_user_id: UUID,
+    duration_preset_sec: int,
+    tracker_version: str,
+    enumeration_prompt_version: str,
+    callback_base_url: str,
+) -> None:
+    """Publish a shorts-auto-product track + assembly job.
+
+    Called from ``ProductScanService.enqueue_clip`` after the tracking
+    job row is flushed. Body shape MUST match
+    ``heimdex_media_contracts.product.ProductTrackJob``.
+    """
+    settings = get_settings()
+    if settings.queue_backend != "rabbitmq" and not settings.sqs_enabled:
+        return
+
+    now = datetime.now(timezone.utc)
+    body = {
+        "version": "1",
+        "type": "product.track_job",
+        "timestamp": now.isoformat(),
+        "job_id": str(job_id),
+        "org_id": str(org_id),
+        "video_id": str(video_id),
+        "catalog_entry_id": str(catalog_entry_id),
+        "requested_by_user_id": str(requested_by_user_id),
+        "duration_preset_sec": duration_preset_sec,
+        "tracker_version": tracker_version,
+        "enumeration_prompt_version": enumeration_prompt_version,
+        "callback_base_url": callback_base_url,
+    }
+    dedup_id = f"{job_id}:product-track:{now.strftime('%Y%m%dT%H%M')}"
+    _publish("product_track", body, dedup_id)
