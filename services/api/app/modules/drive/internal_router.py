@@ -315,17 +315,21 @@ async def update_job_status(
             }
             for i in range(_sc)
         ]
-        from app.sqs_producer import publish_scene_enrichment_jobs
+        from app.modules.drive.internal_processing_router import (
+            _publish_scene_jobs_in_background,
+        )
+        # Reuse the canonical helper. NEVER pass loop.run_in_executor(...)
+        # directly to asyncio.create_task — it returns a Future, not a
+        # coroutine, and create_task raises TypeError ("a coroutine was
+        # expected, got <Future pending cb=[_chain_future...]>"), which
+        # propagates as a 500 to the calling worker. See antipatterns.md.
         asyncio.create_task(
-            asyncio.get_running_loop().run_in_executor(
-                None,
-                lambda: publish_scene_enrichment_jobs(
-                    file_id=file_id,
-                    org_id=_org_id,
-                    video_id=_vid,
-                    scenes=scenes_for_caption,
-                    job_types=("caption",),
-                ),
+            _publish_scene_jobs_in_background(
+                file_id=file_id,
+                org_id=_org_id,
+                video_id=_vid,
+                scenes=scenes_for_caption,
+                job_types=("caption",),
             )
         )
         logger.info(
