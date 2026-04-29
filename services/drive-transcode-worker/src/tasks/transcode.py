@@ -211,28 +211,16 @@ def _process_single_transcode(
                 kf_key = enrichment_keyframe_s3_key(org_id_str, video_id, scene_doc.scene_id)
                 s3.upload_file(Path(scene_doc.thumbnail_path), kf_key, content_type="image/jpeg")
 
-        audio_path = temp_dir / "audio.wav"
-        _ = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                str(proxy_path),
-                "-vn",
-                "-acodec",
-                "pcm_s16le",
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                "-y",
-                str(audio_path),
-            ],
-            capture_output=True,
-            check=True,
-            timeout=600,
+        audio_key = _extract_audio_to_s3(
+            proxy_probe=proxy_probe,
+            proxy_path=proxy_path,
+            temp_dir=temp_dir,
+            s3=s3,
+            audio_s3_key_fn=audio_s3_key,
+            org_id_str=org_id_str,
+            video_id=video_id,
+            file_id=file_id,
         )
-        audio_key = audio_s3_key(org_id_str, video_id)
-        s3.upload_file(audio_path, audio_key, content_type="audio/wav")
 
         scene_dicts = _build_ingest_scene_dicts(scene_result.scenes, source_type=source_type, capture_time=None, web_view_link=web_view_link)
         _upload_scene_manifest(
@@ -365,6 +353,69 @@ def _process_single_transcode(
         )
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _extract_audio_to_s3(
+    *,
+    proxy_probe: Any,
+    proxy_path: Path,
+    temp_dir: Path,
+    s3: Any,
+    audio_s3_key_fn: Any,
+    org_id_str: str,
+    video_id: str,
+    file_id: Any,
+) -> str | None:
+    """Extract a 16 kHz mono PCM WAV from the proxy and upload to S3.
+
+    Returns the S3 key on success, or ``None`` when the proxy has no
+    audio stream (dashcam / silent / screen-recorded footage). Without
+    this gate, ffmpeg `-vn -acodec pcm_s16le ...` exits 234 (EINVAL)
+    on audio-less inputs and bubbles a CalledProcessError out of the
+    whole transcode step, discarding the scenes/keyframes already
+    produced. Downstream STT publishing in
+    ``services/api/app/sqs_producer.py::publish_enrichment_jobs`` is
+    gated on ``audio_s3_key`` being non-null, so returning ``None``
+    cleanly skips STT for this video.
+
+    See ``.claude/antipatterns.md`` —
+    "Unconditional ffmpeg audio extraction".
+    """
+    if not proxy_probe.has_audio:
+        logger.info(
+            "transcode_skipped_audio_extraction_no_audio_stream",
+            extra={
+                "video_id": video_id,
+                "file_id": str(file_id),
+                "org_id": org_id_str,
+                "audio_codec": getattr(proxy_probe, "audio_codec", None),
+            },
+        )
+        return None
+
+    audio_path = temp_dir / "audio.wav"
+    _ = subprocess.run(
+        [
+            "ffmpeg",
+            "-i",
+            str(proxy_path),
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-y",
+            str(audio_path),
+        ],
+        capture_output=True,
+        check=True,
+        timeout=600,
+    )
+    key = audio_s3_key_fn(org_id_str, video_id)
+    s3.upload_file(audio_path, key, content_type="audio/wav")
+    return key
 
 
 def _upload_scene_manifest(
