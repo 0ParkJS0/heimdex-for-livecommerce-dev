@@ -24,10 +24,14 @@ from fastapi.testclient import TestClient
 from app.modules.videos.internal_router import router as internal_router
 
 
-def _drive_file(*, file_id: UUID, video_id: str = "gd_abc"):
+def _drive_file(*, file_id: UUID, video_id: str = "gd_abc", org_id: UUID | None = None):
+    """Mocked DriveFile row. Pattern B endpoints derive ``org_id``
+    from the resource itself, so the test fixture must populate
+    ``obj.org_id`` (not just rely on the asserted header)."""
     obj = MagicMock()
     obj.id = file_id
     obj.video_id = video_id
+    obj.org_id = org_id if org_id is not None else uuid4()
     return obj
 
 
@@ -48,6 +52,11 @@ def _build_app(
     )
 
     fake_repo = MagicMock()
+    # Pattern B (post-2026-05-01): endpoints look up DriveFile by id
+    # alone via ``get_by_id_resource_scoped`` and derive ``org_id``
+    # from the resource. Tests mock the new method; ``get_by_id``
+    # also mocked for back-compat with any call sites we miss.
+    fake_repo.get_by_id_resource_scoped = AsyncMock(return_value=drive_file_obj)
     fake_repo.get_by_id = AsyncMock(return_value=drive_file_obj)
     import app.modules.drive.repository as drive_repo_module
     drive_repo_module.DriveFileRepository = MagicMock(return_value=fake_repo)  # type: ignore[assignment]
@@ -79,7 +88,7 @@ def _vec(dim: int = 768, fill: float = 0.01) -> list[float]:
 def test_visual_similarity_returns_top_k_above_threshold_sorted_by_score():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_xyz")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_xyz", org_id=org_id)
 
     # OS hits — 3 above threshold, 1 below; endpoint must drop the
     # below-threshold one and return the rest in OS order (already
@@ -118,7 +127,7 @@ def test_visual_similarity_returns_top_k_above_threshold_sorted_by_score():
 def test_visual_similarity_passes_video_id_org_id_size_to_client():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_v")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
 
     captured: dict[str, Any] = {}
 
@@ -336,7 +345,8 @@ def test_visual_similarity_drops_hits_with_missing_scene_id():
     """OS doc with no scene_id field is silently skipped — defensive
     against schema drift / partial reads."""
     file_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_x")
+    org_id = uuid4()
+    drive_file = _drive_file(file_id=file_id, video_id="gd_x", org_id=org_id)
 
     scene_client = MagicMock()
     scene_client.search_visual_vector_in_video = AsyncMock(
@@ -354,7 +364,7 @@ def test_visual_similarity_drops_hits_with_missing_scene_id():
             json={"query_vec": _vec(), "top_k": 10, "min_similarity": 0.0},
             headers={
                 "Authorization": "Bearer test-internal-token",
-                "X-Heimdex-Org-Id": str(uuid4()),
+                "X-Heimdex-Org-Id": str(org_id),
             },
         )
     assert resp.status_code == 200
@@ -366,7 +376,8 @@ def test_visual_similarity_drops_hits_with_missing_scene_id():
 
 def test_visual_similarity_empty_results_returns_200_with_zero_scenes():
     file_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_a")
+    org_id = uuid4()
+    drive_file = _drive_file(file_id=file_id, video_id="gd_a", org_id=org_id)
     scene_client = MagicMock()
     scene_client.search_visual_vector_in_video = AsyncMock(return_value=[])
     app = _build_app(drive_file_obj=drive_file, scene_client_mock=scene_client)
@@ -377,11 +388,67 @@ def test_visual_similarity_empty_results_returns_200_with_zero_scenes():
             json={"query_vec": _vec(), "top_k": 10, "min_similarity": 0.5},
             headers={
                 "Authorization": "Bearer test-internal-token",
-                "X-Heimdex-Org-Id": str(uuid4()),
+                "X-Heimdex-Org-Id": str(org_id),
             },
         )
     assert resp.status_code == 200
     assert resp.json()["scenes"] == []
+
+
+def test_visual_similarity_pattern_b_header_omitted_resolves_org_from_resource():
+    """Pattern B: ``X-Heimdex-Org-Id`` is OPTIONAL. Workers may omit
+    it entirely; the api derives ``org_id`` from the DriveFile's own
+    ``org_id`` and forwards it to OpenSearch. This test pins the
+    Pattern B contract — bearer + path resource is sufficient."""
+    file_id = uuid4()
+    org_id = uuid4()
+    drive_file = _drive_file(file_id=file_id, video_id="gd_pb", org_id=org_id)
+
+    captured: dict[str, Any] = {}
+
+    async def _capture(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    scene_client = MagicMock()
+    scene_client.search_visual_vector_in_video = _capture
+    app = _build_app(drive_file_obj=drive_file, scene_client_mock=scene_client)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            f"/internal/videos/{file_id}/scenes-by-visual-similarity",
+            json={"query_vec": _vec(), "top_k": 10, "min_similarity": 0.0},
+            headers={"Authorization": "Bearer test-internal-token"},
+        )
+    assert resp.status_code == 200
+    # API must use the resource's org_id even though the header was omitted.
+    assert captured["org_id"] == str(org_id)
+
+
+def test_visual_similarity_pattern_b_header_mismatch_returns_404_not_403():
+    """Pattern B cross-validation: caller asserts an org that doesn't
+    match the resource's org. Endpoint returns 404 (not 403, not 400)
+    so the response is indistinguishable from a true not-found and
+    timing doesn't reveal the resource's true tenant."""
+    file_id = uuid4()
+    resource_org = uuid4()
+    asserted_org = uuid4()
+    drive_file = _drive_file(file_id=file_id, video_id="gd_pb", org_id=resource_org)
+    app = _build_app(drive_file_obj=drive_file)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            f"/internal/videos/{file_id}/scenes-by-visual-similarity",
+            json={"query_vec": _vec(), "top_k": 10, "min_similarity": 0.0},
+            headers={
+                "Authorization": "Bearer test-internal-token",
+                "X-Heimdex-Org-Id": str(asserted_org),
+            },
+        )
+    assert resp.status_code == 404
+    # Specifically NOT 403 — 404 is the no-info-leak choice. Pin it
+    # so a future "let's be helpful" refactor doesn't regress.
+    assert resp.status_code != 403
 
 
 def test_visual_similarity_requires_bearer_token():
@@ -408,7 +475,7 @@ def test_visual_similarity_requires_bearer_token():
 def test_scenes_content_returns_per_scene_transcript_and_ocr():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_xyz")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_xyz", org_id=org_id)
 
     scene_client = MagicMock()
     scene_client.mget_scenes = AsyncMock(
@@ -468,7 +535,7 @@ def test_scenes_content_drops_scene_belonging_to_other_video():
     it. Filter by video_id post-mget."""
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_correct")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_correct", org_id=org_id)
 
     scene_client = MagicMock()
     scene_client.mget_scenes = AsyncMock(
@@ -518,7 +585,7 @@ def test_scenes_content_drops_scene_belonging_to_other_video():
 def test_scenes_content_passes_org_scoped_doc_ids_to_mget():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_v")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
 
     captured: dict[str, list[str]] = {}
 
@@ -551,7 +618,7 @@ def test_scenes_content_skips_missing_scene_ids():
     or cross-org) is simply absent from the response."""
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_v")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
 
     scene_client = MagicMock()
     scene_client.mget_scenes = AsyncMock(
@@ -674,7 +741,7 @@ def test_scenes_content_404_when_drive_file_soft_deleted():
 def test_scenes_content_empty_scene_ids_returns_empty_list():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_v")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
 
     scene_client = MagicMock()
     scene_client.mget_scenes = AsyncMock(return_value={})
@@ -691,6 +758,56 @@ def test_scenes_content_empty_scene_ids_returns_empty_list():
         )
     assert resp.status_code == 200
     assert resp.json()["scenes"] == []
+
+
+def test_scenes_content_pattern_b_header_omitted_resolves_org_from_resource():
+    """Pattern B: header optional, org derived from the DriveFile's
+    own org_id. Mirror of the visual-similarity counterpart."""
+    file_id = uuid4()
+    resource_org = uuid4()
+    drive_file = _drive_file(file_id=file_id, video_id="gd_pb", org_id=resource_org)
+
+    captured: dict[str, list[str]] = {}
+
+    async def _capture(doc_ids):
+        captured["doc_ids"] = doc_ids
+        return {}
+
+    scene_client = MagicMock()
+    scene_client.mget_scenes = _capture
+    app = _build_app(drive_file_obj=drive_file, scene_client_mock=scene_client)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            f"/internal/videos/{file_id}/scenes-content",
+            json={"scene_ids": ["gd_pb_scene_001"]},
+            headers={"Authorization": "Bearer test-internal-token"},
+        )
+    assert resp.status_code == 200
+    # doc_ids must be scoped to the RESOURCE's org_id, not anything
+    # caller-asserted (since caller didn't assert).
+    assert captured["doc_ids"] == [f"{resource_org}:gd_pb_scene_001"]
+
+
+def test_scenes_content_pattern_b_header_mismatch_returns_404_not_403():
+    """Pattern B cross-validation on /scenes-content."""
+    file_id = uuid4()
+    resource_org = uuid4()
+    asserted_org = uuid4()
+    drive_file = _drive_file(file_id=file_id, video_id="gd_pb", org_id=resource_org)
+    app = _build_app(drive_file_obj=drive_file)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            f"/internal/videos/{file_id}/scenes-content",
+            json={"scene_ids": ["gd_pb_scene_001"]},
+            headers={
+                "Authorization": "Bearer test-internal-token",
+                "X-Heimdex-Org-Id": str(asserted_org),
+            },
+        )
+    assert resp.status_code == 404
+    assert resp.status_code != 403
 
 
 def test_scenes_content_requires_bearer_token():

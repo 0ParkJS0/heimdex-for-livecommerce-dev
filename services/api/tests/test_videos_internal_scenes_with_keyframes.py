@@ -35,6 +35,10 @@ def _build_app(
     )
 
     fake_repo = MagicMock()
+    # Pattern B (post-2026-05-01): the endpoint now resolves DriveFiles
+    # via ``get_by_id_resource_scoped`` (no org filter) and derives
+    # org from the resource. Mock both for backward compatibility.
+    fake_repo.get_by_id_resource_scoped = AsyncMock(return_value=drive_file_obj)
     fake_repo.get_by_id = AsyncMock(return_value=drive_file_obj)
 
     # The endpoint imports DriveFileRepository inside the handler.
@@ -56,10 +60,14 @@ def _build_app(
     return app
 
 
-def _drive_file(*, file_id: UUID, video_id: str = "gd_abc123"):
+def _drive_file(*, file_id: UUID, video_id: str = "gd_abc123", org_id: UUID | None = None):
+    """Mocked DriveFile row. Pattern B endpoint derives ``org_id``
+    from the resource itself, so the test fixture must populate
+    ``obj.org_id`` (not just rely on the asserted header)."""
     obj = MagicMock()
     obj.id = file_id
     obj.video_id = video_id
+    obj.org_id = org_id if org_id is not None else uuid4()
     return obj
 
 
@@ -68,7 +76,7 @@ def _drive_file(*, file_id: UUID, video_id: str = "gd_abc123"):
 def test_returns_chronologically_ordered_scenes_with_keyframe_keys():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_abc123")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_abc123", org_id=org_id)
 
     # OS returns scenes deliberately out of order — the endpoint must
     # sort defensively (per the docstring contract).
@@ -191,7 +199,7 @@ def test_returns_400_on_invalid_org_id_header():
 def test_empty_scene_list_returns_200_with_zero_scenes():
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id)
+    drive_file = _drive_file(file_id=file_id, org_id=org_id)
     app = _build_app(
         drive_file_obj=drive_file, scene_response={"scenes": []},
     )
@@ -209,12 +217,70 @@ def test_empty_scene_list_returns_200_with_zero_scenes():
     assert body["total_duration_ms"] == 0
 
 
+# ---------- Pattern B (post-2026-05-01) auth ----------
+
+def test_pattern_b_header_omitted_resolves_org_from_resource():
+    """Pattern B: ``X-Heimdex-Org-Id`` is OPTIONAL. The endpoint
+    derives ``org_id`` from the DriveFile's own ``org_id`` and uses
+    it to construct the keyframe S3 keys. This test pins the
+    contract — bearer + path resource is sufficient."""
+    file_id = uuid4()
+    resource_org = uuid4()
+    drive_file = _drive_file(
+        file_id=file_id, video_id="gd_pb", org_id=resource_org,
+    )
+    scene_response = {
+        "scenes": [
+            {
+                "scene_id": "gd_pb_scene_001",
+                "start_ms": 0, "end_ms": 1000,
+                "keyframe_timestamp_ms": 500,
+            },
+        ],
+    }
+    app = _build_app(drive_file_obj=drive_file, scene_response=scene_response)
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/internal/videos/{file_id}/scenes-with-keyframes",
+            headers={"Authorization": "Bearer test-internal-token"},
+        )
+    assert resp.status_code == 200
+    # S3 key must use the resource's org_id (not anything header-derived).
+    assert resp.json()["scenes"][0]["keyframe_s3_key"].startswith(
+        f"{resource_org}/drive/keyframes/gd_pb/"
+    )
+
+
+def test_pattern_b_header_mismatch_returns_404_not_403():
+    """Pattern B cross-validation: asserted org doesn't match the
+    resource's org → 404 (not 403, not 400) so timing doesn't reveal
+    the resource's true tenant."""
+    file_id = uuid4()
+    resource_org = uuid4()
+    asserted_org = uuid4()
+    drive_file = _drive_file(
+        file_id=file_id, video_id="gd_pb", org_id=resource_org,
+    )
+    app = _build_app(drive_file_obj=drive_file, scene_response={"scenes": []})
+
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/internal/videos/{file_id}/scenes-with-keyframes",
+            headers={
+                "Authorization": "Bearer test-internal-token",
+                "X-Heimdex-Org-Id": str(asserted_org),
+            },
+        )
+    assert resp.status_code == 404
+    assert resp.status_code != 403
+
+
 def test_drops_malformed_scene_rows_silently():
     """A row missing scene_id should be skipped, not 500. Defensive
     against partial OpenSearch reads or schema drift."""
     file_id = uuid4()
     org_id = uuid4()
-    drive_file = _drive_file(file_id=file_id, video_id="gd_x")
+    drive_file = _drive_file(file_id=file_id, video_id="gd_x", org_id=org_id)
     scene_response = {
         "scenes": [
             {"scene_id": "gd_x_scene_001", "start_ms": 0, "end_ms": 1000, "keyframe_timestamp_ms": 500},

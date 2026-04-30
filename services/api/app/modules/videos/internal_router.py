@@ -161,10 +161,95 @@ async def update_reprocess_status(
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Pattern B internal-auth helper
+# ---------------------------------------------------------------------------
+#
+# Three of this file's endpoints (scenes-with-keyframes, scenes-by-visual-
+# similarity, scenes-content) authenticate workers via the shared internal
+# bearer and then need to scope their work to a specific tenant. Until 2026-
+# 05-01 they did this with **Pattern A**: caller asserts the tenant via the
+# ``X-Heimdex-Org-Id`` header, and the repo lookup filters by both
+# ``file_id`` AND the asserted ``org_id`` so an attacker faking the header
+# gets a 404. That works as long as the (file_id, org_id) pair can't leak
+# together — fragile, easy to regress, and inconsistent with how the
+# blur / shorts_auto_product internal endpoints already operate.
+#
+# Codex adversarial review F1 (2026-05-01) flagged this as a multi-tenant
+# isolation gap. Fix: migrate to **Pattern B** — bearer authenticates the
+# call; the resource's own ``org_id`` is the canonical tenant context;
+# the asserted header becomes an OPTIONAL cross-validation that returns
+# 404 (not 400) on mismatch so timing doesn't leak the correct org.
+#
+# Workers continue to send the header (no worker code changes), so this
+# is fully backward-compatible. Future endpoints in this file should use
+# the helper; future endpoints elsewhere should look at this as the
+# template for the platform sweep tracked separately.
+#
+# Specifically NOT applied to YouTube paths in this file (``_resolve_file_id``,
+# delete/reprocess endpoints) — those have separate threat models /
+# behavioral contracts and migrate in their own PR.
+
+async def _resolve_drive_file_with_org(
+    *,
+    file_id: UUID,
+    x_heimdex_org_id: str | None,
+    db: AsyncSession,
+) -> tuple[Any, UUID]:
+    """Look up a DriveFile by id (resource-scoped) and return it
+    along with the tenant ``org_id`` derived from the resource.
+
+    If ``x_heimdex_org_id`` is provided, it is **cross-validated** as a
+    soft check: a mismatch with ``drive_file.org_id`` raises a 404 (NOT
+    400 or 403 — same response as not-found, so timing doesn't reveal
+    the resource's true tenant).
+
+    Returns ``(drive_file, org_id)``. Raises ``HTTPException`` for:
+      * 400 — header present but not a valid UUID
+      * 404 — file not found / soft-deleted / cross-org mismatch
+
+    Centralizing the cross-validation here keeps the three endpoints
+    using identical semantics; new endpoints copy-paste a single
+    helper call instead of re-implementing the pattern (and getting
+    it subtly wrong).
+    """
+    from app.modules.drive.repository import DriveFileRepository
+
+    asserted_org_id: UUID | None = None
+    if x_heimdex_org_id is not None:
+        try:
+            asserted_org_id = UUID(x_heimdex_org_id)
+        except (ValueError, AttributeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
+            )
+
+    drive_file = await DriveFileRepository(db).get_by_id_resource_scoped(
+        file_id=file_id,
+    )
+    if drive_file is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="video not found",
+        )
+
+    if asserted_org_id is not None and asserted_org_id != drive_file.org_id:
+        # Cross-tenant access attempt. 404 (not 403) so the response
+        # is indistinguishable from a genuine not-found — does not
+        # confirm whether the file_id exists in any tenant.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="video not found",
+        )
+
+    return drive_file, drive_file.org_id
+
+
 @router.get("/{file_id}/scenes-with-keyframes")
 async def get_scenes_with_keyframes(
     file_id: UUID,
-    x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
     scene_client: SceneSearchClient = Depends(get_scene_opensearch_client),
@@ -181,10 +266,11 @@ async def get_scenes_with_keyframes(
     independently (drift between them would silently produce 404s on
     the worker side).
 
-    Bearer-authed via the shared internal token. Org context comes
-    from the ``X-Heimdex-Org-Id`` header — same pattern as the other
-    internal endpoints in this file. Cross-org access returns 404
-    (no info leak between not-found and forbidden).
+    Auth (Pattern B, post-2026-05-01): bearer authenticates the call;
+    the resource's ``org_id`` is the canonical tenant context.
+    ``X-Heimdex-Org-Id`` is OPTIONAL and treated as a cross-validation
+    only — a mismatch returns 404 (not 403) so timing doesn't leak the
+    correct tenant. See module-level helper docstring for rationale.
 
     Response shape (stable; both workers depend on it)::
 
@@ -204,26 +290,13 @@ async def get_scenes_with_keyframes(
           ]
         }
     """
-    try:
-        org_id = UUID(x_heimdex_org_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
-        )
-
     from app.modules.drive.keys import enrichment_keyframe_s3_key
-    from app.modules.drive.repository import DriveFileRepository
 
-    # Resolve DriveFile (org-scoped — cross-org access returns 404).
-    drive_file = await DriveFileRepository(db).get_by_id(
-        file_id=file_id, org_id=org_id,
+    drive_file, org_id = await _resolve_drive_file_with_org(
+        file_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        db=db,
     )
-    if drive_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="video not found",
-        )
     video_id_str: str = drive_file.video_id
 
     # Pull all scenes for this video. ``page_size`` is generous —
@@ -281,7 +354,7 @@ async def get_scenes_with_keyframes(
 async def scenes_by_visual_similarity(
     file_id: UUID,
     body: dict[str, Any] = Body(...),
-    x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
     scene_client: SceneSearchClient = Depends(get_scene_opensearch_client),
@@ -320,18 +393,11 @@ async def scenes_by_visual_similarity(
           ]
         }
 
-    Bearer-authed via the shared internal token. Org context comes
-    from the ``X-Heimdex-Org-Id`` header. Cross-org access returns
-    404 (no info leak).
+    Auth (Pattern B): bearer authenticates the call; the resource's
+    ``org_id`` is the canonical tenant context. ``X-Heimdex-Org-Id``
+    is OPTIONAL and treated as a cross-validation only — see
+    ``_resolve_drive_file_with_org`` docstring.
     """
-    try:
-        org_id = UUID(x_heimdex_org_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
-        )
-
     query_vec = body.get("query_vec")
     if not isinstance(query_vec, list) or not query_vec:
         raise HTTPException(
@@ -394,16 +460,11 @@ async def scenes_by_visual_similarity(
             detail="min_similarity must be in [0, 1]",
         )
 
-    from app.modules.drive.repository import DriveFileRepository
-
-    drive_file = await DriveFileRepository(db).get_by_id(
-        file_id=file_id, org_id=org_id,
+    drive_file, org_id = await _resolve_drive_file_with_org(
+        file_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        db=db,
     )
-    if drive_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="video not found",
-        )
 
     hits = await scene_client.search_visual_vector_in_video(
         visual_embedding=query_vec,
@@ -432,7 +493,7 @@ async def scenes_by_visual_similarity(
 async def scenes_content(
     file_id: UUID,
     body: dict[str, Any] = Body(...),
-    x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
     scene_client: SceneSearchClient = Depends(get_scene_opensearch_client),
@@ -478,15 +539,12 @@ async def scenes_content(
     Cross-org / cross-video doc IDs are silently dropped (the
     constructed doc_id is org-scoped via the ``{org_id}:{scene_id}``
     prefix, so a scene_id from another org just doesn't match).
-    """
-    try:
-        org_id = UUID(x_heimdex_org_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
-        )
 
+    Auth (Pattern B): bearer authenticates the call; the resource's
+    ``org_id`` is the canonical tenant context. ``X-Heimdex-Org-Id``
+    is OPTIONAL and treated as a cross-validation only — see
+    ``_resolve_drive_file_with_org`` docstring.
+    """
     scene_ids = body.get("scene_ids")
     if not isinstance(scene_ids, list):
         raise HTTPException(
@@ -507,16 +565,11 @@ async def scenes_content(
             detail="scene_ids must be a list of non-empty strings",
         )
 
-    from app.modules.drive.repository import DriveFileRepository
-
-    drive_file = await DriveFileRepository(db).get_by_id(
-        file_id=file_id, org_id=org_id,
+    drive_file, org_id = await _resolve_drive_file_with_org(
+        file_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        db=db,
     )
-    if drive_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="video not found",
-        )
 
     # Build the org-scoped doc_ids the OS index uses.
     doc_ids = [f"{org_id}:{scene_id}" for scene_id in scene_ids]
