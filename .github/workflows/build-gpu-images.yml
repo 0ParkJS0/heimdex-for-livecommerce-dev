@@ -5,9 +5,17 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: 'Workers to build (comma-separated: caption,stt,ocr,transcode,face,visual-embed,reranker,blur or "all")'
+        description: 'Workers to build (comma-separated: caption,stt,ocr,transcode,face,visual-embed,reranker,blur,product-enumerate,product-track or "all")'
         required: false
         default: 'all'
+      contracts_ref:
+        description: 'Branch / tag / SHA of heimdex-media-contracts to check out (default: main). Use a feature branch when building against an unmerged contracts change.'
+        required: false
+        default: 'main'
+      pipelines_ref:
+        description: 'Branch / tag / SHA of heimdex-media-pipelines to check out (default: main). Use a feature branch when building against an unmerged pipelines change (e.g., a new ML library lands here before its consumer worker).'
+        required: false
+        default: 'main'
   push:
     branches: [main]
     paths:
@@ -19,6 +27,10 @@ on:
       - 'services/drive-visual-embed-worker/**'
       - 'services/drive-reranker-worker/**'
       - 'services/drive-blur-worker/**'
+      # shorts-auto product mode v2 workers (Phase 2+).
+      # No `drive-` prefix — these workers run after ingest, not during.
+      - 'services/product-enumerate-worker/**'
+      - 'services/product-track-worker/**'
 
 env:
   REGISTRY: ghcr.io
@@ -40,7 +52,7 @@ jobs:
       - name: Resolve workers to build
         id: resolve
         run: |
-          ALL_WORKERS='["caption","stt","ocr","transcode","face","visual-embed","reranker","blur"]'
+          ALL_WORKERS='["caption","stt","ocr","transcode","face","visual-embed","reranker","blur","product-enumerate","product-track"]'
 
           # ── Manual trigger: use input directly ──
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -80,6 +92,9 @@ jobs:
           echo "$CHANGED" | grep -q '^services/drive-visual-embed-worker/' && WORKERS+=("visual-embed")
           echo "$CHANGED" | grep -q '^services/drive-reranker-worker/'     && WORKERS+=("reranker")
           echo "$CHANGED" | grep -q '^services/drive-blur-worker/'        && WORKERS+=("blur")
+          # shorts-auto product mode v2 workers — no `drive-` prefix.
+          echo "$CHANGED" | grep -q '^services/product-enumerate-worker/' && WORKERS+=("product-enumerate")
+          echo "$CHANGED" | grep -q '^services/product-track-worker/'     && WORKERS+=("product-track")
 
           if [ ${#WORKERS[@]} -eq 0 ]; then
             echo "workers=[]" >> "$GITHUB_OUTPUT"
@@ -115,12 +130,21 @@ jobs:
         with:
           repository: jlee-heimdex/heimdex-media-contracts
           path: heimdex-media-contracts
+          # ``contracts_ref`` defaults to ``main``. Override via
+          # workflow_dispatch when building against an unmerged
+          # contracts change. Push triggers always use ``main``.
+          ref: ${{ github.event.inputs.contracts_ref || 'main' }}
 
       - name: Checkout media-pipelines
         uses: actions/checkout@v4
         with:
           repository: jlee-heimdex/heimdex-media-pipelines
           path: heimdex-media-pipelines
+          # ``pipelines_ref`` defaults to ``main``. Override via
+          # workflow_dispatch for cross-repo feature work — e.g.,
+          # building product-enumerate-worker before pipelines
+          # ``feat/product-enum-shorts-auto-v2`` is merged.
+          ref: ${{ github.event.inputs.pipelines_ref || 'main' }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -136,7 +160,10 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: dev-heimdex-for-livecommerce/services/drive-${{ matrix.worker }}-worker/Dockerfile.gpu
+          # Product mode v2 workers (Phase 2+) live in services/{worker}-worker/
+          # without the `drive-` prefix; everything else preserves the
+          # legacy services/drive-{worker}-worker/ layout.
+          file: ${{ startsWith(matrix.worker, 'product-') && format('dev-heimdex-for-livecommerce/services/{0}-worker/Dockerfile.gpu', matrix.worker) || format('dev-heimdex-for-livecommerce/services/drive-{0}-worker/Dockerfile.gpu', matrix.worker) }}
           push: true
           # Suppress BuildKit provenance/SBOM attestations. They produce a second
           # `unknown/unknown` manifest in the OCI image index, which breaks
