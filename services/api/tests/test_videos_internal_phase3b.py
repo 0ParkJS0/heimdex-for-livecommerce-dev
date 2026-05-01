@@ -35,45 +35,58 @@ def _drive_file(*, file_id: UUID, video_id: str = "gd_abc", org_id: UUID | None 
     return obj
 
 
-def _build_app(
-    *,
-    drive_file_obj,
-    scene_client_mock: MagicMock | None = None,
-    internal_token: str = "test-internal-token",
-) -> FastAPI:
+@pytest.fixture
+def _build_app(monkeypatch):
     """Mirror of the Phase 2.5a test helper. ``scene_client_mock``
     can be pre-loaded with method stubs (``search_visual_vector_in_video``,
     ``mget_scenes``) for the endpoint under test.
+
+    Uses pytest's ``monkeypatch`` so the ``DriveFileRepository``
+    module-attribute override auto-reverts between tests — critical
+    so the patch doesn't bleed into other test files (e.g.,
+    ``test_internal_drive_router.py``) that import the real class.
     """
-    from app.dependencies import (
-        get_db_session,
-        get_scene_opensearch_client,
-        verify_internal_token,
-    )
 
-    fake_repo = MagicMock()
-    # Pattern B (post-2026-05-01): endpoints look up DriveFile by id
-    # alone via ``get_by_id_resource_scoped`` and derive ``org_id``
-    # from the resource. Tests mock the new method; ``get_by_id``
-    # also mocked for back-compat with any call sites we miss.
-    fake_repo.get_by_id_resource_scoped = AsyncMock(return_value=drive_file_obj)
-    fake_repo.get_by_id = AsyncMock(return_value=drive_file_obj)
-    import app.modules.drive.repository as drive_repo_module
-    drive_repo_module.DriveFileRepository = MagicMock(return_value=fake_repo)  # type: ignore[assignment]
+    def _factory(
+        *,
+        drive_file_obj,
+        scene_client_mock: MagicMock | None = None,
+        internal_token: str = "test-internal-token",
+    ) -> FastAPI:
+        from app.dependencies import (
+            get_db_session,
+            get_scene_opensearch_client,
+            verify_internal_token,
+        )
 
-    if scene_client_mock is None:
-        scene_client_mock = MagicMock()
-    # The endpoint reads VISUAL_EMBEDDING_DIMENSION off the client to
-    # validate query_vec length — match the prod constant.
-    scene_client_mock.VISUAL_EMBEDDING_DIMENSION = 768
+        fake_repo = MagicMock()
+        # Pattern B (post-2026-05-01): endpoints look up DriveFile
+        # by id alone via ``get_by_id_resource_scoped`` and derive
+        # ``org_id`` from the resource. Mock both the new method and
+        # ``get_by_id`` for back-compat.
+        fake_repo.get_by_id_resource_scoped = AsyncMock(return_value=drive_file_obj)
+        fake_repo.get_by_id = AsyncMock(return_value=drive_file_obj)
 
-    app = FastAPI()
-    app.include_router(internal_router, prefix="/internal")
-    app.dependency_overrides[get_db_session] = lambda: AsyncMock()
-    app.dependency_overrides[get_scene_opensearch_client] = lambda: scene_client_mock
-    app.dependency_overrides[verify_internal_token] = lambda: internal_token
+        import app.modules.drive.repository as drive_repo_module
+        monkeypatch.setattr(
+            drive_repo_module,
+            "DriveFileRepository",
+            MagicMock(return_value=fake_repo),
+        )
 
-    return app
+        if scene_client_mock is None:
+            scene_client_mock = MagicMock()
+        scene_client_mock.VISUAL_EMBEDDING_DIMENSION = 768
+
+        app = FastAPI()
+        app.include_router(internal_router, prefix="/internal")
+        app.dependency_overrides[get_db_session] = lambda: AsyncMock()
+        app.dependency_overrides[get_scene_opensearch_client] = lambda: scene_client_mock
+        app.dependency_overrides[verify_internal_token] = lambda: internal_token
+
+        return app
+
+    return _factory
 
 
 def _vec(dim: int = 768, fill: float = 0.01) -> list[float]:
@@ -85,7 +98,7 @@ def _vec(dim: int = 768, fill: float = 0.01) -> list[float]:
 # =====================================================================
 
 
-def test_visual_similarity_returns_top_k_above_threshold_sorted_by_score():
+def test_visual_similarity_returns_top_k_above_threshold_sorted_by_score(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_xyz", org_id=org_id)
@@ -124,7 +137,7 @@ def test_visual_similarity_returns_top_k_above_threshold_sorted_by_score():
     assert body["scenes"][0]["similarity"] == pytest.approx(0.91)
 
 
-def test_visual_similarity_passes_video_id_org_id_size_to_client():
+def test_visual_similarity_passes_video_id_org_id_size_to_client(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
@@ -200,7 +213,7 @@ def _vec_with_token_at(idx: int, token: str) -> str:
     ],
 )
 def test_visual_similarity_400_on_non_finite_query_vec_element(
-    body_factory, expected_index
+    body_factory, expected_index, _build_app
 ):
     """Codex F3: per-element validation. Length-only validation lets
     strings / bools / NaN / inf reach OpenSearch unchanged — best case
@@ -232,7 +245,7 @@ def test_visual_similarity_400_on_non_finite_query_vec_element(
         ("not-a-list", "list"),  # wrong type
     ],
 )
-def test_visual_similarity_400_on_invalid_query_vec(vec, expected_msg):
+def test_visual_similarity_400_on_invalid_query_vec(vec, expected_msg, _build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -253,7 +266,7 @@ def test_visual_similarity_400_on_invalid_query_vec(vec, expected_msg):
     "top_k",
     [0, -1, 201, 10000],
 )
-def test_visual_similarity_400_on_invalid_top_k(top_k):
+def test_visual_similarity_400_on_invalid_top_k(top_k, _build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -271,7 +284,7 @@ def test_visual_similarity_400_on_invalid_top_k(top_k):
 
 
 @pytest.mark.parametrize("min_sim", [-0.01, 1.01, 5.0])
-def test_visual_similarity_400_on_invalid_min_similarity(min_sim):
+def test_visual_similarity_400_on_invalid_min_similarity(min_sim, _build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -288,7 +301,7 @@ def test_visual_similarity_400_on_invalid_min_similarity(min_sim):
     assert "min_similarity" in resp.json()["detail"]
 
 
-def test_visual_similarity_404_when_drive_file_missing():
+def test_visual_similarity_404_when_drive_file_missing(_build_app):
     file_id = uuid4()
     app = _build_app(drive_file_obj=None)
     with TestClient(app) as client:
@@ -303,7 +316,7 @@ def test_visual_similarity_404_when_drive_file_missing():
     assert resp.status_code == 404
 
 
-def test_visual_similarity_404_when_drive_file_soft_deleted():
+def test_visual_similarity_404_when_drive_file_soft_deleted(_build_app):
     """Codex F2: soft-deleted DriveFiles must NOT be resolvable via
     these endpoints — racing a delete with an in-flight worker job
     would otherwise let the worker continue processing retired
@@ -325,7 +338,7 @@ def test_visual_similarity_404_when_drive_file_soft_deleted():
     assert resp.status_code == 404
 
 
-def test_visual_similarity_400_on_invalid_org_id_header():
+def test_visual_similarity_400_on_invalid_org_id_header(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -341,7 +354,7 @@ def test_visual_similarity_400_on_invalid_org_id_header():
     assert resp.status_code == 400
 
 
-def test_visual_similarity_drops_hits_with_missing_scene_id():
+def test_visual_similarity_drops_hits_with_missing_scene_id(_build_app):
     """OS doc with no scene_id field is silently skipped — defensive
     against schema drift / partial reads."""
     file_id = uuid4()
@@ -374,7 +387,7 @@ def test_visual_similarity_drops_hits_with_missing_scene_id():
     ]
 
 
-def test_visual_similarity_empty_results_returns_200_with_zero_scenes():
+def test_visual_similarity_empty_results_returns_200_with_zero_scenes(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_a", org_id=org_id)
@@ -395,7 +408,7 @@ def test_visual_similarity_empty_results_returns_200_with_zero_scenes():
     assert resp.json()["scenes"] == []
 
 
-def test_visual_similarity_pattern_b_header_omitted_resolves_org_from_resource():
+def test_visual_similarity_pattern_b_header_omitted_resolves_org_from_resource(_build_app):
     """Pattern B: ``X-Heimdex-Org-Id`` is OPTIONAL. Workers may omit
     it entirely; the api derives ``org_id`` from the DriveFile's own
     ``org_id`` and forwards it to OpenSearch. This test pins the
@@ -425,7 +438,7 @@ def test_visual_similarity_pattern_b_header_omitted_resolves_org_from_resource()
     assert captured["org_id"] == str(org_id)
 
 
-def test_visual_similarity_pattern_b_header_mismatch_returns_404_not_403():
+def test_visual_similarity_pattern_b_header_mismatch_returns_404_not_403(_build_app):
     """Pattern B cross-validation: caller asserts an org that doesn't
     match the resource's org. Endpoint returns 404 (not 403, not 400)
     so the response is indistinguishable from a true not-found and
@@ -451,7 +464,7 @@ def test_visual_similarity_pattern_b_header_mismatch_returns_404_not_403():
     assert resp.status_code != 403
 
 
-def test_visual_similarity_requires_bearer_token():
+def test_visual_similarity_requires_bearer_token(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -472,7 +485,7 @@ def test_visual_similarity_requires_bearer_token():
 # =====================================================================
 
 
-def test_scenes_content_returns_per_scene_transcript_and_ocr():
+def test_scenes_content_returns_per_scene_transcript_and_ocr(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_xyz", org_id=org_id)
@@ -529,7 +542,7 @@ def test_scenes_content_returns_per_scene_transcript_and_ocr():
     assert s12["ocr_text_raw"] == ""
 
 
-def test_scenes_content_drops_scene_belonging_to_other_video():
+def test_scenes_content_drops_scene_belonging_to_other_video(_build_app):
     """Defense in depth: a scene_id from another video on the same
     org must NOT be returned even if the doc_id mget happens to find
     it. Filter by video_id post-mget."""
@@ -582,7 +595,7 @@ def test_scenes_content_drops_scene_belonging_to_other_video():
     assert scenes[0]["scene_id"] == "gd_correct_scene_001"
 
 
-def test_scenes_content_passes_org_scoped_doc_ids_to_mget():
+def test_scenes_content_passes_org_scoped_doc_ids_to_mget(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
@@ -613,7 +626,7 @@ def test_scenes_content_passes_org_scoped_doc_ids_to_mget():
     ]
 
 
-def test_scenes_content_skips_missing_scene_ids():
+def test_scenes_content_skips_missing_scene_ids(_build_app):
     """A scene_id requested but not returned by mget (e.g., deleted
     or cross-org) is simply absent from the response."""
     file_id = uuid4()
@@ -655,7 +668,7 @@ def test_scenes_content_skips_missing_scene_ids():
     assert [s["scene_id"] for s in scenes] == ["gd_v_scene_001"]
 
 
-def test_scenes_content_400_on_non_list_scene_ids():
+def test_scenes_content_400_on_non_list_scene_ids(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -671,7 +684,7 @@ def test_scenes_content_400_on_non_list_scene_ids():
     assert resp.status_code == 400
 
 
-def test_scenes_content_400_on_too_many_scene_ids():
+def test_scenes_content_400_on_too_many_scene_ids(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -688,7 +701,7 @@ def test_scenes_content_400_on_too_many_scene_ids():
     assert "200" in resp.json()["detail"]
 
 
-def test_scenes_content_400_on_non_string_scene_id():
+def test_scenes_content_400_on_non_string_scene_id(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)
@@ -704,7 +717,7 @@ def test_scenes_content_400_on_non_string_scene_id():
     assert resp.status_code == 400
 
 
-def test_scenes_content_404_when_drive_file_missing():
+def test_scenes_content_404_when_drive_file_missing(_build_app):
     file_id = uuid4()
     app = _build_app(drive_file_obj=None)
     with TestClient(app) as client:
@@ -719,7 +732,7 @@ def test_scenes_content_404_when_drive_file_missing():
     assert resp.status_code == 404
 
 
-def test_scenes_content_404_when_drive_file_soft_deleted():
+def test_scenes_content_404_when_drive_file_soft_deleted(_build_app):
     """Codex F2: same as the visual-similarity counterpart — workers
     must not be able to read transcripts / OCR for a video the user
     has retired. The repo fix routes both paths through the same
@@ -738,7 +751,7 @@ def test_scenes_content_404_when_drive_file_soft_deleted():
     assert resp.status_code == 404
 
 
-def test_scenes_content_empty_scene_ids_returns_empty_list():
+def test_scenes_content_empty_scene_ids_returns_empty_list(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_v", org_id=org_id)
@@ -760,7 +773,7 @@ def test_scenes_content_empty_scene_ids_returns_empty_list():
     assert resp.json()["scenes"] == []
 
 
-def test_scenes_content_pattern_b_header_omitted_resolves_org_from_resource():
+def test_scenes_content_pattern_b_header_omitted_resolves_org_from_resource(_build_app):
     """Pattern B: header optional, org derived from the DriveFile's
     own org_id. Mirror of the visual-similarity counterpart."""
     file_id = uuid4()
@@ -789,7 +802,7 @@ def test_scenes_content_pattern_b_header_omitted_resolves_org_from_resource():
     assert captured["doc_ids"] == [f"{resource_org}:gd_pb_scene_001"]
 
 
-def test_scenes_content_pattern_b_header_mismatch_returns_404_not_403():
+def test_scenes_content_pattern_b_header_mismatch_returns_404_not_403(_build_app):
     """Pattern B cross-validation on /scenes-content."""
     file_id = uuid4()
     resource_org = uuid4()
@@ -810,7 +823,7 @@ def test_scenes_content_pattern_b_header_mismatch_returns_404_not_403():
     assert resp.status_code != 403
 
 
-def test_scenes_content_requires_bearer_token():
+def test_scenes_content_requires_bearer_token(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(drive_file_obj=drive_file)

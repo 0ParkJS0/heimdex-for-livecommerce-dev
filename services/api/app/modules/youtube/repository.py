@@ -42,6 +42,23 @@ class YouTubeChannelRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_resource_scoped(
+        self, channel_pk: UUID,
+    ) -> YouTubeChannel | None:
+        """Look up a channel by id alone — no ``org_id`` filter.
+
+        Used by the Pattern B internal-auth flow (see
+        ``app/lib/internal_auth.py``). Caller derives ``org_id`` from
+        the returned row's ``.org_id`` attribute. Specifically NOT
+        the default — Pattern A callers continue to use
+        ``get_by_id(pk, org_id)`` so this method can't accidentally
+        regress them to F1's caller-asserted org-binding.
+        """
+        result = await self.session.execute(
+            select(YouTubeChannel).where(YouTubeChannel.id == channel_pk)
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_channel_id(self, org_id: UUID, channel_id: str) -> YouTubeChannel | None:
         result = await self.session.execute(
             select(YouTubeChannel).where(
@@ -165,6 +182,16 @@ class YouTubeVideoRepository:
                 YouTubeVideo.id == video_pk,
                 YouTubeVideo.org_id == org_id,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id_resource_scoped(
+        self, video_pk: UUID,
+    ) -> YouTubeVideo | None:
+        """Pattern B lookup — see ``YouTubeChannelRepository.get_by_id_resource_scoped``
+        for the full design rationale."""
+        result = await self.session.execute(
+            select(YouTubeVideo).where(YouTubeVideo.id == video_pk)
         )
         return result.scalar_one_or_none()
 

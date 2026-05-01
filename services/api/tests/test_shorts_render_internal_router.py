@@ -54,11 +54,16 @@ def _make_drive_file(
     video_id="gd_abc123",
     proxy_s3_key="org1/drive/d1/f1/proxy.mp4",
     google_file_id="gfile_123",
+    org_id=None,
 ):
     f = MagicMock()
     f.video_id = video_id
     f.proxy_s3_key = proxy_s3_key
     f.google_file_id = google_file_id
+    # Pattern B (post-2026-05-01): the endpoint derives org_id from
+    # the resource. Default to the module-level ORG_ID so existing
+    # tests asserting that header keep matching.
+    f.org_id = org_id if org_id is not None else ORG_ID
     return f
 
 
@@ -235,6 +240,7 @@ def test_get_media_source_gdrive():
     mock_drive_repo = AsyncMock()
     drive_file = _make_drive_file()
     mock_drive_repo.get_by_video_id = AsyncMock(return_value=drive_file)
+    mock_drive_repo.get_by_video_id_resource_scoped = AsyncMock(return_value=drive_file)
 
     app = _build_app(mock_drive_file_repo=mock_drive_repo)
     with TestClient(app) as client:
@@ -272,6 +278,7 @@ def test_get_media_source_non_gdrive_returns_404():
 def test_get_media_source_not_found():
     mock_drive_repo = AsyncMock()
     mock_drive_repo.get_by_video_id = AsyncMock(return_value=None)
+    mock_drive_repo.get_by_video_id_resource_scoped = AsyncMock(return_value=None)
 
     app = _build_app(mock_drive_file_repo=mock_drive_repo)
     with TestClient(app) as client:

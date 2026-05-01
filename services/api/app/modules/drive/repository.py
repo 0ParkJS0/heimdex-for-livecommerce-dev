@@ -113,6 +113,26 @@ class DriveFileRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_video_id_resource_scoped(
+        self, video_id: str,
+    ) -> Optional[DriveFile]:
+        """Look up a DriveFile by its STRING ``video_id`` (e.g.,
+        ``gd_abc123``). No org filter — see ``get_by_id_resource_scoped``
+        for the full Pattern B rationale.
+
+        Used by the shorts_render internal endpoint
+        ``GET /{video_id}/media-source`` which receives a string id
+        from the path. Mirrors ``get_by_id_resource_scoped`` for the
+        UUID case.
+        """
+        result = await self.session.execute(
+            select(DriveFile).where(
+                DriveFile.video_id == video_id,
+                DriveFile.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_id_resource_scoped(
         self, file_id: UUID,
     ) -> Optional[DriveFile]:

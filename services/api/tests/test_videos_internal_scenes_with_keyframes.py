@@ -20,44 +20,52 @@ from fastapi.testclient import TestClient
 from app.modules.videos.internal_router import router as internal_router
 
 
-def _build_app(
-    *,
-    drive_file_obj,
-    scene_response: dict,
-    internal_token: str = "test-internal-token",
-) -> FastAPI:
+@pytest.fixture
+def _build_app(monkeypatch):
     """Build a minimal FastAPI app with mocked dependencies so the
-    endpoint can run in isolation."""
-    from app.dependencies import (
-        get_db_session,
-        get_scene_opensearch_client,
-        verify_internal_token,
-    )
+    endpoint can run in isolation. Uses ``monkeypatch`` so the
+    ``DriveFileRepository`` module-attribute override auto-reverts
+    between tests — critical so the patch doesn't bleed into other
+    test files (e.g., ``test_internal_drive_router.py``) that import
+    the real class.
+    """
 
-    fake_repo = MagicMock()
-    # Pattern B (post-2026-05-01): the endpoint now resolves DriveFiles
-    # via ``get_by_id_resource_scoped`` (no org filter) and derives
-    # org from the resource. Mock both for backward compatibility.
-    fake_repo.get_by_id_resource_scoped = AsyncMock(return_value=drive_file_obj)
-    fake_repo.get_by_id = AsyncMock(return_value=drive_file_obj)
+    def _factory(
+        *,
+        drive_file_obj,
+        scene_response: dict,
+        internal_token: str = "test-internal-token",
+    ) -> FastAPI:
+        from app.dependencies import (
+            get_db_session,
+            get_scene_opensearch_client,
+            verify_internal_token,
+        )
 
-    # The endpoint imports DriveFileRepository inside the handler.
-    # Patch the class so the in-handler instantiation returns our fake.
-    import app.modules.drive.repository as drive_repo_module
-    drive_repo_module.DriveFileRepository = MagicMock(return_value=fake_repo)  # type: ignore[assignment]
+        fake_repo = MagicMock()
+        fake_repo.get_by_id_resource_scoped = AsyncMock(return_value=drive_file_obj)
+        fake_repo.get_by_id = AsyncMock(return_value=drive_file_obj)
 
-    fake_scene_client = MagicMock()
-    fake_scene_client.get_video_scenes = AsyncMock(return_value=scene_response)
+        import app.modules.drive.repository as drive_repo_module
+        monkeypatch.setattr(
+            drive_repo_module,
+            "DriveFileRepository",
+            MagicMock(return_value=fake_repo),
+        )
 
-    app = FastAPI()
-    app.include_router(internal_router, prefix="/internal")
+        fake_scene_client = MagicMock()
+        fake_scene_client.get_video_scenes = AsyncMock(return_value=scene_response)
 
-    # Replace dependencies with deterministic stubs.
-    app.dependency_overrides[get_db_session] = lambda: AsyncMock()
-    app.dependency_overrides[get_scene_opensearch_client] = lambda: fake_scene_client
-    app.dependency_overrides[verify_internal_token] = lambda: internal_token
+        app = FastAPI()
+        app.include_router(internal_router, prefix="/internal")
 
-    return app
+        app.dependency_overrides[get_db_session] = lambda: AsyncMock()
+        app.dependency_overrides[get_scene_opensearch_client] = lambda: fake_scene_client
+        app.dependency_overrides[verify_internal_token] = lambda: internal_token
+
+        return app
+
+    return _factory
 
 
 def _drive_file(*, file_id: UUID, video_id: str = "gd_abc123", org_id: UUID | None = None):
@@ -73,7 +81,7 @@ def _drive_file(*, file_id: UUID, video_id: str = "gd_abc123", org_id: UUID | No
 
 # ---------- happy path ----------
 
-def test_returns_chronologically_ordered_scenes_with_keyframe_keys():
+def test_returns_chronologically_ordered_scenes_with_keyframe_keys(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, video_id="gd_abc123", org_id=org_id)
@@ -133,7 +141,7 @@ def test_returns_chronologically_ordered_scenes_with_keyframe_keys():
 
 # ---------- auth ----------
 
-def test_requires_bearer_token():
+def test_requires_bearer_token(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(
@@ -157,7 +165,7 @@ def test_requires_bearer_token():
 
 # ---------- 404 on missing video ----------
 
-def test_returns_404_when_drive_file_missing():
+def test_returns_404_when_drive_file_missing(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     app = _build_app(
@@ -177,7 +185,7 @@ def test_returns_404_when_drive_file_missing():
 
 # ---------- 400 on malformed org id ----------
 
-def test_returns_400_on_invalid_org_id_header():
+def test_returns_400_on_invalid_org_id_header(_build_app):
     file_id = uuid4()
     drive_file = _drive_file(file_id=file_id)
     app = _build_app(
@@ -196,7 +204,7 @@ def test_returns_400_on_invalid_org_id_header():
 
 # ---------- empty + malformed scenes ----------
 
-def test_empty_scene_list_returns_200_with_zero_scenes():
+def test_empty_scene_list_returns_200_with_zero_scenes(_build_app):
     file_id = uuid4()
     org_id = uuid4()
     drive_file = _drive_file(file_id=file_id, org_id=org_id)
@@ -219,7 +227,7 @@ def test_empty_scene_list_returns_200_with_zero_scenes():
 
 # ---------- Pattern B (post-2026-05-01) auth ----------
 
-def test_pattern_b_header_omitted_resolves_org_from_resource():
+def test_pattern_b_header_omitted_resolves_org_from_resource(_build_app):
     """Pattern B: ``X-Heimdex-Org-Id`` is OPTIONAL. The endpoint
     derives ``org_id`` from the DriveFile's own ``org_id`` and uses
     it to construct the keyframe S3 keys. This test pins the
@@ -251,7 +259,7 @@ def test_pattern_b_header_omitted_resolves_org_from_resource():
     )
 
 
-def test_pattern_b_header_mismatch_returns_404_not_403():
+def test_pattern_b_header_mismatch_returns_404_not_403(_build_app):
     """Pattern B cross-validation: asserted org doesn't match the
     resource's org → 404 (not 403, not 400) so timing doesn't reveal
     the resource's true tenant."""
@@ -275,7 +283,7 @@ def test_pattern_b_header_mismatch_returns_404_not_403():
     assert resp.status_code != 403
 
 
-def test_drops_malformed_scene_rows_silently():
+def test_drops_malformed_scene_rows_silently(_build_app):
     """A row missing scene_id should be skipped, not 500. Defensive
     against partial OpenSearch reads or schema drift."""
     file_id = uuid4()

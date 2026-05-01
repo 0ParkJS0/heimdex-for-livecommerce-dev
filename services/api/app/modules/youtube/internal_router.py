@@ -129,15 +129,19 @@ async def list_enabled_channels(
 @router.get("/channels/{channel_id}/video_ids", response_model=KnownYouTubeVideoIdsResponse)
 async def list_known_video_ids(
     channel_id: UUID,
-    x_heimdex_org_id: Annotated[str, Header(..., alias="X-Heimdex-Org-Id")],
     _token: Annotated[str, Depends(verify_internal_token)],
     channel_repo: Annotated[YouTubeChannelRepository, Depends(get_youtube_channel_repository)],
     video_repo: Annotated[YouTubeVideoRepository, Depends(get_youtube_video_repository)],
+    x_heimdex_org_id: Annotated[str | None, Header(alias="X-Heimdex-Org-Id")] = None,
 ):
-    org_id = _parse_org_id(x_heimdex_org_id)
-    channel = await channel_repo.get_by_id(channel_id, org_id)
-    if channel is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    from app.lib.internal_auth import resolve_resource_with_org
+
+    channel, org_id = await resolve_resource_with_org(
+        resource_id=channel_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=channel_repo.get_by_id_resource_scoped,
+        not_found_detail="Channel not found",
+    )
     video_ids = await video_repo.list_known_youtube_video_ids(org_id=org_id, channel_id=channel_id)
     return KnownYouTubeVideoIdsResponse(video_ids=video_ids, total=len(video_ids))
 
@@ -146,16 +150,20 @@ async def list_known_video_ids(
 async def create_video(
     channel_id: UUID,
     body: CreateYouTubeVideoRequest,
-    x_heimdex_org_id: Annotated[str, Header(..., alias="X-Heimdex-Org-Id")],
     _token: Annotated[str, Depends(verify_internal_token)],
     channel_repo: Annotated[YouTubeChannelRepository, Depends(get_youtube_channel_repository)],
     video_repo: Annotated[YouTubeVideoRepository, Depends(get_youtube_video_repository)],
     library_repo: Annotated[LibraryRepository, Depends(get_library_repository)],
+    x_heimdex_org_id: Annotated[str | None, Header(alias="X-Heimdex-Org-Id")] = None,
 ):
-    org_id = _parse_org_id(x_heimdex_org_id)
-    channel = await channel_repo.get_by_id(channel_id, org_id)
-    if channel is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    from app.lib.internal_auth import resolve_resource_with_org
+
+    channel, org_id = await resolve_resource_with_org(
+        resource_id=channel_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=channel_repo.get_by_id_resource_scoped,
+        not_found_detail="Channel not found",
+    )
 
     service = _get_service(channel_repo, video_repo, library_repo)
     video = await service.create_video_record(org_id=org_id, channel=channel, request=body)
@@ -166,14 +174,18 @@ async def create_video(
 async def mark_channel_synced(
     channel_id: UUID,
     body: SyncCompleteRequest,
-    x_heimdex_org_id: Annotated[str, Header(..., alias="X-Heimdex-Org-Id")],
     _token: Annotated[str, Depends(verify_internal_token)],
     channel_repo: Annotated[YouTubeChannelRepository, Depends(get_youtube_channel_repository)],
+    x_heimdex_org_id: Annotated[str | None, Header(alias="X-Heimdex-Org-Id")] = None,
 ):
-    org_id = _parse_org_id(x_heimdex_org_id)
-    channel = await channel_repo.get_by_id(channel_id, org_id)
-    if channel is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    from app.lib.internal_auth import resolve_resource_with_org
+
+    channel, _org_id = await resolve_resource_with_org(
+        resource_id=channel_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=channel_repo.get_by_id_resource_scoped,
+        not_found_detail="Channel not found",
+    )
 
     await channel_repo.update_last_synced_at(channel)
     await channel_repo.set_video_count(channel, body.discovered_count)
@@ -184,16 +196,20 @@ async def mark_channel_synced(
 async def update_video_status(
     video_id: UUID,
     body: UpdateYouTubeVideoStatusRequest,
-    x_heimdex_org_id: Annotated[str, Header(..., alias="X-Heimdex-Org-Id")],
     _token: Annotated[str, Depends(verify_internal_token)],
     video_repo: Annotated[YouTubeVideoRepository, Depends(get_youtube_video_repository)],
     channel_repo: Annotated[YouTubeChannelRepository, Depends(get_youtube_channel_repository)],
     library_repo: Annotated[LibraryRepository, Depends(get_library_repository)],
+    x_heimdex_org_id: Annotated[str | None, Header(alias="X-Heimdex-Org-Id")] = None,
 ):
-    org_id = _parse_org_id(x_heimdex_org_id)
-    video = await video_repo.get_by_id(video_id, org_id)
-    if video is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+    from app.lib.internal_auth import resolve_resource_with_org
+
+    video, org_id = await resolve_resource_with_org(
+        resource_id=video_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=video_repo.get_by_id_resource_scoped,
+        not_found_detail="Video not found",
+    )
 
     service = _get_service(channel_repo, video_repo, library_repo)
     service.inject_subtitle_status(
@@ -324,13 +340,17 @@ async def list_cleanup_candidates(
 @router.patch("/videos/{video_id}/mark-deleted", response_model=YouTubeVideoResponse)
 async def mark_original_deleted(
     video_id: UUID,
-    x_heimdex_org_id: Annotated[str, Header(..., alias="X-Heimdex-Org-Id")],
     _token: Annotated[str, Depends(verify_internal_token)],
     video_repo: Annotated[YouTubeVideoRepository, Depends(get_youtube_video_repository)],
+    x_heimdex_org_id: Annotated[str | None, Header(alias="X-Heimdex-Org-Id")] = None,
 ):
-    org_id = _parse_org_id(x_heimdex_org_id)
-    video = await video_repo.get_by_id(video_id, org_id)
-    if video is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+    from app.lib.internal_auth import resolve_resource_with_org
+
+    video, _org_id = await resolve_resource_with_org(
+        resource_id=video_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=video_repo.get_by_id_resource_scoped,
+        not_found_detail="Video not found",
+    )
     await video_repo.mark_original_deleted(video)
     return _to_video_response(video)

@@ -360,19 +360,34 @@ async def get_file_metadata(
     file_id: UUID,
     _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
 ):
-    """Return minimal file metadata needed by workers for processing."""
+    """Return minimal file metadata needed by workers for processing.
+
+    Auth (Pattern B, post-2026-05-01): bearer authenticates; the
+    resource's own ``org_id`` is the canonical tenant context.
+    Pre-Pattern-B this endpoint had **no** tenant binding at all —
+    a worker holding the bearer could read any file's metadata.
+    Migrated to use the shared helper so an optional
+    ``X-Heimdex-Org-Id`` header is cross-validated (404 on mismatch).
+    Also closes the soft-delete gap (F2): retired files now 404.
+    """
+    from app.lib.internal_auth import resolve_resource_with_org
+    from app.modules.drive.repository import DriveFileRepository
+
     t0 = time.monotonic()
 
-    result = await db.execute(
-        select(DriveFile).where(DriveFile.id == file_id)
+    repo = DriveFileRepository(db)
+
+    async def _lookup(rid: UUID):
+        return await repo.get_by_id_resource_scoped(file_id=rid)
+
+    drive_file, _org_id = await resolve_resource_with_org(
+        resource_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=_lookup,
+        not_found_detail=f"Drive file not found: {file_id}",
     )
-    drive_file = result.scalar_one_or_none()
-    if drive_file is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail=f"Drive file not found: {file_id}",
-        )
 
     latency_ms = int((time.monotonic() - t0) * 1000)
     logger.info(

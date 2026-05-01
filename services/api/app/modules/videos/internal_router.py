@@ -196,54 +196,30 @@ async def _resolve_drive_file_with_org(
     x_heimdex_org_id: str | None,
     db: AsyncSession,
 ) -> tuple[Any, UUID]:
-    """Look up a DriveFile by id (resource-scoped) and return it
-    along with the tenant ``org_id`` derived from the resource.
+    """Pattern B resolver for DriveFiles. Thin wrapper over the
+    shared ``app.lib.internal_auth.resolve_resource_with_org`` helper
+    so this file's three endpoints (and any new ones) get identical
+    semantics with the rest of the platform sweep.
 
-    If ``x_heimdex_org_id`` is provided, it is **cross-validated** as a
-    soft check: a mismatch with ``drive_file.org_id`` raises a 404 (NOT
-    400 or 403 — same response as not-found, so timing doesn't reveal
-    the resource's true tenant).
-
-    Returns ``(drive_file, org_id)``. Raises ``HTTPException`` for:
-      * 400 — header present but not a valid UUID
-      * 404 — file not found / soft-deleted / cross-org mismatch
-
-    Centralizing the cross-validation here keeps the three endpoints
-    using identical semantics; new endpoints copy-paste a single
-    helper call instead of re-implementing the pattern (and getting
-    it subtly wrong).
+    Look up by id alone (no org filter) — the resource's ``org_id``
+    is the canonical tenant context. ``x_heimdex_org_id`` (when sent)
+    is a soft cross-validation that 404s on mismatch. See the helper's
+    docstring for the full design rationale + non-negotiables.
     """
+    from app.lib.internal_auth import resolve_resource_with_org
     from app.modules.drive.repository import DriveFileRepository
 
-    asserted_org_id: UUID | None = None
-    if x_heimdex_org_id is not None:
-        try:
-            asserted_org_id = UUID(x_heimdex_org_id)
-        except (ValueError, AttributeError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
-            )
+    repo = DriveFileRepository(db)
 
-    drive_file = await DriveFileRepository(db).get_by_id_resource_scoped(
-        file_id=file_id,
+    async def _lookup(rid: UUID):
+        return await repo.get_by_id_resource_scoped(file_id=rid)
+
+    return await resolve_resource_with_org(
+        resource_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=_lookup,
+        not_found_detail="video not found",
     )
-    if drive_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="video not found",
-        )
-
-    if asserted_org_id is not None and asserted_org_id != drive_file.org_id:
-        # Cross-tenant access attempt. 404 (not 403) so the response
-        # is indistinguishable from a genuine not-found — does not
-        # confirm whether the file_id exists in any tenant.
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="video not found",
-        )
-
-    return drive_file, drive_file.org_id
 
 
 @router.get("/{file_id}/scenes-with-keyframes")
