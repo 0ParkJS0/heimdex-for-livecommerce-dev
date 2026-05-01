@@ -83,16 +83,21 @@ async def update_render_status(
 @router.get("/{video_id}/media-source", response_model=MediaSourceResponse)
 async def get_media_source(
     video_id: str,
-    x_heimdex_org_id: Annotated[str, Header(..., alias="X-Heimdex-Org-Id")],
     _token: Annotated[str, Depends(verify_internal_token)],
     drive_file_repo: Annotated[DriveFileRepository, Depends(get_drive_file_repository)],
+    x_heimdex_org_id: Annotated[str | None, Header(alias="X-Heimdex-Org-Id")] = None,
 ):
     """Returns the media source info for the video.
 
     For gdrive videos (gd_ prefix): returns proxy S3 key from DriveFile.
     For other source types: returns 404 (extend as needed).
+
+    Auth (Pattern B, post-2026-05-01): bearer authenticates the call;
+    the resource's ``org_id`` is the canonical tenant context.
+    ``X-Heimdex-Org-Id`` is OPTIONAL and treated as a cross-validation
+    only — see ``app/lib/internal_auth.py``.
     """
-    org_id = _parse_org_id(x_heimdex_org_id)
+    from app.lib.internal_auth import resolve_resource_with_org
 
     if not video_id.startswith("gd_"):
         raise HTTPException(
@@ -100,12 +105,12 @@ async def get_media_source(
             detail=f"Unsupported video source type for video_id: {video_id}",
         )
 
-    drive_file = await drive_file_repo.get_by_video_id(org_id, video_id)
-    if drive_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Video not found: {video_id}",
-        )
+    drive_file, _org_id = await resolve_resource_with_org(
+        resource_id=video_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        lookup_fn=drive_file_repo.get_by_video_id_resource_scoped,
+        not_found_detail=f"Video not found: {video_id}",
+    )
 
     return MediaSourceResponse(
         video_id=video_id,
