@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from typing import Any
 from uuid import UUID
 
@@ -160,10 +161,95 @@ async def update_reprocess_status(
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Pattern B internal-auth helper
+# ---------------------------------------------------------------------------
+#
+# Three of this file's endpoints (scenes-with-keyframes, scenes-by-visual-
+# similarity, scenes-content) authenticate workers via the shared internal
+# bearer and then need to scope their work to a specific tenant. Until 2026-
+# 05-01 they did this with **Pattern A**: caller asserts the tenant via the
+# ``X-Heimdex-Org-Id`` header, and the repo lookup filters by both
+# ``file_id`` AND the asserted ``org_id`` so an attacker faking the header
+# gets a 404. That works as long as the (file_id, org_id) pair can't leak
+# together — fragile, easy to regress, and inconsistent with how the
+# blur / shorts_auto_product internal endpoints already operate.
+#
+# Codex adversarial review F1 (2026-05-01) flagged this as a multi-tenant
+# isolation gap. Fix: migrate to **Pattern B** — bearer authenticates the
+# call; the resource's own ``org_id`` is the canonical tenant context;
+# the asserted header becomes an OPTIONAL cross-validation that returns
+# 404 (not 400) on mismatch so timing doesn't leak the correct org.
+#
+# Workers continue to send the header (no worker code changes), so this
+# is fully backward-compatible. Future endpoints in this file should use
+# the helper; future endpoints elsewhere should look at this as the
+# template for the platform sweep tracked separately.
+#
+# Specifically NOT applied to YouTube paths in this file (``_resolve_file_id``,
+# delete/reprocess endpoints) — those have separate threat models /
+# behavioral contracts and migrate in their own PR.
+
+async def _resolve_drive_file_with_org(
+    *,
+    file_id: UUID,
+    x_heimdex_org_id: str | None,
+    db: AsyncSession,
+) -> tuple[Any, UUID]:
+    """Look up a DriveFile by id (resource-scoped) and return it
+    along with the tenant ``org_id`` derived from the resource.
+
+    If ``x_heimdex_org_id`` is provided, it is **cross-validated** as a
+    soft check: a mismatch with ``drive_file.org_id`` raises a 404 (NOT
+    400 or 403 — same response as not-found, so timing doesn't reveal
+    the resource's true tenant).
+
+    Returns ``(drive_file, org_id)``. Raises ``HTTPException`` for:
+      * 400 — header present but not a valid UUID
+      * 404 — file not found / soft-deleted / cross-org mismatch
+
+    Centralizing the cross-validation here keeps the three endpoints
+    using identical semantics; new endpoints copy-paste a single
+    helper call instead of re-implementing the pattern (and getting
+    it subtly wrong).
+    """
+    from app.modules.drive.repository import DriveFileRepository
+
+    asserted_org_id: UUID | None = None
+    if x_heimdex_org_id is not None:
+        try:
+            asserted_org_id = UUID(x_heimdex_org_id)
+        except (ValueError, AttributeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
+            )
+
+    drive_file = await DriveFileRepository(db).get_by_id_resource_scoped(
+        file_id=file_id,
+    )
+    if drive_file is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="video not found",
+        )
+
+    if asserted_org_id is not None and asserted_org_id != drive_file.org_id:
+        # Cross-tenant access attempt. 404 (not 403) so the response
+        # is indistinguishable from a genuine not-found — does not
+        # confirm whether the file_id exists in any tenant.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="video not found",
+        )
+
+    return drive_file, drive_file.org_id
+
+
 @router.get("/{file_id}/scenes-with-keyframes")
 async def get_scenes_with_keyframes(
     file_id: UUID,
-    x_heimdex_org_id: str = Header(..., alias="X-Heimdex-Org-Id"),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
     _token: str = Depends(_verify_internal_token),
     db: AsyncSession = Depends(get_db_session),
     scene_client: SceneSearchClient = Depends(get_scene_opensearch_client),
@@ -180,10 +266,11 @@ async def get_scenes_with_keyframes(
     independently (drift between them would silently produce 404s on
     the worker side).
 
-    Bearer-authed via the shared internal token. Org context comes
-    from the ``X-Heimdex-Org-Id`` header — same pattern as the other
-    internal endpoints in this file. Cross-org access returns 404
-    (no info leak between not-found and forbidden).
+    Auth (Pattern B, post-2026-05-01): bearer authenticates the call;
+    the resource's ``org_id`` is the canonical tenant context.
+    ``X-Heimdex-Org-Id`` is OPTIONAL and treated as a cross-validation
+    only — a mismatch returns 404 (not 403) so timing doesn't leak the
+    correct tenant. See module-level helper docstring for rationale.
 
     Response shape (stable; both workers depend on it)::
 
@@ -203,26 +290,13 @@ async def get_scenes_with_keyframes(
           ]
         }
     """
-    try:
-        org_id = UUID(x_heimdex_org_id)
-    except (ValueError, AttributeError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid X-Heimdex-Org-Id: {x_heimdex_org_id!r}",
-        )
-
     from app.modules.drive.keys import enrichment_keyframe_s3_key
-    from app.modules.drive.repository import DriveFileRepository
 
-    # Resolve DriveFile (org-scoped — cross-org access returns 404).
-    drive_file = await DriveFileRepository(db).get_by_id(
-        file_id=file_id, org_id=org_id,
+    drive_file, org_id = await _resolve_drive_file_with_org(
+        file_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        db=db,
     )
-    if drive_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="video not found",
-        )
     video_id_str: str = drive_file.video_id
 
     # Pull all scenes for this video. ``page_size`` is generous —
@@ -274,6 +348,256 @@ async def get_scenes_with_keyframes(
         "total_duration_ms": total_duration_ms,
         "scenes": enriched,
     }
+
+
+@router.post("/{file_id}/scenes-by-visual-similarity")
+async def scenes_by_visual_similarity(
+    file_id: UUID,
+    body: dict[str, Any] = Body(...),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
+    _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
+    scene_client: SceneSearchClient = Depends(get_scene_opensearch_client),
+):
+    """Phase 3b — OpenSearch coarse pre-filter for the
+    ``shorts-auto-product`` track worker.
+
+    Given a 768-dim SigLIP2 embedding of the canonical product crop,
+    return the top-K scenes from the same video ranked by cosine
+    similarity to that vector. The track worker then locally
+    re-embeds each candidate's keyframe for a precise pass before
+    handing off to SAM2.
+
+    Pre-filter is **per-video** (not per-org) — the canonical crop is
+    derived from one specific video, so cross-video matches don't
+    apply at v1. Cross-video product matching is v2 (per locked
+    decisions in shorts-auto-product-v2 plan).
+
+    Body shape::
+
+        {
+          "query_vec": [768 floats; SigLIP2 base/256 L2-normalized],
+          "top_k": int (1..200),
+          "min_similarity": float (0..1) — drops sub-threshold hits
+                                            BEFORE returning so the
+                                            worker doesn't have to.
+        }
+
+    Response shape::
+
+        {
+          "video_id": "gd_<...>",
+          "scenes": [
+            {"scene_id": "gd_<...>_scene_007", "similarity": 0.81},
+            ...
+          ]
+        }
+
+    Auth (Pattern B): bearer authenticates the call; the resource's
+    ``org_id`` is the canonical tenant context. ``X-Heimdex-Org-Id``
+    is OPTIONAL and treated as a cross-validation only — see
+    ``_resolve_drive_file_with_org`` docstring.
+    """
+    query_vec = body.get("query_vec")
+    if not isinstance(query_vec, list) or not query_vec:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="query_vec must be a non-empty list of floats",
+        )
+    if len(query_vec) != scene_client.VISUAL_EMBEDDING_DIMENSION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"query_vec length {len(query_vec)} does not match the "
+                f"deployed visual embedding dimension "
+                f"{scene_client.VISUAL_EMBEDDING_DIMENSION} "
+                f"(SigLIP2 base/256 — drift between worker and api "
+                f"would silently produce nonsense rankings)"
+            ),
+        )
+    # Per-element validation. Length-only validation lets payloads
+    # with strings, booleans, or non-finite floats (NaN/inf) reach
+    # OpenSearch unchanged — best case 500s on serialization, worst
+    # case 200 with undefined ranking. ``bool`` is a subclass of
+    # ``int`` in Python so we exclude it explicitly.
+    for i, val in enumerate(query_vec):
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(val)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"query_vec[{i}] must be a finite number "
+                    f"(got {type(val).__name__}={val!r})"
+                ),
+            )
+
+    try:
+        top_k = int(body.get("top_k", 60))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="top_k must be an int",
+        )
+    if top_k < 1 or top_k > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="top_k must be in [1, 200]",
+        )
+
+    try:
+        min_similarity = float(body.get("min_similarity", 0.0))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="min_similarity must be a float",
+        )
+    if min_similarity < 0.0 or min_similarity > 1.0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="min_similarity must be in [0, 1]",
+        )
+
+    drive_file, org_id = await _resolve_drive_file_with_org(
+        file_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        db=db,
+    )
+
+    hits = await scene_client.search_visual_vector_in_video(
+        visual_embedding=query_vec,
+        org_id=str(org_id),
+        video_id=drive_file.video_id,
+        size=top_k,
+    )
+
+    scenes: list[dict[str, Any]] = []
+    for hit in hits:
+        score = float(hit.get("_score", 0.0))
+        if score < min_similarity:
+            continue
+        source = hit.get("_source", {}) or {}
+        scene_id = source.get("scene_id")
+        if not scene_id:
+            # Defensive — every doc should have a scene_id field;
+            # skip silently rather than 500 the worker.
+            continue
+        scenes.append({"scene_id": scene_id, "similarity": score})
+
+    return {"video_id": drive_file.video_id, "scenes": scenes}
+
+
+@router.post("/{file_id}/scenes-content")
+async def scenes_content(
+    file_id: UUID,
+    body: dict[str, Any] = Body(...),
+    x_heimdex_org_id: str | None = Header(default=None, alias="X-Heimdex-Org-Id"),
+    _token: str = Depends(_verify_internal_token),
+    db: AsyncSession = Depends(get_db_session),
+    scene_client: SceneSearchClient = Depends(get_scene_opensearch_client),
+):
+    """Phase 3b — bulk fetch transcripts + OCR for a list of
+    scene_ids.
+
+    The product track worker calls this AFTER the coarse pre-filter
+    has narrowed candidates to ~5-10 scenes. Pulling transcripts +
+    OCR for those scenes lets the alignment lib annotate windows
+    with ``has_narration_mention`` + ``has_ocr_overlap``.
+
+    Returning per-scene scope rather than per-utterance is intentional:
+    OpenSearch scene docs store transcript_raw / ocr_text_raw as full
+    strings without per-utterance temporal bounds. The alignment lib
+    treats segments without bounds as covering the whole scene
+    (correct for the v1 product track use case where windows are
+    always within scene bounds anyway).
+
+    Body shape::
+
+        {
+          "scene_ids": ["gd_<...>_scene_007", "gd_<...>_scene_012", ...]
+        }
+
+    Response shape::
+
+        {
+          "video_id": "gd_<...>",
+          "scenes": [
+            {
+              "scene_id": "gd_<...>_scene_007",
+              "start_ms": 5000,
+              "end_ms": 10000,
+              "transcript_raw": "...",
+              "speaker_transcript": "...",
+              "ocr_text_raw": "..."
+            },
+            ...
+          ]
+        }
+
+    Cross-org / cross-video doc IDs are silently dropped (the
+    constructed doc_id is org-scoped via the ``{org_id}:{scene_id}``
+    prefix, so a scene_id from another org just doesn't match).
+
+    Auth (Pattern B): bearer authenticates the call; the resource's
+    ``org_id`` is the canonical tenant context. ``X-Heimdex-Org-Id``
+    is OPTIONAL and treated as a cross-validation only — see
+    ``_resolve_drive_file_with_org`` docstring.
+    """
+    scene_ids = body.get("scene_ids")
+    if not isinstance(scene_ids, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="scene_ids must be a list",
+        )
+    if len(scene_ids) > 200:
+        # Same per-call cap as the existing scenes-with-keyframes
+        # endpoint's page_size — protects OS from a worker requesting
+        # tens of thousands of scenes in one call.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="scene_ids may not exceed 200 entries per call",
+        )
+    if not all(isinstance(s, str) and s for s in scene_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="scene_ids must be a list of non-empty strings",
+        )
+
+    drive_file, org_id = await _resolve_drive_file_with_org(
+        file_id=file_id,
+        x_heimdex_org_id=x_heimdex_org_id,
+        db=db,
+    )
+
+    # Build the org-scoped doc_ids the OS index uses.
+    doc_ids = [f"{org_id}:{scene_id}" for scene_id in scene_ids]
+    raw = await scene_client.mget_scenes(doc_ids)
+
+    out: list[dict[str, Any]] = []
+    for scene_id in scene_ids:
+        doc_id = f"{org_id}:{scene_id}"
+        source = raw.get(doc_id)
+        if source is None:
+            # Scene not found (cross-org / typo / deleted) — skip.
+            continue
+        # Defense in depth: the doc_id prefix already org-scopes, but
+        # also check the scene actually belongs to the requested
+        # video so a typo'd scene_id from another video on the same
+        # org doesn't leak.
+        if source.get("video_id") != drive_file.video_id:
+            continue
+        out.append({
+            "scene_id": source.get("scene_id", scene_id),
+            "start_ms": int(source.get("start_ms", 0) or 0),
+            "end_ms": int(source.get("end_ms", 0) or 0),
+            "transcript_raw": source.get("transcript_raw") or "",
+            "speaker_transcript": source.get("speaker_transcript") or "",
+            "ocr_text_raw": source.get("ocr_text_raw") or "",
+        })
+
+    return {"video_id": drive_file.video_id, "scenes": out}
 
 
 async def _resolve_file_id(

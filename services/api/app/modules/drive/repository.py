@@ -96,10 +96,56 @@ class DriveFileRepository:
         self.session = session
 
     async def get_by_id(self, file_id: UUID, org_id: UUID) -> Optional[DriveFile]:
+        # Filters out soft-deleted files to match the repository's
+        # other lookup methods (get_by_video_id at L107, list_by_org,
+        # etc.) Callers are all internal endpoints serving GPU workers
+        # (Phase 2.5a scenes-with-keyframes + Phase 3b
+        # scenes-by-visual-similarity / scenes-content) — none should
+        # resolve deleted files. Resolving them would let workers
+        # continue processing a file the user already retired (race
+        # window between delete + worker picking up an in-flight job).
         result = await self.session.execute(
             select(DriveFile).where(
                 DriveFile.id == file_id,
                 DriveFile.org_id == org_id,
+                DriveFile.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id_resource_scoped(
+        self, file_id: UUID,
+    ) -> Optional[DriveFile]:
+        """Look up a DriveFile by id alone (NO org_id filter).
+
+        Used by internal endpoints implementing **Pattern B** auth:
+        the bearer token authenticates the call, and the resource's
+        own ``org_id`` is the canonical tenant context. Endpoints
+        derive ``drive_file.org_id`` from the returned row and
+        optionally cross-validate it against any caller-asserted
+        ``X-Heimdex-Org-Id`` header.
+
+        Distinct from ``get_by_id`` (which requires an asserted
+        org_id) so callers can't accidentally pick up the
+        resource-scoped variant when they meant to use the safer
+        org-filtered one. Specifically NOT a default — Pattern A
+        callers (where the org assertion IS the security boundary)
+        continue to use ``get_by_id``.
+
+        Threat model: a compromised worker holding the shared
+        internal bearer can call this method with a guessed UUID,
+        but UUIDs are 128-bit so guessing is not a practical attack
+        surface. The resource lookup is the canonical authorization
+        boundary; the asserted header is at most a redundancy
+        check.
+
+        Soft-delete filtering matches the rest of this repository's
+        lookup methods. See ``get_by_id`` for the same rationale.
+        """
+        result = await self.session.execute(
+            select(DriveFile).where(
+                DriveFile.id == file_id,
+                DriveFile.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()
