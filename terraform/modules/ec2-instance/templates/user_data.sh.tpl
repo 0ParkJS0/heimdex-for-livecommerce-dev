@@ -22,7 +22,11 @@ fi
 
 # ── Create directories ──────────────────────────────────
 mkdir -p /opt/heimdex/logs
-mkdir -p $APP_DIR
+
+# ── Git clone ────────────────────────────────────────────
+if [ ! -d "$APP_DIR/.git" ]; then
+  git clone -b ${git_branch} ${git_repo} $APP_DIR
+fi
 
 # ── Generate .env (config values + SSM params) ──────────
 cat > $APP_DIR/.env << 'ENVEOF'
@@ -41,10 +45,5 @@ if [ -n "$VALUE" ]; then
   echo "${param_name}=$VALUE" >> $APP_DIR/.env
 fi
 %{ endfor ~}
-
-# ── Git clone ────────────────────────────────────────────
-if [ ! -d "$APP_DIR/.git" ]; then
-  git clone ${git_repo} $APP_DIR
-fi
 
 chown -R ec2-user:ec2-user /opt/heimdex

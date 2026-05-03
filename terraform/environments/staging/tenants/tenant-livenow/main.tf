@@ -32,7 +32,6 @@ locals {
     "GOOGLE_OAUTH_CLIENT_SECRET",
     "MINIO_ACCESS_KEY",
     "MINIO_SECRET_KEY",
-    "GPG_KEY",
     "HF_ACCESS_TOKEN",
     "LLAMA_CAPTION_API_KEY",
     # Service URLs (kept in SSM to prevent exposure)
@@ -65,7 +64,7 @@ locals {
 # EC2 — import target: i-0aed1a453c71eac46
 # ============================================
 module "ec2" {
-  source = "../../../modules/ec2-instance"
+  source = "../../../../modules/ec2-instance"
 
   ami                  = "ami-0dec6548c7c0d0a96"
   instance_type        = "t3.xlarge"
@@ -78,13 +77,14 @@ module "ec2" {
   environment      = "staging"
   client_name      = "livenow"
 
-  user_data = templatefile("${path.module}/../../../modules/ec2-instance/templates/user_data.sh.tpl", {
+  user_data = templatefile("${path.module}/../../../../modules/ec2-instance/templates/user_data.sh.tpl", {
     client_name     = "livenow"
     env_content     = local.env_content
     ssm_param_names = local.ssm_param_names
     ssm_prefix      = "/heimdex/staging/tenants/livenow"
     region          = "ap-northeast-2"
     git_repo        = "git@github.com:jlee-heimdex/heimdex-for-livecommerce-dev.git"
+    git_branch      = "main"
   })
 }
 

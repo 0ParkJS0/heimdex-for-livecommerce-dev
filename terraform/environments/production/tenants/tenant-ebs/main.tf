@@ -32,7 +32,6 @@ locals {
     "GOOGLE_OAUTH_CLIENT_SECRET",
     "MINIO_ACCESS_KEY",
     "MINIO_SECRET_KEY",
-    "GPG_KEY",
     "HF_ACCESS_TOKEN",
     "LLAMA_CAPTION_API_KEY",
     # Service URLs (kept in SSM to prevent exposure)
@@ -65,26 +64,27 @@ locals {
 # EC2 — new instance (no import target)
 # ============================================
 module "ec2" {
-  source = "../../../modules/ec2-instance"
+  source = "../../../../modules/ec2-instance"
 
   ami                  = "ami-0ac22ed9e7ba4d3bd"
   instance_type        = "t3.large"
   key_name             = "livenow-prod-key"
   subnet_id            = data.terraform_remote_state.common.outputs.subnet_id
   security_group_ids   = [data.terraform_remote_state.common.outputs.ec2_security_group_id]
-  iam_instance_profile = "livenow-prod-ec2-role"
+  iam_instance_profile = "livenow-prod-ec2-profile"
 
   root_volume_size = 80
   environment      = "production"
   client_name      = "ebs"
 
-  user_data = templatefile("${path.module}/../../../modules/ec2-instance/templates/user_data.sh.tpl", {
+  user_data = templatefile("${path.module}/../../../../modules/ec2-instance/templates/user_data.sh.tpl", {
     client_name     = "ebs"
     env_content     = local.env_content
     ssm_param_names = local.ssm_param_names
     ssm_prefix      = "/heimdex/prod/tenants/ebs"
     region          = "ap-northeast-2"
     git_repo        = "git@github.com:jlee-heimdex/heimdex-for-livecommerce-dev.git"
+    git_branch      = "feature/terraform-iac"
   })
 
   extra_tags = {

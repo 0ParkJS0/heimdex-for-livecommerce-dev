@@ -12,7 +12,8 @@ resource "aws_instance" "this" {
     delete_on_termination = false
   }
 
-  user_data = var.user_data
+  user_data_base64            = base64gzip(var.user_data)
+  user_data_replace_on_change = false
 
   tags = merge(var.extra_tags, {
     Name        = "heimdex-${var.environment}-${var.client_name}"
@@ -26,7 +27,7 @@ resource "aws_instance" "this" {
     prevent_destroy = true
     ignore_changes = [
       ami,
-      user_data,
+      user_data_base64,
       key_name,
       subnet_id,
       availability_zone,

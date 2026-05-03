@@ -141,9 +141,9 @@ resource "aws_db_instance" "main" {
   parameter_group_name   = "default.postgres16"
   ca_cert_identifier     = "rds-ca-rsa2048-g1"
 
-  backup_retention_period   = 7
-  preferred_backup_window   = "18:00-19:00"
-  preferred_maintenance_window = "sun:16:00-sun:17:00"
+  backup_retention_period = 7
+  backup_window           = "18:00-19:00"
+  maintenance_window      = "sun:16:00-sun:17:00"
   auto_minor_version_upgrade   = true
   copy_tags_to_snapshot        = false
 
