@@ -68,14 +68,27 @@ def _build_app(monkeypatch):
     return _factory
 
 
-def _drive_file(*, file_id: UUID, video_id: str = "gd_abc123", org_id: UUID | None = None):
+def _drive_file(
+    *,
+    file_id: UUID,
+    video_id: str = "gd_abc123",
+    org_id: UUID | None = None,
+    proxy_s3_key: str | None = "tenant-uuid/drive/drive-uuid/gfid/proxy.mp4",
+):
     """Mocked DriveFile row. Pattern B endpoint derives ``org_id``
     from the resource itself, so the test fixture must populate
-    ``obj.org_id`` (not just rely on the asserted header)."""
+    ``obj.org_id`` (not just rely on the asserted header).
+
+    ``proxy_s3_key`` defaults to a stable canonical-shaped value so
+    the existing tests' assertions stay decoupled from this PR's
+    new field. Tests that exercise the null path pass
+    ``proxy_s3_key=None`` explicitly.
+    """
     obj = MagicMock()
     obj.id = file_id
     obj.video_id = video_id
     obj.org_id = org_id if org_id is not None else uuid4()
+    obj.proxy_s3_key = proxy_s3_key
     return obj
 
 
@@ -121,6 +134,10 @@ def test_returns_chronologically_ordered_scenes_with_keyframe_keys(_build_app):
     assert body["video_id"] == "gd_abc123"
     assert body["drive_file_id"] == str(file_id)
     assert body["total_duration_ms"] == 60000
+    # ``proxy_s3_key`` is the canonical mp4 path the worker downloads
+    # once per job. Verbatim mirror of ``DriveFile.proxy_s3_key`` —
+    # never reconstruct in the endpoint.
+    assert body["proxy_s3_key"] == "tenant-uuid/drive/drive-uuid/gfid/proxy.mp4"
 
     scenes = body["scenes"]
     assert [s["scene_id"] for s in scenes] == [
@@ -312,3 +329,62 @@ def test_drops_malformed_scene_rows_silently(_build_app):
     assert {s["scene_id"] for s in body["scenes"]} == {
         "gd_x_scene_001", "gd_x_scene_002",
     }
+
+
+# ---------- proxy_s3_key field ----------
+
+def test_proxy_s3_key_is_null_when_drivefile_has_no_proxy(_build_app):
+    """Transcode-incomplete videos have ``proxy_s3_key=None`` on the
+    DriveFile row. The endpoint passes through verbatim — null,
+    not omitted. Worker maps this to a clean ``proxy_missing`` fail
+    rather than the opaque ``internal_error``."""
+    file_id = uuid4()
+    org_id = uuid4()
+    drive_file = _drive_file(file_id=file_id, org_id=org_id, proxy_s3_key=None)
+    app = _build_app(
+        drive_file_obj=drive_file, scene_response={"scenes": []},
+    )
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/internal/videos/{file_id}/scenes-with-keyframes",
+            headers={
+                "Authorization": "Bearer test-internal-token",
+                "X-Heimdex-Org-Id": str(org_id),
+            },
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "proxy_s3_key" in body, "field must be present (explicit null), not omitted"
+    assert body["proxy_s3_key"] is None
+
+
+def test_proxy_s3_key_passes_through_canonical_drive_path_unchanged(_build_app):
+    """Canonical layout: ``{org_id}/drive/{drive_id}/{google_file_id}/proxy.mp4``
+    (heimdex_worker_sdk.drive_keys.proxy_s3_key). The endpoint does
+    NOT reconstruct — it mirrors the DB column verbatim — so the
+    test asserts the raw string is echoed regardless of shape. This
+    locks the contract that no endpoint-side path massaging happens
+    (drift between transcode-write and track-read would silently
+    404 every download)."""
+    file_id = uuid4()
+    org_id = uuid4()
+    canonical_key = (
+        f"{org_id}/drive/2d0a3f2e-9999-4321-aaaa-111111111111/"
+        f"1A2BcDeF_googleFileId/proxy.mp4"
+    )
+    drive_file = _drive_file(
+        file_id=file_id, org_id=org_id, proxy_s3_key=canonical_key,
+    )
+    app = _build_app(
+        drive_file_obj=drive_file, scene_response={"scenes": []},
+    )
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/internal/videos/{file_id}/scenes-with-keyframes",
+            headers={
+                "Authorization": "Bearer test-internal-token",
+                "X-Heimdex-Org-Id": str(org_id),
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["proxy_s3_key"] == canonical_key
