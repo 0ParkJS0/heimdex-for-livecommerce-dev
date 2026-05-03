@@ -135,12 +135,38 @@ function ParentProgress({
           className="rounded-md bg-red-50 p-2 text-xs text-red-700"
           data-testid="parent-error"
         >
-          오류: {parent.error_code}
-          {parent.error_message ? ` — ${parent.error_message}` : ""}
+          {friendlyParentError(parent.error_code, parent.error_message)}
         </p>
       ) : null}
     </div>
   );
+}
+
+/**
+ * Map known parent-job error codes to user-facing Korean messages.
+ * Unknown codes fall back to the raw code + message so a backend
+ * regression that adds a new code surfaces visibly rather than
+ * disappearing into a generic "오류" blob.
+ *
+ * Exported for unit tests; not used elsewhere in the file.
+ */
+export function friendlyParentError(
+  errorCode: string,
+  errorMessage: string | null,
+): string {
+  switch (errorCode) {
+    case "proxy_missing":
+      // Transcode hasn't completed for this video yet. The user
+      // sees this when they pick a video whose drive proxy hasn't
+      // been written (or was deleted). Backend message names the
+      // file_id, which isn't useful to users — drop it here.
+      return (
+        "이 영상은 아직 트랜스코딩이 완료되지 않았어요. 영상 목록에서 " +
+        "체크 표시가 뜬 다음 다시 시도해 주세요."
+      );
+    default:
+      return `오류: ${errorCode}${errorMessage ? ` — ${errorMessage}` : ""}`;
+  }
 }
 
 interface ChildListProps {
