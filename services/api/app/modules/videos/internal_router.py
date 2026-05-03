@@ -254,6 +254,7 @@ async def get_scenes_with_keyframes(
           "video_id": "gd_<...>",        # string id used by OS
           "drive_file_id": "<uuid>",
           "total_duration_ms": <int>,    # max(end_ms) across scenes
+          "proxy_s3_key": "<org>/drive/<drive>/<gfid>/proxy.mp4" | null,
           "scenes": [
             {
               "scene_id": "gd_<...>_scene_007",
@@ -265,6 +266,16 @@ async def get_scenes_with_keyframes(
             ...
           ]
         }
+
+    ``proxy_s3_key`` mirrors ``DriveFile.proxy_s3_key`` verbatim
+    (canonical path written by drive-transcode-worker via
+    ``heimdex_worker_sdk.drive_keys.proxy_s3_key``). It is ``None``
+    when transcode hasn't completed for this video; callers should
+    treat that as a terminal "not ready" state rather than retry —
+    the field only flips populated after a successful transcode.
+    The product-track-worker uses this field to download the full
+    proxy ONCE per job and slice scene windows in-memory, instead
+    of reaching for a per-scene mp4 (which doesn't exist).
     """
     from app.modules.drive.keys import enrichment_keyframe_s3_key
 
@@ -322,6 +333,10 @@ async def get_scenes_with_keyframes(
         "video_id": video_id_str,
         "drive_file_id": str(file_id),
         "total_duration_ms": total_duration_ms,
+        # ``DriveFile.proxy_s3_key`` is nullable — None means transcode
+        # hasn't completed. Pass through verbatim; callers (product-
+        # track-worker) decide how to surface that to the user.
+        "proxy_s3_key": drive_file.proxy_s3_key,
         "scenes": enriched,
     }
 
