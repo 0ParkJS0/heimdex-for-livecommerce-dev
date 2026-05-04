@@ -420,7 +420,13 @@ class TestSam2TrackerImplHappyPath:
         # Frame dimensions propagated through.
         assert all(s.frame_width == 320 and s.frame_height == 240 for s in samples)
         # Confidence taken from masks.score per-frame.
-        assert all(0.9 < s.mask_confidence <= 1.0 for s in samples)
+        # ``mask_confidence`` is mean-sigmoid of the predicted mask
+        # logits in v5; with our test mask (3600 of 76800 pixels
+        # set to 1, rest to 0) the mean lands around 0.51. The
+        # important contract is the API-schema range [0, 1] —
+        # negative confidences would 422 at /complete (incident
+        # 2026-05-04 parent_job_id 1b6a4def).
+        assert all(0.0 <= s.mask_confidence <= 1.0 for s in samples)
 
 
 # =====================================================================

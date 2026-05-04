@@ -306,21 +306,30 @@ class Sam2TrackerImpl:
                 # We added exactly one object (obj_id=1), so the
                 # first dim of ``pred_masks`` is "this video" and
                 # the second is "this object".
-                mask_t = output.pred_masks[0, 0]
-                # Confidence: prefer iou_scores when SAM2 emits
-                # them on the output object; otherwise fall back
-                # to mean-of-mask. Conservative default; calibration
-                # can tighten later.
-                iou_attr = getattr(output, "iou_scores", None)
-                if iou_attr is not None:
-                    try:
-                        mask_conf = float(iou_attr.flatten()[0].item())
-                    except Exception:  # noqa: BLE001
-                        mask_conf = float(mask_t.float().mean().item())
-                else:
-                    mask_conf = float(mask_t.float().mean().item())
-                mask_np = mask_t.detach().cpu().numpy()
-                bbox = _mask_to_bbox(mask_np)
+                #
+                # ``pred_masks`` are LOGITS in v5 (verified by the
+                # 2026-05-04 422 from /complete: every appearance's
+                # ``avg_confidence`` was negative because we were
+                # taking ``mean(logits)`` instead of
+                # ``mean(sigmoid(logits))``). Convert to
+                # probabilities for the confidence aggregate, and
+                # threshold at logit>0 (== prob>0.5) for the
+                # foreground mask handed to ``_mask_to_bbox``
+                # (which interprets any nonzero pixel as
+                # foreground; raw logits would treat every negative
+                # background pixel as foreground too, swelling the
+                # bbox to the whole frame).
+                mask_logits = output.pred_masks[0, 0]
+                mask_conf_raw = float(
+                    torch.sigmoid(mask_logits).mean().item()
+                )
+                # Defensive clamp — sigmoid mean is mathematically
+                # in (0, 1) but float jitter at the edges shouldn't
+                # be allowed to slip past the API's ``ge=0`` /
+                # ``le=1`` schema validators on ``avg_confidence``.
+                mask_conf = max(0.0, min(1.0, mask_conf_raw))
+                binary_mask = (mask_logits > 0).detach().cpu().numpy()
+                bbox = _mask_to_bbox(binary_mask)
                 if bbox is None:
                     # Empty mask — SAM2 lost the object. Emit a
                     # low-confidence sample with the anchor bbox
