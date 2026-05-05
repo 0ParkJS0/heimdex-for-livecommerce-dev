@@ -110,6 +110,20 @@ async def get_short_composition(
     user_id = cast(UUID, user.id)
     short = await repo.get_by_id(short_id, org_ctx.org_id)
     if short is None or short.user_id != user_id:
+        # Fallback for the auto-shorts product mode flow: the wizard
+        # creates ShortsRenderJob rows directly (no SavedShort
+        # wrapper), but the per-clip "스크립트 편집" / "렌더 결과
+        # 보기" buttons still call this endpoint with the
+        # render_job_id. Try the render-job table directly — same UUID
+        # namespace, owner-scoped lookup so cross-user access stays a
+        # 404. Returns the job's input_spec verbatim with
+        # source="render_job" — identical to the primary path's
+        # match-found return shape.
+        render_job = await render_repo.get_by_id(
+            org_ctx.org_id, user_id, short_id,
+        )
+        if render_job is not None and render_job.input_spec is not None:
+            return {"composition": render_job.input_spec, "source": "render_job"}
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Saved short not found",
