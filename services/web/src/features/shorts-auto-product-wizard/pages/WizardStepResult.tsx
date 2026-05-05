@@ -68,7 +68,11 @@ export function WizardStepResult({ videoId, parentJobId }: Props) {
               isPolling={isPolling}
               onCancel={cancel}
             />
-            <ChildList children={status.children} videoId={videoId} />
+            <ChildList
+              children={status.children}
+              videoId={videoId}
+              parentJobId={parentJobId}
+            />
             {status.children.some((c) => Boolean(c.render_job_id)) ? (
               <div className="flex justify-end">
                 <Link
@@ -185,9 +189,10 @@ export function friendlyParentError(
 interface ChildListProps {
   children: JobStatusResponse[];
   videoId: string;
+  parentJobId: string;
 }
 
-function ChildList({ children, videoId }: ChildListProps) {
+function ChildList({ children, videoId, parentJobId }: ChildListProps) {
   if (children.length === 0) {
     return (
       <div className="rounded-md border border-gray-200 bg-white p-4 text-sm text-gray-500">
@@ -202,7 +207,12 @@ function ChildList({ children, videoId }: ChildListProps) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {sorted.map((child) => (
-        <ChildCard key={child.job_id} child={child} videoId={videoId} />
+        <ChildCard
+          key={child.job_id}
+          child={child}
+          videoId={videoId}
+          parentJobId={parentJobId}
+        />
       ))}
     </div>
   );
@@ -211,9 +221,11 @@ function ChildList({ children, videoId }: ChildListProps) {
 function ChildCard({
   child,
   videoId,
+  parentJobId,
 }: {
   child: JobStatusResponse;
   videoId: string;
+  parentJobId: string;
 }) {
   const isDone = child.stage === "done" || child.stage === "committed";
   const isFailed = child.stage === "failed";
@@ -240,6 +252,8 @@ function ChildCard({
         <ChildRenderActions
           renderJobId={child.render_job_id}
           videoId={videoId}
+          parentJobId={parentJobId}
+          shortsIndex={child.shorts_index ?? null}
         />
       ) : null}
       {isFailed && child.error_message ? (
@@ -272,9 +286,13 @@ function ChildCard({
 function ChildRenderActions({
   renderJobId,
   videoId,
+  parentJobId,
+  shortsIndex,
 }: {
   renderJobId: string;
   videoId: string;
+  parentJobId: string;
+  shortsIndex: number | null;
 }) {
   const router = useRouter();
   const { getAccessToken } = useAuth();
@@ -323,17 +341,21 @@ function ChildRenderActions({
     setEditorError(null);
     setIsOpeningEditor(true);
     try {
-      const response = await getShortComposition(renderJobId, getAccessToken);
-      const sceneIds = extractSceneIds(response.composition);
-      if (sceneIds.length === 0) {
-        setEditorError("이 쇼츠에는 편집할 장면이 없습니다.");
-        return;
-      }
+      // Route to the inline subtitle editor with the right clip
+      // pre-selected. The composition pre-fetch is no longer strictly
+      // needed (the inline editor loads compositions itself), but we
+      // keep it as a permission probe — if it 404s, surface that
+      // immediately rather than letting the operator land on a page
+      // that fails to populate. ``clipIdx`` is 0-based.
+      await getShortComposition(renderJobId, getAccessToken);
       const params = new URLSearchParams({
-        videoId,
-        sceneIds: sceneIds.join(","),
+        clipIdx: String(Math.max(0, (shortsIndex ?? 1) - 1)),
       });
-      router.push(`/export/shorts/editor?${params.toString()}`);
+      router.push(
+        `/export/shorts/auto/wizard/${encodeURIComponent(videoId)}` +
+          `/result/${encodeURIComponent(parentJobId)}` +
+          `/edit-clips?${params.toString()}`,
+      );
     } catch (err) {
       setEditorError(
         err instanceof Error ? err.message : "에디터 열기 실패",

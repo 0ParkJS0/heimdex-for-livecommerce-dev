@@ -326,50 +326,96 @@ function parseTimestampMs(ts: string): number | null {
   return null;
 }
 
-// Korean sentence-ending patterns + common punctuation
+// Sentence-ending patterns (Korean + Latin) — primary split.
 const SENTENCE_SPLIT_RE = /(?<=[.!?。])\s+|(?<=[요다죠음네까게세지]\.?\s)/g;
-const MAX_SUBTITLE_CHARS = 60;
+
+// Korean clause-boundary patterns — secondary split for finer chunks.
+// Conjunctive endings ("는데", "면서요", "이기 때문에", etc.) and
+// connective particles mark natural pause points where Korean speakers
+// breathe. Matching these gives subtitles that flow with speech rather
+// than dumping a whole turn into one block.
+//
+// Each pattern uses a positive lookbehind so the boundary stays attached
+// to the LEFT chunk (e.g., "...이벤트이기 | 때문에" → "이벤트이기"
+// stays as one chunk's tail, "때문에" starts the next).
+const CLAUSE_SPLIT_RE = /(?<=,)\s+|(?<=[는면서고지만니까데서야면])\s+(?=[가-힣])/g;
+
+// 25 chars is roughly 5-7 Korean eojeol — short enough to read in 1-2s
+// at typical livecommerce pacing, long enough to avoid choppy 2-word
+// fragments. Calibrated against the operator-target screenshot where
+// rows ranged 3-16 chars.
+const MAX_SUBTITLE_CHARS = 25;
 const SUBTITLE_FONT_SIZE = 24;
 
 /**
- * Split long text into subtitle-friendly chunks (~60 chars max).
- * Prefers splitting on Korean sentence endings (요, 다, 죠, etc.) and punctuation.
+ * Split text into subtitle-friendly chunks that flow naturally with
+ * speech. Two-pass split: sentence boundaries first, then Korean
+ * clause boundaries within each sentence; falls back to greedy
+ * eojeol-by-eojeol packing for runaway sentences with no commas or
+ * conjunctive endings.
+ *
+ * Goal: each chunk reads in ~1-2s at livecommerce pace, matching the
+ * operator-target inline-editor UX (Clip 1-N "자동 자막" panel).
  */
 function chunkSubtitleText(text: string): string[] {
-  if (text.length <= MAX_SUBTITLE_CHARS) return [text];
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (trimmed.length <= MAX_SUBTITLE_CHARS) return [trimmed];
 
-  // First try splitting on sentence boundaries
-  const sentences = text.split(SENTENCE_SPLIT_RE).filter((s) => s.trim());
+  // Pass 1: sentence-level split.
+  const sentences = trimmed.split(SENTENCE_SPLIT_RE).filter((s) => s.trim());
   const chunks: string[] = [];
-  let current = "";
 
   for (const sentence of sentences) {
-    const candidate = current ? `${current} ${sentence}` : sentence;
-    if (candidate.length <= MAX_SUBTITLE_CHARS) {
-      current = candidate;
-    } else {
-      if (current) chunks.push(current.trim());
-      // If a single sentence is too long, split by character limit
-      if (sentence.length > MAX_SUBTITLE_CHARS) {
-        const words = sentence.split(/\s+/);
-        current = "";
-        for (const word of words) {
-          const next = current ? `${current} ${word}` : word;
+    if (sentence.length <= MAX_SUBTITLE_CHARS) {
+      chunks.push(sentence.trim());
+      continue;
+    }
+    // Pass 2: clause-level split inside an oversize sentence.
+    const clauses = sentence
+      .split(CLAUSE_SPLIT_RE)
+      .map((c) => c.trim())
+      .filter(Boolean);
+
+    let current = "";
+    for (const clause of clauses) {
+      if (clause.length > MAX_SUBTITLE_CHARS) {
+        // Pass 3: eojeol greedy pack — fall through when a single
+        // clause is still too long (no clause boundary inside).
+        if (current) {
+          chunks.push(current);
+          current = "";
+        }
+        const eojeols = clause.split(/\s+/);
+        let buf = "";
+        for (const e of eojeols) {
+          const next = buf ? `${buf} ${e}` : e;
           if (next.length > MAX_SUBTITLE_CHARS) {
-            if (current) chunks.push(current.trim());
-            current = word;
+            if (buf) chunks.push(buf);
+            buf = e;
           } else {
-            current = next;
+            buf = next;
           }
         }
+        if (buf) {
+          // Hold the tail in `current` so the next clause can
+          // potentially co-pack with it (don't push prematurely).
+          current = buf;
+        }
+        continue;
+      }
+      const candidate = current ? `${current} ${clause}` : clause;
+      if (candidate.length <= MAX_SUBTITLE_CHARS) {
+        current = candidate;
       } else {
-        current = sentence;
+        if (current) chunks.push(current);
+        current = clause;
       }
     }
+    if (current) chunks.push(current);
   }
-  if (current.trim()) chunks.push(current.trim());
 
-  return chunks.length > 0 ? chunks : [text.slice(0, MAX_SUBTITLE_CHARS)];
+  return chunks.length > 0 ? chunks : [trimmed.slice(0, MAX_SUBTITLE_CHARS)];
 }
 
 /**
@@ -414,7 +460,7 @@ export function generateSubtitlesFromTranscript(
       const slotDuration = Math.min(nextRelative - relativeMs, DEFAULT_SUBTITLE_DURATION_MS * 3);
 
       const chunks = chunkSubtitleText(turn.text);
-      const chunkDuration = Math.max(1500, Math.floor(slotDuration / chunks.length));
+      const chunkDuration = Math.max(800, Math.floor(slotDuration / chunks.length));
 
       for (let j = 0; j < chunks.length; j++) {
         const startMs = relativeMs + j * chunkDuration;
@@ -432,7 +478,7 @@ export function generateSubtitlesFromTranscript(
     }
   } else {
     // No timestamps: distribute all chunks evenly across clip
-    const chunkDuration = Math.max(1500, Math.floor(clipDuration / allChunks.length));
+    const chunkDuration = Math.max(800, Math.floor(clipDuration / allChunks.length));
     if (chunkDuration < 500) return [];
 
     for (let i = 0; i < allChunks.length; i++) {

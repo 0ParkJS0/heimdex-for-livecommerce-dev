@@ -167,14 +167,12 @@ describe("WizardStepResult — render actions", () => {
     ).toContain("(제목 없음)");
   });
 
-  it("스크립트 편집 fetches composition + routes to /export/shorts/editor with sceneIds", async () => {
+  it("스크립트 편집 routes to inline edit-clips view with the right clip pre-selected", async () => {
+    // The fetch is now a permission probe — composition shape doesn't
+    // gate the route push (the inline editor loads its own per-clip
+    // compositions). What matters: the route + clipIdx query param.
     getShortCompositionMock.mockResolvedValueOnce({
-      composition: {
-        scene_clips: [
-          { scene_id: "gd_test_scene_001" },
-          { scene_id: "gd_test_scene_007" },
-        ],
-      },
+      composition: { scene_clips: [{ scene_id: "gd_test_scene_001" }] },
       source: "render_job",
     });
     render(<WizardStepResult videoId="gd_test" parentJobId="parent-1" />);
@@ -186,22 +184,26 @@ describe("WizardStepResult — render actions", () => {
       ),
     );
     await waitFor(() =>
+      // Test fixture's child has shorts_index=1, so clipIdx=0.
       expect(pushMock).toHaveBeenCalledWith(
-        "/export/shorts/editor?videoId=gd_test&sceneIds=gd_test_scene_001%2Cgd_test_scene_007",
+        "/export/shorts/auto/wizard/gd_test/result/parent-1/edit-clips?clipIdx=0",
       ),
     );
   });
 
-  it("surfaces a friendly error if the composition has no scene_clips", async () => {
-    getShortCompositionMock.mockResolvedValueOnce({
-      composition: { scene_clips: [] },
-      source: "render_job",
-    });
+  it("surfaces a friendly error if the composition probe 404s", async () => {
+    // Permission probe failure (e.g., the render_job belongs to a
+    // different user) — the inline editor would fail to populate, so
+    // bail early with a Korean message rather than dump the operator
+    // on a broken page.
+    getShortCompositionMock.mockRejectedValueOnce(
+      new Error("Saved short not found"),
+    );
     render(<WizardStepResult videoId="gd_test" parentJobId="parent-1" />);
     fireEvent.click(screen.getByTestId(`child-open-editor-${RENDER_ID}`));
     await waitFor(() => expect(getShortCompositionMock).toHaveBeenCalled());
     expect(
-      await screen.findByText(/편집할 장면이 없습니다/),
+      await screen.findByText(/Saved short not found/),
     ).toBeInTheDocument();
     expect(pushMock).not.toHaveBeenCalled();
   });

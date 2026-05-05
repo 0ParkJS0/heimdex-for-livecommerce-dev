@@ -21,6 +21,7 @@
  */
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -75,6 +76,7 @@ interface ClipState {
 
 export function EditClipsPage({ videoId, parentJobId }: Props) {
   const { getAccessToken } = useAuth();
+  const searchParams = useSearchParams();
 
   const scanOrder = useScanOrder(parentJobId, getAccessToken);
 
@@ -89,7 +91,15 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
       .sort((a, b) => (a.shorts_index ?? 0) - (b.shorts_index ?? 0));
   }, [children]);
 
-  const [selectedClipIdx, setSelectedClipIdx] = useState(0);
+  // Initial clip selection from ``?clipIdx=N`` query param. The wizard's
+  // per-child "스크립트 편집" button passes shorts_index-1 so the editor
+  // opens on the clip the user clicked. Defaults to 0 (Clip 1).
+  const initialClipIdx = useMemo(() => {
+    const raw = searchParams?.get("clipIdx");
+    const parsed = raw != null ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  }, [searchParams]);
+  const [selectedClipIdx, setSelectedClipIdx] = useState(initialClipIdx);
   const [scenesByVideo, setScenesByVideo] = useState<VideoScenesResponse | null>(null);
   const [scenesError, setScenesError] = useState<string | null>(null);
   const [clipStates, setClipStates] = useState<Record<string, ClipState>>({});
