@@ -51,6 +51,11 @@ def _make_service():
     fake_job.input_spec = {"scene_clips": []}
     repo.create = AsyncMock(return_value=fake_job)
     repo.update_status = AsyncMock()
+    # service.create_render_job calls ``repository.session.commit()``
+    # before publishing to SQS (commit-before-publish race fix). The
+    # mock session needs an async commit so the await doesn't crash.
+    repo.session = MagicMock()
+    repo.session.commit = AsyncMock()
     scene_search = MagicMock()
     service = ShortsRenderService(repository=repo, scene_search=scene_search)
     # Patch internal validate to a no-op so we don't hit OpenSearch.

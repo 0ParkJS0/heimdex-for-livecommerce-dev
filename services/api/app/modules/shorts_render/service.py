@@ -375,8 +375,28 @@ class ShortsRenderService:
             composition_hash=composition_hash,
         )
 
-        # 3. Publish SQS — if this fails, mark job as failed so it doesn't
-        #    stay stuck in "queued" forever.
+        # 3a. Commit BEFORE publishing the SQS message.
+        #
+        # Background: shorts-render-worker's long-poll wakes within ~10ms
+        # of an SQS publish; the worker then HTTPs back to the api in a
+        # FRESH DB session to claim the job. That fresh session can only
+        # see committed rows. If we publish before committing, the
+        # worker can race ahead, get a 404, drop the message, and the
+        # row stays stuck at status='queued' forever (staging incident
+        # 2026-05-06: 4 of 5 wizard children stranded — the 1 that won
+        # the race got lucky with timing). The one prior commit-time
+        # was the dependency-injected session at FastAPI request end —
+        # too late to be useful for a worker that's already polling.
+        #
+        # Committing here flushes the row to disk so subsequent worker
+        # lookups see it. The caller's FastAPI dependency will commit
+        # again at request end (no-op on an already-committed
+        # transaction; SQLAlchemy starts a fresh transaction for any
+        # further work in the same session).
+        await self.repository.session.commit()
+
+        # 3b. Publish SQS — if this fails, mark job as failed so it
+        #     doesn't stay stuck in "queued" forever.
         try:
             from app.sqs_producer import publish_shorts_render_job
 
@@ -393,6 +413,9 @@ class ShortsRenderService:
                 "failed",
                 error="Failed to enqueue render job",
             )
+            # The status update needs its own commit since we already
+            # commited the original creation above.
+            await self.repository.session.commit()
             job.status = "failed"
             job.error = "Failed to enqueue render job"
 

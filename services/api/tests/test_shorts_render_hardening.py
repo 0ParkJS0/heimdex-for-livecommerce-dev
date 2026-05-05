@@ -76,6 +76,10 @@ def _make_service_with_mocks():
     svc.repository.find_recent_duplicate = AsyncMock(return_value=None)
     svc.repository.create = AsyncMock()
     svc.repository.update_status = AsyncMock()
+    # service.create_render_job calls ``repository.session.commit()``
+    # before publishing (commit-before-publish race fix).
+    svc.repository.session = MagicMock()
+    svc.repository.session.commit = AsyncMock()
     svc.scene_search = MagicMock()
     svc._validate_scene_clips = AsyncMock()
     return svc
