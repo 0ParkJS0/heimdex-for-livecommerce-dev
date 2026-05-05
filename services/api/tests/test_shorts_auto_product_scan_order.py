@@ -67,6 +67,13 @@ def _build_service(*, settings=None):
         settings=settings or _settings_stub(),
     )
     svc.session.flush = AsyncMock()
+    # get_scan_order_status batches a select on ShortsRenderJob.status
+    # since v0.16.1 — the mock needs to await-return a result whose
+    # ``.all()`` yields an empty list (no render statuses to surface
+    # in unit tests; the assertion-on-children focuses on stage logic).
+    _empty_result = MagicMock()
+    _empty_result.all = MagicMock(return_value=[])
+    svc.session.execute = AsyncMock(return_value=_empty_result)
     svc.catalog_repo = MagicMock()
     svc.catalog_repo.list_active_by_video = AsyncMock(return_value=[])
     svc.appearance_repo = MagicMock()

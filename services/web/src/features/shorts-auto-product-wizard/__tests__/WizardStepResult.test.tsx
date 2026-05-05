@@ -47,6 +47,7 @@ function makeStatus(overrides?: { title?: string | null }) {
       error_code: null,
       error_message: null,
       render_job_id: null,
+      render_status: null,
       parent_job_id: null,
       shorts_index: null,
       cost_usd_estimate: "0.00",
@@ -64,6 +65,10 @@ function makeStatus(overrides?: { title?: string | null }) {
         error_code: null,
         error_message: null,
         render_job_id: RENDER_ID,
+        // v0.16.1 — fixture child has its render finished. WizardStepResult
+        // gates the per-card actions (rename, view, edit) on this so the
+        // "ready" UX only appears once the MP4 is actually downloadable.
+        render_status: "completed",
         parent_job_id: "parent-1",
         shorts_index: 1,
         cost_usd_estimate: "0.00",

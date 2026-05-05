@@ -151,6 +151,15 @@ export interface JobStatusResponse {
   error_code: ScanErrorCode | null;
   error_message: string | null;
   render_job_id: string | null;
+  /**
+   * Underlying ShortsRenderJob.status for ``render_child`` jobs —
+   * used to distinguish "scan finished, render in flight" from
+   * "scan finished, render done." Mirror of the backend field
+   * added in v0.16.1. Values: ``"queued"`` | ``"rendering"`` |
+   * ``"completed"`` | ``"failed"``. ``null`` when ``render_job_id``
+   * is null (e.g., scan_order parents) or for backward compat.
+   */
+  render_status: string | null;
   parent_job_id: string | null;
   shorts_index: number | null;
   cost_usd_estimate: string;

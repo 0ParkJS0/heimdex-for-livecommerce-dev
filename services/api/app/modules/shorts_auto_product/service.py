@@ -892,7 +892,39 @@ class ProductScanService:
             if transitioned is not None:
                 parent = transitioned
 
-        children_responses = [_job_to_status_response(c) for c in children]
+        # Batch-load the underlying ShortsRenderJob statuses so the
+        # wizard can distinguish "scan finished, render in flight" from
+        # "scan finished, render done." Without this, child cards
+        # flipped to "ready" the moment the runner enqueued the render
+        # — operators saw "렌더 결과가 아직 준비되지 않았습니다" when
+        # they clicked through. Lazy import to keep the loose-coupling
+        # rule (shorts_auto_product never module-level imports
+        # shorts_render).
+        render_status_by_id: dict[UUID, str] = {}
+        render_job_ids = [
+            c.render_job_id for c in children if c.render_job_id is not None
+        ]
+        if render_job_ids:
+            from sqlalchemy import select as _select
+
+            from app.modules.shorts_render.models import ShortsRenderJob
+
+            stmt = _select(
+                ShortsRenderJob.id, ShortsRenderJob.status,
+            ).where(ShortsRenderJob.id.in_(render_job_ids))
+            rows = (await self.session.execute(stmt)).all()
+            render_status_by_id = {
+                row.id: row.status for row in rows
+            }
+
+        children_responses = [
+            _job_to_status_response(
+                c,
+                render_status=render_status_by_id.get(c.render_job_id)
+                if c.render_job_id else None,
+            )
+            for c in children
+        ]
         complete_count = sum(
             1 for c in children_responses if c.completed_at is not None
         )
@@ -1080,9 +1112,18 @@ def _validate_scan_order_inputs(*, body: ScanOrderCreateRequest) -> None:
                 ),
             )
 
-def _job_to_status_response(job: ProductScanJob) -> JobStatusResponse:
+def _job_to_status_response(
+    job: ProductScanJob,
+    *,
+    render_status: str | None = None,
+) -> JobStatusResponse:
     """Mode-aware projection of a ``ProductScanJob`` to the public
     ``JobStatusResponse`` shape.
+
+    Pass ``render_status`` (the underlying ``ShortsRenderJob.status``)
+    when the caller has it loaded — used by the wizard so its child
+    cards can distinguish "scan finished, render in flight" from
+    "scan finished, render done." Defaults to ``None`` for back-compat.
 
     Discriminator switch (Phase 4 task #1, codex-flagged): branches on
     ``job.mode`` rather than the pre-Phase-4 ``catalog_entry_id IS NULL``
@@ -1136,6 +1177,7 @@ def _job_to_status_response(job: ProductScanJob) -> JobStatusResponse:
         error_code=error_code,
         error_message=job.error_message,
         render_job_id=render_job_id_response,
+        render_status=render_status,
         parent_job_id=job.parent_job_id,
         shorts_index=job.shorts_index,
         cost_usd_estimate=job.cost_usd_estimate,

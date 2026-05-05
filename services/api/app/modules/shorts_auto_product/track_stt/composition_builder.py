@@ -28,11 +28,15 @@ import logging
 from heimdex_media_contracts.composition.schemas import (
     CompositionSpec,
     SceneClipSpec,
+    SubtitleSpec,
 )
 
 from app.modules.shorts_auto_product.track_stt.models import (
     MentionSegment,
     ScoredChunk,
+)
+from app.modules.shorts_auto_product.track_stt.subtitle_generator import (
+    distribute_subtitles_for_clip,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,8 +77,17 @@ def build_composition_spec(
             "chunk; caller must surface no-mentions earlier"
         )
 
+    # Build a scene_id → transcript_text lookup so we can attach
+    # the right transcript to each clamped sub-clip.
+    transcript_by_scene_id = {
+        scene.scene_id: (scene.transcript_text or "")
+        for segment in segments
+        for scene in segment.scenes
+    }
+
     timeline_cursor_ms = 0
     clips: list[SceneClipSpec] = []
+    subtitles: list[SubtitleSpec] = []
 
     # Korean livecommerce scenes are 1-15s; chunks are fixed-width 20s
     # by default. A chunk routinely spans multiple scenes. The render
@@ -114,6 +127,27 @@ def build_composition_spec(
                     volume=1.0,
                 )
             )
+            # Generate subtitles for this clip. The transcript is the
+            # underlying scene's full transcript (we don't have
+            # per-word timing), so we distribute chunked subtitles
+            # uniformly across the clip's timeline window with an
+            # 800ms per-chunk minimum. Result: every rendered MP4
+            # ships with burned-in subtitles by default — operators
+            # don't need to hit the EditClipsPage to get the
+            # screenshot UX.
+            transcript = transcript_by_scene_id.get(scene_id, "")
+            for sub_start, sub_end, text in distribute_subtitles_for_clip(
+                transcript=transcript,
+                timeline_start_ms=timeline_cursor_ms,
+                clip_duration_ms=sub_duration_ms,
+            ):
+                subtitles.append(
+                    SubtitleSpec(
+                        text=text,
+                        start_ms=sub_start,
+                        end_ms=sub_end,
+                    )
+                )
             timeline_cursor_ms += sub_duration_ms
 
     if not clips:
@@ -122,12 +156,17 @@ def build_composition_spec(
             f"{len(selected_chunks)} chunks (no scene overlap?)"
         )
 
-    spec = CompositionSpec(scene_clips=clips, title=title)
+    spec = CompositionSpec(
+        scene_clips=clips,
+        subtitles=subtitles,
+        title=title,
+    )
     logger.info(
         "stt_composition_built",
         extra={
             "video_id": os_video_id,
             "clip_count": len(clips),
+            "subtitle_count": len(subtitles),
             "duration_ms": spec.total_duration_ms,
             "title": title,
         },

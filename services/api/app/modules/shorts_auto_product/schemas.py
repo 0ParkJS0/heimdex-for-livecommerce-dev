@@ -194,6 +194,18 @@ class JobStatusResponse(BaseModel):
     # parents** — children own renders (Q4 codex pushback).
     render_job_id: UUID | None = None
 
+    # v0.16.1 — the underlying ``ShortsRenderJob.status`` so the wizard
+    # can distinguish "scan finished, render still in flight" from
+    # "scan finished, render done". Without this the wizard's child
+    # card flipped to "ready" the moment the runner enqueued the
+    # render — operators clicked "스크립트 편집" and saw "렌더 결과가
+    # 아직 준비되지 않았습니다" because the MP4 wasn't actually rendered
+    # yet (staging incident 2026-05-06). Values mirror
+    # ``ShortsRenderJob.status``: ``"queued"``, ``"rendering"``,
+    # ``"completed"``, ``"failed"``. ``None`` when ``render_job_id``
+    # is null (e.g., scan_order parents).
+    render_status: str | None = None
+
     # Wizard lineage — set only on ``kind='render_child'``. Lets the
     # UI group children under their parent in the flat /jobs/{id}
     # response without an extra round-trip.

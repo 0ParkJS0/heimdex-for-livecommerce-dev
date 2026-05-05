@@ -229,15 +229,27 @@ function ChildCard({
 }) {
   const isDone = child.stage === "done" || child.stage === "committed";
   const isFailed = child.stage === "failed";
-  const hasRender = child.render_job_id !== null && isDone;
+  // v0.16.1 — gate "ready" UX on the underlying render status.
+  // ``isDone`` only means "scan finished" — the render may still be
+  // in flight (queued/rendering). The wizard previously claimed
+  // ready in that window, so operators clicked through to the
+  // editor and saw "렌더 결과가 아직 준비되지 않았습니다."
+  const renderReady = isDone && child.render_status === "completed";
+  const renderInFlight =
+    isDone &&
+    child.render_status !== null &&
+    child.render_status !== "completed" &&
+    child.render_status !== "failed";
   return (
     <div
       className={`rounded-md border p-4 ${
         isFailed
           ? "border-red-200 bg-red-50"
-          : isDone
+          : renderReady
             ? "border-green-200 bg-green-50"
-            : "border-gray-200 bg-white"
+            : renderInFlight
+              ? "border-amber-200 bg-amber-50"
+              : "border-gray-200 bg-white"
       }`}
       data-testid={`child-card-${child.shorts_index ?? "unknown"}`}
     >
@@ -245,16 +257,22 @@ function ChildCard({
         <h3 className="text-sm font-semibold text-gray-800">
           쇼츠 {child.shorts_index ?? "?"}
         </h3>
-        <span className="text-xs text-gray-500">{child.stage}</span>
+        <span className="text-xs text-gray-500">
+          {renderInFlight ? "렌더링 중" : child.stage}
+        </span>
       </div>
       <p className="text-xs text-gray-600">진행률 {child.progress_pct}%</p>
-      {hasRender && child.render_job_id ? (
+      {renderReady && child.render_job_id ? (
         <ChildRenderActions
           renderJobId={child.render_job_id}
           videoId={videoId}
           parentJobId={parentJobId}
           shortsIndex={child.shorts_index ?? null}
         />
+      ) : renderInFlight ? (
+        <p className="mt-2 text-xs text-amber-700">
+          렌더링이 완료되면 편집할 수 있어요.
+        </p>
       ) : null}
       {isFailed && child.error_message ? (
         <p className="mt-1 text-xs text-red-700">{child.error_message}</p>
