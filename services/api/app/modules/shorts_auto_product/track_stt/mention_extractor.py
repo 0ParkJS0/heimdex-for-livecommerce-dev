@@ -108,6 +108,11 @@ async def find_mentioned_scenes(
                     "end_ms",
                     "transcript_raw",
                     "scene_caption",
+                    # v0.16.2 — pulled so composition_builder can
+                    # time-align subtitles to speaker turns instead
+                    # of distributing uniformly. Backwards compatible:
+                    # missing/empty value falls back to uniform.
+                    "speaker_transcript",
                 ],
                 "sort": [{"_score": "desc"}],
             },
@@ -235,6 +240,7 @@ def _hit_to_scene(
 
     transcript = (src.get("transcript_raw") or "").strip()
     caption = (src.get("scene_caption") or "").strip()
+    speaker_transcript = (src.get("speaker_transcript") or "").strip()
 
     # Build the alias-set for substring re-check.
     tokens = [t for t in [llm_label, *spoken_aliases] if t]
@@ -264,6 +270,7 @@ def _hit_to_scene(
         matched_aliases=matched_aliases,
         transcript_text=transcript,
         caption_text=caption,
+        speaker_transcript=speaker_transcript,
     )
 
 

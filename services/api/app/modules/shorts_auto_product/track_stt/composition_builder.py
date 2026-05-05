@@ -29,6 +29,7 @@ from heimdex_media_contracts.composition.schemas import (
     CompositionSpec,
     SceneClipSpec,
     SubtitleSpec,
+    SubtitleStyleSpec,
 )
 
 from app.modules.shorts_auto_product.track_stt.models import (
@@ -37,6 +38,28 @@ from app.modules.shorts_auto_product.track_stt.models import (
 )
 from app.modules.shorts_auto_product.track_stt.subtitle_generator import (
     distribute_subtitles_for_clip,
+    distribute_subtitles_with_speaker_timing,
+)
+
+
+# White pill on black-text style — matches the operator-target
+# screenshot and stays legible against any livecommerce background
+# (white studio walls 흰 스튜디오 vs busy product layouts). Computed
+# once at import time; applied to every emitted ``SubtitleSpec`` so
+# the worker's drawtext filter draws a high-contrast caption box
+# instead of the default white-on-transparent that vanished against
+# white backdrops on staging 2026-05-06.
+_AUTO_SHORTS_SUBTITLE_STYLE = SubtitleStyleSpec(
+    font_color="#000000",
+    background_color="#FFFFFF",
+    background_opacity=0.95,
+    background_padding=12,
+    font_weight=700,
+    font_size_px=36,
+    # Position bottom-center, slightly above the very bottom so it
+    # doesn't fight with iOS / Android safe-area UI bars when the
+    # short is reposted to social.
+    position_y=0.82,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,13 +100,19 @@ def build_composition_spec(
             "chunk; caller must surface no-mentions earlier"
         )
 
-    # Build a scene_id → transcript_text lookup so we can attach
-    # the right transcript to each clamped sub-clip.
-    transcript_by_scene_id = {
-        scene.scene_id: (scene.transcript_text or "")
-        for segment in segments
-        for scene in segment.scenes
-    }
+    # Build per-scene lookups so we can attach the right transcript
+    # AND speaker_transcript to each clamped sub-clip. The speaker
+    # transcript carries [mm:ss] turn markers that let us time-align
+    # subtitles to the speech; transcript_text is the uniform-
+    # distribution fallback when speaker_transcript is empty.
+    transcript_by_scene_id: dict[str, str] = {}
+    speaker_transcript_by_scene_id: dict[str, str] = {}
+    for segment in segments:
+        for scene in segment.scenes:
+            transcript_by_scene_id[scene.scene_id] = scene.transcript_text or ""
+            speaker_transcript_by_scene_id[scene.scene_id] = (
+                scene.speaker_transcript or ""
+            )
 
     timeline_cursor_ms = 0
     clips: list[SceneClipSpec] = []
@@ -127,25 +156,36 @@ def build_composition_spec(
                     volume=1.0,
                 )
             )
-            # Generate subtitles for this clip. The transcript is the
-            # underlying scene's full transcript (we don't have
-            # per-word timing), so we distribute chunked subtitles
-            # uniformly across the clip's timeline window with an
-            # 800ms per-chunk minimum. Result: every rendered MP4
-            # ships with burned-in subtitles by default — operators
-            # don't need to hit the EditClipsPage to get the
-            # screenshot UX.
-            transcript = transcript_by_scene_id.get(scene_id, "")
-            for sub_start, sub_end, text in distribute_subtitles_for_clip(
-                transcript=transcript,
-                timeline_start_ms=timeline_cursor_ms,
-                clip_duration_ms=sub_duration_ms,
-            ):
+            # Generate subtitles for this clip. Prefer the
+            # speaker_transcript path (per-turn [mm:ss] timestamps —
+            # subtitles appear when the host is actually saying the
+            # words) and fall back to uniform distribution over the
+            # raw transcript when speaker timing isn't available.
+            speaker_transcript = speaker_transcript_by_scene_id.get(scene_id, "")
+            speaker_timed = []
+            if speaker_transcript:
+                speaker_timed = distribute_subtitles_with_speaker_timing(
+                    speaker_transcript=speaker_transcript,
+                    src_start_ms=src_start_ms,
+                    src_end_ms=src_end_ms,
+                    timeline_start_ms=timeline_cursor_ms,
+                )
+            if speaker_timed:
+                clip_subs = speaker_timed
+            else:
+                transcript = transcript_by_scene_id.get(scene_id, "")
+                clip_subs = distribute_subtitles_for_clip(
+                    transcript=transcript,
+                    timeline_start_ms=timeline_cursor_ms,
+                    clip_duration_ms=sub_duration_ms,
+                )
+            for sub_start, sub_end, text in clip_subs:
                 subtitles.append(
                     SubtitleSpec(
                         text=text,
                         start_ms=sub_start,
                         end_ms=sub_end,
+                        style=_AUTO_SHORTS_SUBTITLE_STYLE,
                     )
                 )
             timeline_cursor_ms += sub_duration_ms

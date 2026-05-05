@@ -49,6 +49,13 @@ class MentionedScene:
     transcript_text: str = ""
     caption_text: str = ""
 
+    # ``"SPEAKER_00 [mm:ss]: text\nSPEAKER_01 [mm:ss]: ..."`` formatted
+    # diarized transcript. Empty string means STT diarization didn't
+    # produce per-turn timestamps for this scene. Used by the
+    # subtitle_generator's time-aligned distribution path so subtitles
+    # appear AS the host speaks instead of distributed uniformly.
+    speaker_transcript: str = ""
+
 
 # ---------- segment_assembler output ----------
 
