@@ -34,6 +34,7 @@ import { getVideoScenes } from "@/lib/api/videos";
 import type { VideoScene, VideoScenesResponse } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 
+import { DEFAULT_SUBTITLE_STYLE } from "@/features/shorts-editor/constants";
 import {
   createClipFromScene,
   generateSubtitlesFromTranscript,
@@ -42,6 +43,7 @@ import type {
   CompositionSubtitle,
   EditorClip,
   EditorSubtitle,
+  SubtitleStyle,
 } from "@/features/shorts-editor/lib/types";
 
 import { useScanOrder } from "../hooks/useScanOrder";
@@ -195,11 +197,37 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
           if (!scene) continue;
           const clip = createClipFromScene(scene as VideoScene, videoId, sourceType);
           editorClips.push(clip);
-          const subs = generateSubtitlesFromTranscript(
-            (scene as VideoScene).speaker_transcript,
-            clip,
-          );
-          subtitles.push(...subs);
+        }
+
+        // Prefer the composition's actual ``subtitles[]`` — those are
+        // what the renderer used to burn the captions into the MP4,
+        // so the editor's panel mirrors what the operator sees in the
+        // video preview. Falls back to per-scene
+        // ``generateSubtitlesFromTranscript`` only when the
+        // composition shipped without subtitles (legacy renders or
+        // scenes that lack ``speaker_transcript``).
+        const compSubtitles = extractCompositionSubtitles(compositionSpec);
+        if (compSubtitles.length > 0) {
+          for (const cs of compSubtitles) {
+            subtitles.push({
+              id: makeSubtitleId(),
+              text: cs.text,
+              startMs: cs.start_ms,
+              endMs: cs.end_ms,
+              style: cs.style ?? DEFAULT_SUBTITLE_STYLE,
+            });
+          }
+        } else {
+          for (let i = 0; i < sceneClips.length; i++) {
+            const scene = sceneById.get(sceneClips[i].scene_id);
+            const clip = editorClips[i];
+            if (!scene || !clip) continue;
+            const subs = generateSubtitlesFromTranscript(
+              (scene as VideoScene).speaker_transcript,
+              clip,
+            );
+            subtitles.push(...subs);
+          }
         }
 
         const totalDurationMs = editorClips.reduce(
@@ -501,6 +529,42 @@ function extractTitle(comp: unknown): string | null {
   if (typeof comp !== "object" || comp === null) return null;
   const t = (comp as { title?: unknown }).title;
   return typeof t === "string" ? t : null;
+}
+
+interface CompSubtitleShape {
+  text: string;
+  start_ms: number;
+  end_ms: number;
+  style?: SubtitleStyle;
+}
+
+function extractCompositionSubtitles(comp: unknown): CompSubtitleShape[] {
+  if (typeof comp !== "object" || comp === null) return [];
+  const subs = (comp as { subtitles?: unknown }).subtitles;
+  if (!Array.isArray(subs)) return [];
+  const out: CompSubtitleShape[] = [];
+  for (const s of subs) {
+    if (typeof s !== "object" || s === null) continue;
+    const r = s as Record<string, unknown>;
+    const text = typeof r.text === "string" ? r.text : null;
+    const startMs = typeof r.start_ms === "number" ? r.start_ms : null;
+    const endMs = typeof r.end_ms === "number" ? r.end_ms : null;
+    if (text === null || startMs === null || endMs === null) continue;
+    out.push({
+      text,
+      start_ms: startMs,
+      end_ms: endMs,
+      style: undefined,
+    });
+  }
+  return out;
+}
+
+function makeSubtitleId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // ────────────── tiny components ──────────────
