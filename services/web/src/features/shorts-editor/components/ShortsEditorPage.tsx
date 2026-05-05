@@ -236,6 +236,25 @@ export function ShortsEditorPage() {
         const sourceType = res.source_type ?? "gdrive";
         const clips = scenes.map((scene) => createClipFromScene(scene, videoId, sourceType));
         initFromScenes(videoId, sourceType, clips);
+
+        // Auto-generate subtitles when entering with a curated scene set
+        // (auto-shorts → "스크립트 편집" lands here with sceneIds=...).
+        // Mirrors the manual onToggleScene path that fires
+        // generateSubtitlesFromTranscript on each scene-add. The
+        // generator returns [] for scenes without speaker_transcript,
+        // so this is safe across the whole flow — operators always
+        // see an editable subtitle list rather than an empty panel.
+        if (sceneIdsParam && scenes.length > 0) {
+          for (let i = 0; i < scenes.length; i++) {
+            const subs = generateSubtitlesFromTranscript(
+              scenes[i].speaker_transcript,
+              clips[i],
+            );
+            for (const sub of subs) {
+              editor.addSubtitle(sub);
+            }
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setLoadError(err instanceof Error ? err.message : "장면을 불러올 수 없습니다.");
