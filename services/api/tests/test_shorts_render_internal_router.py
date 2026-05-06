@@ -314,3 +314,79 @@ def test_get_media_source_not_found():
         )
 
     assert response.status_code == 404
+
+
+# --- /exists liveness probe (worker pre-render check) ---
+
+
+def test_get_exists_returns_200_for_alive_job():
+    job_id = uuid4()
+    mock_repo = AsyncMock()
+    mock_repo._get_by_id_internal = AsyncMock(
+        return_value=_make_render_job(job_id=job_id, status="rendering"),
+    )
+
+    app = _build_app()
+    from app.db.base import get_db_session
+    from app.modules.shorts_render import internal_router
+
+    async def _mock_db():
+        return AsyncMock()
+
+    app.dependency_overrides[get_db_session] = _mock_db
+
+    original_init = internal_router.ShortsRenderJobRepository
+    internal_router.ShortsRenderJobRepository = lambda session: mock_repo
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/internal/shorts-render/{job_id}/exists")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["exists"] is True
+        # Status echoes through so a future caller can branch on
+        # terminal states without an extra round-trip.
+        assert body["status"] == "rendering"
+    finally:
+        internal_router.ShortsRenderJobRepository = original_init
+
+
+def test_get_exists_returns_404_when_row_deleted():
+    """Worker pre-render check sees this 404 → ack + skip render."""
+    job_id = uuid4()
+    mock_repo = AsyncMock()
+    mock_repo._get_by_id_internal = AsyncMock(return_value=None)
+
+    app = _build_app()
+    from app.db.base import get_db_session
+    from app.modules.shorts_render import internal_router
+
+    async def _mock_db():
+        return AsyncMock()
+
+    app.dependency_overrides[get_db_session] = _mock_db
+
+    original_init = internal_router.ShortsRenderJobRepository
+    internal_router.ShortsRenderJobRepository = lambda session: mock_repo
+    try:
+        with TestClient(app) as client:
+            response = client.get(f"/internal/shorts-render/{job_id}/exists")
+        assert response.status_code == 404
+    finally:
+        internal_router.ShortsRenderJobRepository = original_init
+
+
+def test_get_exists_requires_internal_token():
+    """No bearer → fail. Pattern B internal endpoints all require it."""
+    app = FastAPI()
+    app.include_router(internal_shorts_render_router)
+    # Do NOT override verify_internal_token — real verifier runs.
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get(
+            f"/internal/shorts-render/{uuid4()}/exists",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+    # Mirrors the existing PUT /status auth-failure assertion shape —
+    # wrong/missing token returns 401 (or 500/503 if the verifier
+    # itself errors out before auth resolution).
+    assert response.status_code in (401, 500, 503)

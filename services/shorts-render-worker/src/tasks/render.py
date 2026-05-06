@@ -123,6 +123,47 @@ def _upload_rendered_file(
     return s3_key, file_size
 
 
+def _check_job_alive(api_client, job_id: str) -> bool:
+    """Probe the api to confirm the render job row still exists.
+
+    Hits ``GET /internal/shorts-render/{job_id}/exists``:
+        * 200 → row alive, return True
+        * 404 → row deleted (UI delete, cleanup cron), return False
+        * any other code or network error → fail-open, return True
+
+    Why fail-open: a transient api outage shouldn't cause us to drop
+    a real render request. Over-rendering once is recoverable; the
+    api's idempotent ``complete_idempotent`` handles a duplicate
+    completion message safely. Under-rendering would silently lose
+    the user's render with no surfaced error.
+
+    Returning False from this function lets the SDK ack the SQS
+    message via normal task-success path — message is removed from
+    the queue, no orphan S3 file is uploaded.
+    """
+    url = f"{api_client.base_url.rstrip('/')}/internal/shorts-render/{job_id}/exists"
+    try:
+        resp = api_client._session.get(url, timeout=10)
+    except Exception:  # noqa: BLE001 — fail-open on any transport error
+        logger.warning(
+            "render_job_alive_check_transport_error",
+            extra={"job_id": job_id},
+            exc_info=True,
+        )
+        return True
+    if resp.status_code == 200:
+        return True
+    if resp.status_code == 404:
+        return False
+    # Unexpected status — log and fail-open. Don't burn the job on a
+    # 500 from an unrelated issue.
+    logger.warning(
+        "render_job_alive_check_unexpected_status",
+        extra={"job_id": job_id, "status_code": resp.status_code},
+    )
+    return True
+
+
 def process_render_job(*, api_client, settings, render_job: RenderJobMessage) -> None:
     """Full render pipeline — called by SQS callback.
 
@@ -133,10 +174,35 @@ def process_render_job(*, api_client, settings, render_job: RenderJobMessage) ->
     5. Upload rendered MP4 to S3
     6. Report status='completed' to API (or 'failed' on error)
     """
-    _ensure_imports()
-
     job_id = render_job.job_id
     org_id = render_job.org_id
+
+    # 0. Liveness probe — bail out cleanly if the row was deleted
+    # between SQS publish and worker receive. Avoids an orphan S3
+    # output and the noisy ``PUT /status`` 404 storm that the
+    # post-delete render path otherwise generates. Fail-open on
+    # transport errors so a transient api outage doesn't drop real
+    # work — see ``_check_job_alive`` docstring.
+    #
+    # Runs BEFORE ``_ensure_imports`` so we don't pay the ML
+    # contract+pipeline import cost on jobs we're about to skip.
+    if not _check_job_alive(api_client, job_id):
+        logger.info(
+            "render_skipped_job_deleted",
+            extra={
+                "job_id": job_id,
+                "org_id": org_id,
+                "reason": "db_row_missing_pre_render",
+            },
+        )
+        # Returning normally lets the SDK ack the SQS message →
+        # message is removed from the queue. No render work, no
+        # status PUT, no S3 upload.
+        return
+
+    # Heavy ML+contracts imports happen AFTER the alive check so
+    # skipped jobs pay zero import cost.
+    _ensure_imports()
 
     work_dir = tempfile.mkdtemp(prefix=f"shorts_render_{job_id}_")
 

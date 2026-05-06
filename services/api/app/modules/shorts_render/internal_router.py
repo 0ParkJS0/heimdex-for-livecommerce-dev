@@ -138,6 +138,53 @@ async def update_render_status(
     return {"ok": True, "job_id": str(job_id), "status": payload.status}
 
 
+class JobExistsResponse(BaseModel):
+    """Lightweight existence probe for the worker's pre-render check.
+
+    The worker hits ``GET /internal/shorts-render/{job_id}/exists``
+    BEFORE doing any actual render work. If the row was deleted (UI
+    delete, scheduled cleanup, etc.) between SQS publish and worker
+    receive, the worker can ack-and-skip cleanly — no orphan S3
+    output, no DLQ noise from the eventual ``PUT /status`` 404, no
+    wasted ffmpeg compute.
+
+    Reasonably small body — ``status`` lets the worker also early-
+    exit on terminal states (``completed`` / ``failed`` /
+    ``cancelled``) if it ever wants to, but the v1 caller only
+    branches on the 200/404 distinction.
+    """
+    exists: bool
+    status: str
+
+
+@router.get(
+    "/{job_id}/exists",
+    response_model=JobExistsResponse,
+)
+async def render_job_exists(
+    job_id: UUID,
+    _token: Annotated[str, Depends(verify_internal_token)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+):
+    """Existence probe used by the render worker before each job.
+
+    Returns 200 with the current status if the row is alive, 404 if
+    not — letting the worker ack the SQS message and move on.
+
+    Pattern B auth: bearer-only. No org header — the worker may not
+    know the org context until it loads the row, and the row's id is
+    a UUIDv4 so guessing one is not a meaningful threat surface.
+    """
+    repo = ShortsRenderJobRepository(db)
+    job = await repo._get_by_id_internal(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Render job not found",
+        )
+    return JobExistsResponse(exists=True, status=job.status)
+
+
 @router.get("/{video_id}/media-source", response_model=MediaSourceResponse)
 async def get_media_source(
     video_id: str,

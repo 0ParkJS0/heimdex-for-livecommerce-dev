@@ -541,3 +541,98 @@ class TestProcessRenderJob:
 
             mock_rmtree.assert_called_once()
             assert mock_rmtree.call_args[1].get("ignore_errors") is True
+
+
+# ---------------------------------------------------------------------------
+# _check_job_alive — pre-render liveness probe
+# ---------------------------------------------------------------------------
+
+from src.tasks.render import _check_job_alive  # noqa: E402
+
+
+def _make_resp(status_code: int) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    return resp
+
+
+class TestCheckJobAlive:
+    def test_returns_true_on_200(self, mock_api_client: MagicMock) -> None:
+        mock_api_client._session.get.return_value = _make_resp(200)
+        assert _check_job_alive(mock_api_client, "job-1") is True
+        # Hits the /exists path, not /status or /media-source.
+        called_url = mock_api_client._session.get.call_args[0][0]
+        assert "/internal/shorts-render/job-1/exists" in called_url
+
+    def test_returns_false_on_404(self, mock_api_client: MagicMock) -> None:
+        # 404 is the row-deleted signal — the only path that
+        # legitimately tells the worker to skip.
+        mock_api_client._session.get.return_value = _make_resp(404)
+        assert _check_job_alive(mock_api_client, "job-1") is False
+
+    def test_fails_open_on_5xx(self, mock_api_client: MagicMock) -> None:
+        # api hiccup → over-render rather than silently drop the job.
+        mock_api_client._session.get.return_value = _make_resp(503)
+        assert _check_job_alive(mock_api_client, "job-1") is True
+
+    def test_fails_open_on_transport_exception(
+        self, mock_api_client: MagicMock,
+    ) -> None:
+        # Network blip mid-poll: the worker still proceeds with the
+        # render. The api's idempotent ``complete_idempotent``
+        # absorbs a duplicate completion if the row WAS deleted but
+        # the probe couldn't reach it in time.
+        mock_api_client._session.get.side_effect = Exception("connection reset")
+        assert _check_job_alive(mock_api_client, "job-1") is True
+
+
+# ---------------------------------------------------------------------------
+# process_render_job integration — skip path on deleted row
+# ---------------------------------------------------------------------------
+
+
+@patch("src.tasks.render._upload_rendered_file")
+@patch("src.tasks.render._download_media")
+@patch("src.tasks.render._report_status")
+def test_process_render_job_skips_when_row_deleted(
+    mock_report: MagicMock,
+    mock_download: MagicMock,
+    mock_upload: MagicMock,
+    render_job: RenderJobMessage,
+    mock_api_client: MagicMock,
+    mock_settings: MagicMock,
+) -> None:
+    """When the alive probe 404s, the render path must short-circuit
+    BEFORE any S3 download, ffmpeg invocation, or status PUT — the
+    SQS message is removed via normal task-success ack and the
+    deleted row stays gone.
+    """
+    # Route GETs by URL: /exists → 404, anything else → default.
+    default_get = mock_api_client._session.get.return_value
+
+    def _routed_get(url, **kwargs):
+        if "/exists" in url:
+            return _make_resp(404)
+        return default_get
+
+    mock_api_client._session.get.side_effect = _routed_get
+
+    process_render_job(
+        api_client=mock_api_client,
+        settings=mock_settings,
+        render_job=render_job,
+    )
+
+    # No work should have happened past the probe.
+    mock_report.assert_not_called()
+    mock_download.assert_not_called()
+    mock_upload.assert_not_called()
+
+
+# NOTE: a corresponding "proceeds when row alive" integration test
+# would need the full ``_ensure_imports`` path (heimdex_media_pipelines
+# + heimdex_media_contracts) which isn't installed in the api venv
+# used by the local pytest sweep. The existing
+# ``TestProcessRenderJob`` tests above cover the proceed path
+# (running in the worker container with the full ML stack), and
+# the alive-probe is exercised in the unit tests above.
