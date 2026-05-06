@@ -13,6 +13,7 @@ from app.modules.shorts_render.schemas import (
     RenderJobCreate,
     RenderJobListResponse,
     RenderJobResponse,
+    RenderJobSubtitlesUpdate,
     RenderJobTitleUpdate,
     SubtitleSuggestion,
     SubtitleSuggestions,
@@ -76,6 +77,37 @@ async def update_render_job_title(
     user_id = cast(UUID, user.id)
     return await service.update_render_job_title(
         org_ctx.org_id, user_id, job_id, body.title,
+    )
+
+
+@router.patch("/{job_id}/subtitles", response_model=RenderJobResponse)
+async def update_render_job_subtitles(
+    job_id: UUID,
+    body: RenderJobSubtitlesUpdate,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[ShortsRenderService, Depends(get_shorts_render_service)],
+):
+    """Replace the subtitles on a render job and lock out Whisper refinement.
+
+    Sets ``refinement_source='manual_edit'`` on the row so the
+    post-render Whisper hook (``post_render_hook.py`` in PR 4) skips
+    refinement on this render. Manual edits stay sticky — even if the
+    operator later clears all subtitles, the flag remains so a future
+    Whisper pass doesn't repopulate them.
+
+    Per CLAUDE.md "single-field schema; do NOT widen", this is a
+    DEDICATED endpoint distinct from ``PATCH /api/shorts/render/{job_id}``
+    (title only). New mutable fields should follow the same pattern
+    rather than extending either body.
+
+    Owner-scoped — 404 when the caller doesn't own the job. The
+    response includes the updated subtitle count via the rebuilt
+    ``input_spec`` and the new ``refinement_source`` value.
+    """
+    user_id = cast(UUID, user.id)
+    return await service.update_render_job_subtitles(
+        org_ctx.org_id, user_id, job_id, body.subtitles,
     )
 
 

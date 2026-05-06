@@ -26,6 +26,9 @@ export interface HighlightReelPreviewResponse {
   videos_excluded: number;
 }
 
+// Mirror of services/api/app/modules/shorts_render/schemas.py::RenderJobResponse.
+// Memory: feedback_frontend_types_mirror_backend_schema.md — adding a field
+// here without copying it from schemas.py is a regression vector.
 export interface RenderJobResponse {
   id: string;
   video_id: string;
@@ -40,6 +43,28 @@ export interface RenderJobResponse {
   download_url: string | null;
   thumbnail_video_id: string | null;
   thumbnail_scene_id: string | null;
+  // Refinement chain (migration 056 / PR 5 of whisper subtitles).
+  // - replaced_by_render_job_id: forward pointer to a refined child render.
+  //   The wizard polls this and follows the chain to swap to the refined
+  //   download_url silently.
+  // - refined_from_render_job_id: back pointer on a child to its parent.
+  // - refinement_source: 'whisper' | 'manual_edit' | null. 'manual_edit'
+  //   prevents future automatic refinement passes.
+  replaced_by_render_job_id: string | null;
+  refined_from_render_job_id: string | null;
+  refinement_source: string | null;
+}
+
+// Subset of heimdex_media_contracts.composition.SubtitleSpec sent by the
+// frontend when an operator edits subtitles. Backend re-validates as the
+// full SubtitleSpec — extra fields like ``style`` and ``template_id`` flow
+// through unchanged when callers include them.
+export interface SubtitleEdit {
+  text: string;
+  start_ms: number;
+  end_ms: number;
+  template_id?: string | null;
+  style?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +116,48 @@ export async function getRenderJobStatus(
 
   if (!res.ok) {
     throw new Error(`Status check failed (${res.status})`);
+  }
+
+  return res.json();
+}
+
+/**
+ * Replace a render job's subtitles and lock out automatic Whisper
+ * refinement (the API sets ``refinement_source='manual_edit'``).
+ *
+ * Backend endpoint: ``PATCH /api/shorts/render/{job_id}/subtitles``
+ * (PR 5 of the whisper-subtitles plan). Distinct from the title
+ * PATCH per CLAUDE.md "single-field schema; do NOT widen".
+ *
+ * Manual edits are sticky — even if the operator later clears the
+ * subtitles, the flag remains so a future Whisper pass doesn't
+ * repopulate them. To re-enable automatic refinement, the operator
+ * must trigger a fresh render (post creates a new row with a clean
+ * ``refinement_source``).
+ */
+export async function patchRenderJobSubtitles(
+  jobId: string,
+  subtitles: SubtitleEdit[],
+  getToken: TokenGetter,
+): Promise<RenderJobResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  try {
+    const token = await getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } catch { /* noop */ }
+
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/shorts/render/${jobId}/subtitles`,
+    {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ subtitles }),
+    },
+  );
+
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `Subtitle update failed (${res.status})`);
   }
 
   return res.json();

@@ -49,6 +49,12 @@ def _make_service():
         output_s3_key=None,
     )
     fake_job.input_spec = {"scene_clips": []}
+    # Refinement chain (migration 056). Default to None so the
+    # MagicMock auto-mock doesn't surface as a non-UUID/non-str
+    # value through Pydantic validation in _to_response.
+    fake_job.replaced_by_render_job_id = None
+    fake_job.refined_from_render_job_id = None
+    fake_job.refinement_source = None
     repo.create = AsyncMock(return_value=fake_job)
     repo.update_status = AsyncMock()
     # service.create_render_job calls ``repository.session.commit()``

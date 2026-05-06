@@ -296,6 +296,12 @@ def _to_response(job: ShortsRenderJob, download_url: str | None = None) -> Rende
         download_url=download_url,
         thumbnail_video_id=thumb_vid,
         thumbnail_scene_id=thumb_scene,
+        # Refinement chain (migration 056). Read directly off the ORM
+        # row — both pointers and the source flag are nullable
+        # columns so existing rows remain unaffected.
+        replaced_by_render_job_id=job.replaced_by_render_job_id,
+        refined_from_render_job_id=job.refined_from_render_job_id,
+        refinement_source=job.refinement_source,
     )
 
 
@@ -502,6 +508,45 @@ class ShortsRenderService:
         slot the result in without re-fetching.
         """
         job = await self.repository.update_title(org_id, user_id, job_id, title)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Render job not found",
+            )
+
+        download_url = await _build_playback_url(job)
+        return _to_response(job, download_url=download_url)
+
+    async def update_render_job_subtitles(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        job_id: UUID,
+        subtitles: list[Any],
+    ) -> RenderJobResponse:
+        """Replace the job's subtitles and mark it as manually edited.
+
+        ``subtitles`` is a list of validated ``SubtitleSpec`` instances
+        from the router (Pydantic does the per-item validation). The
+        repository accepts plain dicts so it stays free of contract
+        package imports — we serialize via ``model_dump`` here.
+
+        Side effect: ``refinement_source`` flips to ``'manual_edit'``,
+        which the post-render Whisper hook checks via
+        :func:`refinement_service._check_guards` to skip Whisper
+        passes on operator-edited subtitles.
+
+        Scoped to org+user; raises 404 when the job doesn't exist or
+        isn't owned. Idempotent: repeated calls with the same
+        subtitles produce the same row state.
+        """
+        # Each ``SubtitleSpec`` has ``.model_dump()``; we duck-type
+        # rather than import the contract package to keep the
+        # service layer thin.
+        subtitle_dicts = [s.model_dump() for s in subtitles]
+        job = await self.repository.update_subtitles_with_manual_edit(
+            org_id, user_id, job_id, subtitle_dicts
+        )
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

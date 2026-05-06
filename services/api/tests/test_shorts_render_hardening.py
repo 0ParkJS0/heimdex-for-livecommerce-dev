@@ -114,6 +114,11 @@ def _make_existing_job(composition_hash: str, age_seconds: int = 5):
     job.output_duration_ms = None
     job.output_size_bytes = None
     job.error = None
+    # Refinement chain (migration 056). Default to None so MagicMock
+    # auto-mocks don't surface as invalid types in Pydantic validation.
+    job.replaced_by_render_job_id = None
+    job.refined_from_render_job_id = None
+    job.refinement_source = None
     return job
 
 
@@ -348,6 +353,12 @@ def _make_completed_job(title: str = "Original", *, with_output: bool = False):
     job.input_spec = {
         "scene_clips": [{"video_id": "vid_123", "scene_id": "vid_123_scene_000"}],
     }
+    # Refinement chain (migration 056). Default to None so MagicMock
+    # doesn't auto-create child mocks for these attributes — Pydantic
+    # rejects MagicMock as a UUID/str on RenderJobResponse.
+    job.replaced_by_render_job_id = None
+    job.refined_from_render_job_id = None
+    job.refinement_source = None
     return job
 
 
