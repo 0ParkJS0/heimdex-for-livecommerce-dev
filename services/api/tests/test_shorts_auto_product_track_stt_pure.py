@@ -337,19 +337,21 @@ class TestSubtitleStyleScaling:
 class TestComputeCharsPerLine:
     def test_default_canvas_yields_around_11_chars(self):
         # 406-wide canvas, 32px font, 11px padding.
-        # available = 406 - 22 = 384; 384 / 32 = 12.
+        # available = 406 - 22 = 384; 384 * 0.92 = 353; 353 / 32 = 11.
+        # The 0.92 safety multiplier prevents dense Hangul cues from
+        # rendering flush against the frame edge.
         chars = _compute_chars_per_line(
             canvas_width=406, font_size_px=32, padding=11,
         )
-        assert chars == 12
+        assert chars == 11
 
     def test_wider_canvas_more_chars(self):
         # 720-wide → more horizontal headroom.
-        # available = 720 - 22 = 698; 698 / 32 = 21.
+        # available = 720 - 22 = 698; 698 * 0.92 = 642; 642 / 32 = 20.
         chars = _compute_chars_per_line(
             canvas_width=720, font_size_px=32, padding=11,
         )
-        assert chars == 21
+        assert chars == 20
 
     def test_zero_font_size_returns_zero(self):
         # Defensive — never divide by zero.

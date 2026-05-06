@@ -115,6 +115,15 @@ def _build_auto_shorts_subtitle_style(
     )
 
 
+# Safety multiplier on the per-line pixel budget. The naive
+# ``available_width / font_size_px`` math sits the pill flush
+# against the frame edge for dense Hangul cues — any rendering
+# variance (Pretendard glyph width is 0.85-0.95em, not exact
+# 1em) would push it past. 0.92 backs the budget off ~8% so the
+# rendered pill stays comfortably inside the frame.
+_AUTO_SHORTS_LINE_BUDGET_SAFETY = 0.92
+
+
 def _compute_chars_per_line(
     *,
     canvas_width: int,
@@ -123,17 +132,21 @@ def _compute_chars_per_line(
 ) -> int:
     """Estimate the maximum Hangul-density chars that fit on one line.
 
-    Hangul syllables in Pretendard Bold are ~1em wide; spaces and
+    Hangul syllables in Pretendard Bold are ~0.9em wide; spaces and
     Latin chars are narrower. Using ``font_size_px`` as the per-char
-    estimate gives a conservative lower bound that holds for
-    all-Hangul cues. Spaces and ASCII give ~1-2 chars of headroom
-    above this number — that's intentional protection against
-    Pretendard's slight per-glyph variance.
+    estimate already gives a conservative lower bound — applying
+    ``_AUTO_SHORTS_LINE_BUDGET_SAFETY`` (0.92) on top reserves a
+    small visible gap on each side of the rendered pill so the
+    border and shadow have room without abutting the frame edge.
+
+    Pre-2026-05-06 this returned a budget that put the pill flush
+    against the frame on dense Hangul cues, exposed when the line
+    wrap kicked in — see staging incident screenshot.
     """
     available_px = max(0, canvas_width - 2 * padding)
     if font_size_px <= 0:
         return 0
-    return available_px // font_size_px
+    return int(available_px * _AUTO_SHORTS_LINE_BUDGET_SAFETY) // font_size_px
 
 
 def _wrap_korean_subtitle_lines(
