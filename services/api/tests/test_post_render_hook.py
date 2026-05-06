@@ -100,7 +100,7 @@ class TestErrorContract:
         self,
         monkeypatch: pytest.MonkeyPatch,
         schedule_calls: list[tuple],
-        caplog: pytest.LogCaptureFixture,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         def _explode():
             raise RuntimeError("settings broken")
@@ -112,16 +112,16 @@ class TestErrorContract:
             parent_job_id=uuid4(), org_id=uuid4()
         )
         assert schedule_calls == []
-        # Should have logged
-        assert any(
-            "whisper_refine_hook_failed" in rec.message
-            for rec in caplog.records
-        )
+        # structlog renders to stdout/stderr via console_renderer, NOT
+        # through stdlib logging — so ``caplog.records`` is empty even
+        # when the log line was written. Capture stdout instead.
+        captured = capsys.readouterr()
+        assert "whisper_refine_hook_failed" in (captured.out + captured.err)
 
     def test_schedule_call_failure_logged_not_raised(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setattr(
             post_render_hook,
@@ -140,7 +140,5 @@ class TestErrorContract:
         post_render_hook.schedule_refinement_if_eligible(
             parent_job_id=uuid4(), org_id=uuid4()
         )
-        assert any(
-            "whisper_refine_hook_failed" in rec.message
-            for rec in caplog.records
-        )
+        captured = capsys.readouterr()
+        assert "whisper_refine_hook_failed" in (captured.out + captured.err)

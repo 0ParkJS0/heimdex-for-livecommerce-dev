@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import logging
 import time
 from typing import Any
 from uuid import UUID
@@ -48,8 +47,12 @@ from app.lib.whisper_transcribe import (
     WhisperTerminalError,
     WhisperTranscriber,
 )
+from app.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+# Use structlog so structured kwargs (parent_job_id, child_id, cost,
+# latency, etc.) reach the JSON formatter. See the matching note in
+# ``post_render_hook.py``.
+logger = get_logger(__name__)
 
 
 # Module-level strong-ref set to keep fire-and-forget tasks from being
@@ -87,7 +90,7 @@ def _get_transcriber() -> WhisperTranscriber | None:
     if not api_key:
         logger.warning(
             "whisper_refine_disabled_no_api_key",
-            extra={"reason": "OPENAI_API_KEY missing or empty"},
+            **{"reason": "OPENAI_API_KEY missing or empty"},
         )
         return None
     _TRANSCRIBER = WhisperTranscriber(
@@ -131,7 +134,7 @@ async def _runner(parent_job_id: UUID) -> None:
         # task-scheduler caller.
         logger.exception(
             "whisper_refine_unexpected_error",
-            extra={"parent_job_id": str(parent_job_id)},
+            **{"parent_job_id": str(parent_job_id)},
         )
 
 
@@ -153,7 +156,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     if transcriber is None:
         logger.info(
             "whisper_refine_skipped_no_transcriber",
-            extra={"parent_job_id": str(parent_job_id)},
+            **{"parent_job_id": str(parent_job_id)},
         )
         return
 
@@ -168,7 +171,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
             # owns it (or did already). Bail silently.
             logger.info(
                 "whisper_refine_skipped_locked_or_missing",
-                extra={"parent_job_id": str(parent_job_id)},
+                **{"parent_job_id": str(parent_job_id)},
             )
             return
 
@@ -176,7 +179,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
         if skip_reason is not None:
             logger.info(
                 "whisper_refine_skipped",
-                extra={
+                **{
                     "parent_job_id": str(parent_job_id),
                     "reason": skip_reason,
                 },
@@ -204,7 +207,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     except asyncio.TimeoutError:
         logger.warning(
             "whisper_refine_s3_download_timeout",
-            extra={
+            **{
                 "parent_job_id": str(parent_job_id),
                 "s3_key": parent_output_s3_key,
             },
@@ -213,7 +216,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     except Exception:
         logger.exception(
             "whisper_refine_s3_download_failed",
-            extra={
+            **{
                 "parent_job_id": str(parent_job_id),
                 "s3_key": parent_output_s3_key,
             },
@@ -223,7 +226,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     if not audio_bytes:
         logger.warning(
             "whisper_refine_s3_object_missing",
-            extra={
+            **{
                 "parent_job_id": str(parent_job_id),
                 "s3_key": parent_output_s3_key,
             },
@@ -243,27 +246,27 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     except BudgetExceededError:
         logger.info(
             "whisper_refine_skipped_budget",
-            extra={"parent_job_id": str(parent_job_id)},
+            **{"parent_job_id": str(parent_job_id)},
         )
         return
     except (WhisperTerminalError, WhisperRetryableError):
         logger.warning(
             "whisper_refine_transcription_failed",
-            extra={"parent_job_id": str(parent_job_id)},
+            **{"parent_job_id": str(parent_job_id)},
             exc_info=True,
         )
         return
     except Exception:
         logger.exception(
             "whisper_refine_transcription_unexpected",
-            extra={"parent_job_id": str(parent_job_id)},
+            **{"parent_job_id": str(parent_job_id)},
         )
         return
 
     if not result.words:
         logger.info(
             "whisper_refine_skipped_empty_words",
-            extra={
+            **{
                 "parent_job_id": str(parent_job_id),
                 "language": result.language,
                 "duration_seconds": result.duration_seconds,
@@ -280,7 +283,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     if not new_subtitles:
         logger.warning(
             "whisper_refine_skipped_no_chunks",
-            extra={
+            **{
                 "parent_job_id": str(parent_job_id),
                 "word_count": len(result.words),
             },
@@ -295,7 +298,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     except (KeyError, ValueError, TypeError):
         logger.exception(
             "whisper_refine_spec_build_failed",
-            extra={"parent_job_id": str(parent_job_id)},
+            **{"parent_job_id": str(parent_job_id)},
         )
         return
 
@@ -309,7 +312,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
         if parent is None or parent.replaced_by_render_job_id is not None:
             logger.info(
                 "whisper_refine_skipped_raced",
-                extra={"parent_job_id": str(parent_job_id)},
+                **{"parent_job_id": str(parent_job_id)},
             )
             return
 
@@ -328,7 +331,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
         except Exception:
             logger.exception(
                 "whisper_refine_db_write_failed",
-                extra={"parent_job_id": str(parent_job_id)},
+                **{"parent_job_id": str(parent_job_id)},
             )
             await session.rollback()
             return
@@ -350,7 +353,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     except Exception:
         logger.exception(
             "whisper_refine_sqs_publish_failed",
-            extra={
+            **{
                 "parent_job_id": str(parent_job_id),
                 "child_id": str(child_id),
             },
@@ -373,7 +376,7 @@ async def _run_refinement(parent_job_id: UUID) -> None:
     elapsed_ms = int((time.monotonic() - started_at) * 1000)
     logger.info(
         "whisper_refine_completed",
-        extra={
+        **{
             "parent_job_id": str(parent_job_id),
             "child_id": str(child_id),
             "word_count": len(result.words),

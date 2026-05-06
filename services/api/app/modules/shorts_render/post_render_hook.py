@@ -21,14 +21,20 @@ Loose-coupling rules:
 
 from __future__ import annotations
 
-import logging
 from uuid import UUID
 
 from app.config import get_settings
 from app.lib.rollout import is_in_rollout
+from app.logging_config import get_logger
 from app.modules.shorts_render import refinement_service
 
-logger = logging.getLogger(__name__)
+# Use structlog so the structured kwargs reach the JSON formatter.
+# Live-on-staging finding 2026-05-06: stdlib ``logger.info(msg, extra={...})``
+# emitted only the message string in production; the ``parent_job_id``,
+# ``org_id``, ``rollout_pct`` fields were silently dropped, hobbling
+# diagnostics. The rest of the shorts_render module already uses
+# ``app.logging_config.get_logger`` — converging.
+logger = get_logger(__name__)
 
 
 def schedule_refinement_if_eligible(
@@ -71,21 +77,17 @@ def schedule_refinement_if_eligible(
         if not is_in_rollout(key=str(org_id), rollout_pct=rollout_pct):
             logger.debug(
                 "whisper_refine_outside_rollout",
-                extra={
-                    "parent_job_id": str(parent_job_id),
-                    "org_id": str(org_id),
-                    "rollout_pct": rollout_pct,
-                },
+                parent_job_id=str(parent_job_id),
+                org_id=str(org_id),
+                rollout_pct=rollout_pct,
             )
             return
 
         refinement_service.schedule_refinement(parent_job_id)
         logger.info(
             "whisper_refine_scheduled",
-            extra={
-                "parent_job_id": str(parent_job_id),
-                "org_id": str(org_id),
-            },
+            parent_job_id=str(parent_job_id),
+            org_id=str(org_id),
         )
     except Exception:
         # Defense in depth: this function is called from the worker
@@ -93,5 +95,5 @@ def schedule_refinement_if_eligible(
         # and trigger an SQS retry. Swallow + log instead.
         logger.exception(
             "whisper_refine_hook_failed",
-            extra={"parent_job_id": str(parent_job_id)},
+            parent_job_id=str(parent_job_id),
         )
