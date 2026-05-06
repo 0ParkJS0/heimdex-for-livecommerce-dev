@@ -75,6 +75,9 @@ describe("CandidateCard", () => {
             download_url: null,
             thumbnail_video_id: null,
             thumbnail_scene_id: null,
+            replaced_by_render_job_id: null,
+            refined_from_render_job_id: null,
+            refinement_source: null,
           },
         }}
         onSelect={() => {}}
@@ -107,6 +110,9 @@ describe("CandidateCard", () => {
             download_url: "/dl",
             thumbnail_video_id: "vid",
             thumbnail_scene_id: "vid_scene_000",
+            replaced_by_render_job_id: null,
+            refined_from_render_job_id: null,
+            refinement_source: null,
           },
         }}
         onSelect={() => {}}
