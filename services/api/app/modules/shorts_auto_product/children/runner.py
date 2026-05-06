@@ -500,12 +500,19 @@ class ChildRunner:
         )
 
         # ── 5. Create render via the shorts-render service ────────
+        # Pass ``str(child_id)`` as the dedupe idempotency key
+        # (migration 057). Two different scan_jobs that happen to
+        # produce identical compositions stay distinct rather than
+        # collapsing into one render row — fixes the staging
+        # 2026-05-06 collision where the LLM enumerator picked the
+        # same product for clips 1 and 5.
         render_job_id = await self._create_render_job(
             org_id=parent.org_id,
             user_id=parent.requested_by_user_id,
             os_video_id=os_video_id,
             title=catalog_label,
             composition_spec=composition_spec,
+            scan_job_id=child_id,
         )
 
         # ── 6. Complete with the new render_job_id ────────────────
@@ -885,6 +892,7 @@ class ChildRunner:
         os_video_id: str,
         title: str | None,
         composition_spec,
+        scan_job_id: UUID,
     ) -> UUID:
         """Construct ``ShortsRenderService`` against a fresh session
         and call ``create_render_job``. Lazy import keeps the runner
@@ -923,6 +931,11 @@ class ChildRunner:
                     composition=composition_spec,
                 ),
                 dedupe_within_seconds=retry_safe_dedupe_seconds,
+                # Scope dedupe to this scan_job — a crash-retry of
+                # the SAME scan collapses (good), but two different
+                # scan_jobs producing identical compositions stay
+                # distinct (fixes staging 2026-05-06 collision).
+                idempotency_key=str(scan_job_id),
             )
             # Commit BEFORE the with-block exits — ``ShortsRenderService``
             # only ``flush()``es the new row, so closing the session

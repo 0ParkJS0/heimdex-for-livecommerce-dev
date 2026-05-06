@@ -27,8 +27,16 @@ class ShortsRenderJobRepository:
         input_spec: dict[str, Any],
         expires_at: datetime | None,
         composition_hash: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ShortsRenderJob:
-        """Create a new render job (status set by server_default)."""
+        """Create a new render job (status set by server_default).
+
+        ``idempotency_key`` (migration 057) scopes the dedupe lookup
+        in :meth:`find_recent_duplicate`. Wizard child runs pass
+        ``str(scan_job_id)`` so a crash-retry collapses but two
+        different scan_jobs with identical compositions stay
+        distinct. Leave NULL for direct user-click renders.
+        """
         job = ShortsRenderJob(
             org_id=org_id,
             user_id=user_id,
@@ -37,6 +45,7 @@ class ShortsRenderJobRepository:
             input_spec=input_spec,
             expires_at=expires_at,
             composition_hash=composition_hash,
+            idempotency_key=idempotency_key,
         )
         self.session.add(job)
         await self.session.flush()
@@ -71,23 +80,41 @@ class ShortsRenderJobRepository:
         user_id: UUID,
         composition_hash: str,
         since: datetime,
+        idempotency_key: str | None = None,
     ) -> ShortsRenderJob | None:
-        """Find the most recent job whose (org, user, hash) matches and
-        was created after ``since``. Used by the idempotency check to
-        collapse accidental double-submissions.
+        """Find the most recent job whose (org, user, hash, key) matches
+        and was created after ``since``.
 
-        Returns None if no recent match — the caller should proceed with
-        a fresh create. Jobs in any status (queued / rendering /
+        ``idempotency_key`` (migration 057) scopes the match:
+
+        - ``None`` → only matches rows with ``idempotency_key IS NULL``
+          (legacy semantics; preserves direct-user-click dedupe).
+        - non-None → matches rows with the SAME key only. Different
+          scan_jobs with identical compositions but different
+          ``scan_job_id``-derived keys will NOT collide.
+
+        Returns ``None`` if no recent match — the caller should proceed
+        with a fresh create. Jobs in any status (queued / rendering /
         completed / failed) count as duplicates so a retry during an
         in-flight render returns the existing in-flight job, not a new
         one.
+
+        The dedupe index ``ix_shorts_render_jobs_dedupe`` covers
+        ``(org_id, user_id, composition_hash, idempotency_key,
+        created_at)`` so both the IS NULL and = comparisons hit the
+        same B-tree.
         """
+        if idempotency_key is None:
+            key_clause = ShortsRenderJob.idempotency_key.is_(None)
+        else:
+            key_clause = ShortsRenderJob.idempotency_key == idempotency_key
         result = await self.session.execute(
             select(ShortsRenderJob)
             .where(
                 ShortsRenderJob.org_id == org_id,
                 ShortsRenderJob.user_id == user_id,
                 ShortsRenderJob.composition_hash == composition_hash,
+                key_clause,
                 ShortsRenderJob.created_at >= since,
             )
             .order_by(ShortsRenderJob.created_at.desc())

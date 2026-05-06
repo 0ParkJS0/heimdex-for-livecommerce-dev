@@ -51,6 +51,17 @@ class ShortsRenderJob(Base, UUIDMixin, TimestampMixin):
         String(64), nullable=True
     )
 
+    # Optional caller-supplied dedupe scope (migration 057). When the
+    # auto-shorts wizard creates a child render, it passes
+    # ``str(scan_job_id)`` so a crash-retry of the SAME scan_job
+    # collapses to one row, while two DIFFERENT scan_jobs that happen
+    # to produce identical compositions stay distinct. Direct
+    # user-click renders leave this NULL and keep the legacy
+    # NULL-only dedupe semantics.
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+
     # Refinement chain (migration 056). Used by the post-render Whisper
     # subtitle refinement hook to link a parent render to the refined
     # render produced from its output MP4.
@@ -98,6 +109,7 @@ class ShortsRenderJob(Base, UUIDMixin, TimestampMixin):
             "org_id",
             "user_id",
             "composition_hash",
+            "idempotency_key",
             "created_at",
         ),
         # Partial index supports the "have we already refined this

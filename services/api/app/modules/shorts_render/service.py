@@ -317,6 +317,7 @@ class ShortsRenderService:
         payload: RenderJobCreate,
         *,
         dedupe_within_seconds: int | None = None,
+        idempotency_key: str | None = None,
     ) -> RenderJobResponse:
         """Create a render job after validating scene boundaries.
 
@@ -374,6 +375,7 @@ class ShortsRenderService:
             user_id=user_id,
             composition_hash=composition_hash,
             since=dedupe_since,
+            idempotency_key=idempotency_key,
         )
         if existing is not None:
             logger.info(
@@ -382,6 +384,7 @@ class ShortsRenderService:
                 org_id=str(org_id),
                 user_id=str(user_id),
                 composition_hash=composition_hash,
+                idempotency_key=idempotency_key,
                 age_seconds=(
                     datetime.now(timezone.utc) - existing.created_at
                 ).total_seconds(),
@@ -400,6 +403,7 @@ class ShortsRenderService:
             input_spec=payload.composition.model_dump(),
             expires_at=expires_at,
             composition_hash=composition_hash,
+            idempotency_key=idempotency_key,
         )
 
         logger.info(
