@@ -80,6 +80,51 @@ async def update_render_job_title(
     )
 
 
+@router.post(
+    "/{job_id}/rerender",
+    response_model=RenderJobResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def rerender_render_job(
+    job_id: UUID,
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[ShortsRenderService, Depends(get_shorts_render_service)],
+    _rate_limit: Annotated[None, Depends(require_shorts_render_rate_limit)] = None,
+):
+    """Promote a render's current ``input_spec`` to a fresh queued render.
+
+    Pairs with the manual subtitle-edit flow:
+      1. Operator edits subtitles in the wizard.
+      2. Debounced PATCH ``/api/shorts/render/{id}/subtitles`` saves
+         edits to ``parent.input_spec.subtitles``.
+      3. Operator clicks "Render with my edits" → this endpoint.
+      4. Backend creates a child render carrying the edited spec,
+         links parent → child, enqueues to SQS.
+      5. Frontend's ``useRefinedRenderChain`` swaps to the child
+         once it completes.
+
+    No body — the spec is whatever the parent's ``input_spec`` is at
+    call time. This keeps "save" and "render" decoupled (auto-save
+    is free; rendering is the explicit-cost action).
+
+    Errors:
+      - 404: render job not found OR not owned by the calling user.
+      - 409: parent isn't in 'completed' status.
+      - 429: per-user shorts-render rate limit hit.
+
+    Idempotency: 30-second composition-hash dedupe window — repeated
+    clicks return the existing child render rather than queueing
+    duplicates.
+
+    Plan: ``.claude/plans/auto-shorts-subtitle-editor-2026-05-06.md`` PR 1.
+    """
+    user_id = cast(UUID, user.id)
+    return await service.rerender_from_edits(
+        org_ctx.org_id, user_id, job_id,
+    )
+
+
 @router.patch("/{job_id}/subtitles", response_model=RenderJobResponse)
 async def update_render_job_subtitles(
     job_id: UUID,

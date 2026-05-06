@@ -122,6 +122,47 @@ export async function getRenderJobStatus(
 }
 
 /**
+ * Promote a render job's current ``input_spec`` to a fresh queued
+ * render (PR 1 of auto-shorts-subtitle-editor plan).
+ *
+ * Pairs with manual subtitle edits: the operator types in the
+ * editor → debounced ``patchRenderJobSubtitles`` saves to
+ * ``input_spec.subtitles`` → operator clicks "Render with my edits"
+ * → this helper enqueues the new render.
+ *
+ * Backend endpoint: ``POST /api/shorts/render/{job_id}/rerender``
+ * (no body — server reads the parent's current input_spec).
+ *
+ * Idempotent within a 30s composition-hash window. Returns the
+ * newly-created child ``RenderJobResponse`` (or the deduped
+ * existing one). Caller should pivot the wizard's polling target
+ * to the returned ``id`` so ``useRefinedRenderChain`` follows the
+ * fresh render.
+ */
+export async function rerenderFromEdits(
+  jobId: string,
+  getToken: TokenGetter,
+): Promise<RenderJobResponse> {
+  const headers: Record<string, string> = {};
+  try {
+    const token = await getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  } catch { /* noop */ }
+
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/shorts/render/${jobId}/rerender`,
+    { method: "POST", headers },
+  );
+
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `Rerender failed (${res.status})`);
+  }
+
+  return res.json();
+}
+
+/**
  * Replace a render job's subtitles and lock out automatic Whisper
  * refinement (the API sets ``refinement_source='manual_edit'``).
  *

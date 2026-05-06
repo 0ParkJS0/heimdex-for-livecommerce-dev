@@ -232,6 +232,63 @@ class ShortsRenderJobRepository:
         await self.session.flush()
         return await self._get_by_id_internal(job_id)
 
+    async def create_rerender_child(
+        self,
+        *,
+        org_id: UUID,
+        user_id: UUID,
+        parent_job_id: UUID,
+        composition_hash: str,
+    ) -> ShortsRenderJob | None:
+        """Insert a child render row carrying the parent's current ``input_spec``.
+
+        Used by the manual subtitle-edit "Render with my edits" flow
+        (plan: ``.claude/plans/auto-shorts-subtitle-editor-2026-05-06.md``).
+        The child inherits ``org_id``, ``user_id``, ``video_id``,
+        ``title``, ``expires_at``, AND ``input_spec`` (which already
+        carries the operator's edited subtitles via prior PATCH
+        ``/subtitles`` calls). ``refined_from_render_job_id`` points
+        back at the parent and ``refinement_source='manual_edit'`` is
+        carried forward (or set fresh when the parent had ``None``).
+
+        Owner-scoped via ``get_by_id`` — returns ``None`` when the
+        parent is missing or owned by a different ``(org_id, user_id)``.
+        Also returns ``None`` when the parent isn't in the
+        ``completed`` state — re-rendering an in-flight or failed
+        parent has unclear semantics; the service surfaces this as a
+        409 to the operator.
+
+        ``composition_hash`` is computed by the caller (the service
+        already has the helper) and passed in so the repository
+        stays free of hashing concerns.
+        """
+        parent = await self.get_by_id(org_id, user_id, parent_job_id)
+        if parent is None:
+            return None
+        if parent.status != "completed":
+            return None
+
+        child = ShortsRenderJob(
+            org_id=parent.org_id,
+            user_id=parent.user_id,
+            video_id=parent.video_id,
+            title=parent.title,
+            input_spec=parent.input_spec,
+            expires_at=parent.expires_at,
+            composition_hash=composition_hash,
+            refined_from_render_job_id=parent.id,
+            # Inherit the source — typically 'manual_edit' set by
+            # PATCH /subtitles. If the parent was a Whisper-refined
+            # row with refinement_source='whisper', and the operator
+            # rerenders it without editing, that's a no-op of sorts;
+            # the resulting child is still flagged 'whisper'. Edge
+            # case — operators typically edit before rerendering.
+            refinement_source=parent.refinement_source,
+        )
+        self.session.add(child)
+        await self.session.flush()
+        return child
+
     async def update_subtitles_with_manual_edit(
         self,
         org_id: UUID,

@@ -517,6 +517,151 @@ class ShortsRenderService:
         download_url = await _build_playback_url(job)
         return _to_response(job, download_url=download_url)
 
+    async def rerender_from_edits(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        parent_job_id: UUID,
+    ) -> RenderJobResponse:
+        """Promote a parent render's current ``input_spec`` to a fresh
+        queued render.
+
+        Call site: the operator's "Render with my edits" button, after
+        they've used PATCH ``/subtitles`` (debounced auto-save) to
+        update ``parent.input_spec.subtitles``.
+
+        The child render carries the parent's current ``input_spec``
+        (which already has the edited subtitles), gets its own
+        ``id``, points back at the parent via
+        ``refined_from_render_job_id``, and inherits
+        ``refinement_source`` (typically ``'manual_edit'`` set by
+        the prior PATCH).
+
+        The parent's ``replaced_by_render_job_id`` is set to the new
+        child so ``useRefinedRenderChain`` follows the swap.
+
+        Idempotent within a 30s window via composition-hash dedupe —
+        repeated clicks within 30s return the existing child rather
+        than creating duplicates.
+
+        Errors:
+          - 404: parent missing or owned by a different (org_id, user_id).
+          - 409: parent isn't in 'completed' state (rerendering an
+                 in-flight job has unclear semantics — wait first).
+        """
+        parent = await self.repository.get_by_id(org_id, user_id, parent_job_id)
+        if parent is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Render job not found",
+            )
+        if parent.status != "completed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Cannot rerender from a {parent.status!r} job — "
+                    "wait for the original render to complete first."
+                ),
+            )
+
+        # Hash the parent's CURRENT input_spec (post-edits). The
+        # parent's stored composition_hash column reflects its
+        # creation-time spec, which is now stale; recompute.
+        composition_hash = compute_composition_hash(parent.input_spec)
+
+        # Composition-hash dedupe — repeated clicks within 30s collapse
+        # to the existing child. Skip the parent itself in case its
+        # own hash happens to match (it shouldn't post-edit, but a
+        # no-op rerender of an unedited refined child could match).
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            seconds=_DEDUPE_WINDOW_SECONDS
+        )
+        existing = await self.repository.find_recent_duplicate(
+            org_id=org_id,
+            user_id=user_id,
+            composition_hash=composition_hash,
+            since=cutoff,
+        )
+        if existing is not None and existing.id != parent.id:
+            logger.info(
+                "rerender_idempotent_replay",
+                parent_id=str(parent_job_id),
+                child_id=str(existing.id),
+                org_id=str(org_id),
+                user_id=str(user_id),
+                composition_hash=composition_hash,
+            )
+            download_url = await _build_playback_url(existing)
+            return _to_response(existing, download_url=download_url)
+
+        child = await self.repository.create_rerender_child(
+            org_id=org_id,
+            user_id=user_id,
+            parent_job_id=parent_job_id,
+            composition_hash=composition_hash,
+        )
+        if child is None:
+            # Parent vanished or changed state between the get_by_id
+            # check and the create. Treat as a 404 — race-safe and
+            # consistent with get_render_job semantics.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Render job not found",
+            )
+
+        # Link parent → child. Reuse the existing chain helper so manual
+        # and Whisper rerenders share the same write path. The helper
+        # is in refinement_repository (a generic chain helper despite
+        # its name); importing here is acceptable per the loose-
+        # coupling rules (this service may import the chain helper,
+        # but NOT refinement_service).
+        from app.modules.shorts_render import refinement_repository
+
+        await refinement_repository.link_parent_to_child(
+            self.repository.session,
+            parent_id=parent_job_id,
+            child_id=cast(UUID, child.id),
+        )
+
+        logger.info(
+            "rerender_from_edits_created",
+            parent_id=str(parent_job_id),
+            child_id=str(child.id),
+            org_id=str(org_id),
+            user_id=str(user_id),
+            composition_hash=composition_hash,
+        )
+
+        # Commit before SQS publish — same pattern as create_render_job
+        # to avoid the 2026-05-06 stranded-render race.
+        await self.repository.session.commit()
+
+        try:
+            from app.sqs_producer import publish_shorts_render_job
+
+            publish_shorts_render_job(
+                job_id=cast(UUID, child.id),
+                org_id=org_id,
+                video_id=child.video_id,
+                input_spec=child.input_spec,
+            )
+        except Exception:
+            logger.exception(
+                "rerender_sqs_publish_failed",
+                parent_id=str(parent_job_id),
+                child_id=str(child.id),
+            )
+            await self.repository.update_status(
+                cast(UUID, child.id),
+                "failed",
+                error="Failed to enqueue rerender",
+            )
+            await self.repository.session.commit()
+            child.status = "failed"
+            child.error = "Failed to enqueue rerender"
+
+        return _to_response(child)
+
     async def update_render_job_subtitles(
         self,
         org_id: UUID,
