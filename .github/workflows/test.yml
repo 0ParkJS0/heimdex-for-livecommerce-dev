@@ -100,6 +100,7 @@ jobs:
             tests/test_shorts_render_subtitles_download.py \
             tests/test_rerender_from_edits.py \
             tests/test_render_idempotency_key.py \
+            tests/test_requeue_stale_renders.py \
             --tb=short
 
           # NOTE: shorts_auto tests are deliberately NOT in the CI
