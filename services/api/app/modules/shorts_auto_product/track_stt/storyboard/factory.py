@@ -77,15 +77,76 @@ def build_storyboard_picker_from_settings(
         return HeuristicStoryboardPicker(budgets=budgets)
 
     if picker_type == "llm":
-        # Tier C placeholder — when ``LlmStoryboardPicker`` lands,
-        # construct it here with ``openai_client`` + ``model`` from
-        # settings. Loud failure beats silent fallback to heuristic
-        # because operators flipping the switch deserve to know
-        # their config didn't take effect.
-        raise NotImplementedError(
-            "LlmStoryboardPicker (Tier C) is not yet implemented; "
-            "set auto_shorts_product_v2_storyboard_picker='heuristic' "
-            "or disable storyboard mode entirely."
+        # Tier C — LLM director. Plan:
+        # ``.claude/plans/storyboard-tier-c-llm-picker-2026-05-07.md``.
+        #
+        # Lazy-import the OpenAI SDK + LlmStoryboardPicker so the
+        # heuristic-mode startup path doesn't pay for the SDK
+        # construction cost. Mirrors the
+        # ``whisper_transcribe._get_transcriber`` lazy-singleton
+        # pattern.
+        from openai import AsyncOpenAI  # type: ignore[import-not-found]
+
+        from app.lib.whisper_transcribe.budget import (
+            InMemoryBudgetTracker as _InMemoryBudgetTracker,
+        )
+        from app.modules.shorts_auto_product.track_stt.storyboard.llm_picker import (
+            LlmStoryboardPicker,
+        )
+
+        api_key = (getattr(settings, "openai_api_key", "") or "").strip()
+        if not api_key:
+            # Soft fallback: deploy missing OPENAI_API_KEY shouldn't
+            # crash the storyboard pipeline. Log loud so the operator
+            # sees the misconfig in the next deploy log scrape.
+            logger.warning(
+                "stt_storyboard_llm_disabled_no_api_key — "
+                "falling back to heuristic picker; set OPENAI_API_KEY "
+                "or AUTO_SHORTS_PRODUCT_V2_STORYBOARD_PICKER=heuristic "
+                "to silence this warning",
+                extra={"picker_requested": "llm"},
+            )
+            return HeuristicStoryboardPicker(budgets=budgets)
+
+        model = getattr(
+            settings, "auto_shorts_product_v2_storyboard_llm_model",
+            "gpt-4o-mini",
+        )
+        timeout_s = float(getattr(
+            settings, "auto_shorts_product_v2_storyboard_llm_timeout_s",
+            5.0,
+        ))
+        daily_budget_usd = float(getattr(
+            settings,
+            "auto_shorts_product_v2_storyboard_llm_daily_budget_usd",
+            5.0,
+        ))
+        prompt_version = getattr(
+            settings,
+            "auto_shorts_product_v2_storyboard_llm_prompt_version",
+            "v1",
+        )
+        logger.debug(
+            "stt_storyboard_picker_built",
+            extra={
+                "picker": "llm",
+                "model": model,
+                "timeout_s": timeout_s,
+                "daily_budget_usd": daily_budget_usd,
+                "prompt_version": prompt_version,
+                "budgets": budgets.__dict__,
+            },
+        )
+        return LlmStoryboardPicker(
+            openai_client=AsyncOpenAI(api_key=api_key),
+            model=model,
+            prompt_version=prompt_version,
+            timeout_s=timeout_s,
+            budgets=budgets,
+            budget_tracker=_InMemoryBudgetTracker(
+                daily_budget_usd=daily_budget_usd,
+            ),
+            fallback=HeuristicStoryboardPicker(budgets=budgets),
         )
 
     raise ValueError(
