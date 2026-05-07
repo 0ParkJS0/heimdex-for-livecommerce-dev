@@ -84,17 +84,66 @@ class TestFactoryHeuristic:
 
 
 class TestFactoryLlm:
-    def test_llm_picker_raises_until_tier_c(self) -> None:
-        # Loud failure: operators flipping the picker to "llm" before
-        # Tier C lands must SEE the misconfiguration. Silent fallback
-        # to heuristic would mask the deployment error.
-        with pytest.raises(NotImplementedError, match="Tier C"):
-            build_storyboard_picker_from_settings(
-                _settings(
-                    auto_shorts_product_v2_storyboard_mode_enabled=True,
-                    auto_shorts_product_v2_storyboard_picker="llm",
-                ),
-            )
+    """Tier C is now wired (storyboard-tier-c-llm-picker-2026-05-07.md).
+
+    Three behaviors to lock in:
+      1. ``picker="llm"`` + ``OPENAI_API_KEY`` set → ``LlmStoryboardPicker``.
+      2. ``picker="llm"`` + missing ``OPENAI_API_KEY`` → soft fallback
+         to ``HeuristicStoryboardPicker`` with a WARNING log (rather
+         than crash). Operators see the misconfig in deploy logs.
+      3. The constructed LLM picker carries through model + timeout +
+         budget + prompt_version from settings.
+    """
+
+    def test_llm_picker_built_when_api_key_present(self) -> None:
+        from app.modules.shorts_auto_product.track_stt.storyboard.llm_picker import (
+            LlmStoryboardPicker,
+        )
+
+        picker = build_storyboard_picker_from_settings(
+            _settings(
+                auto_shorts_product_v2_storyboard_mode_enabled=True,
+                auto_shorts_product_v2_storyboard_picker="llm",
+                openai_api_key="sk-test-fake",
+                auto_shorts_product_v2_storyboard_llm_model="gpt-4o-mini",
+                auto_shorts_product_v2_storyboard_llm_timeout_s=5.0,
+                auto_shorts_product_v2_storyboard_llm_daily_budget_usd=5.0,
+                auto_shorts_product_v2_storyboard_llm_prompt_version="v1",
+            ),
+        )
+        assert isinstance(picker, LlmStoryboardPicker)
+        assert picker.model == "gpt-4o-mini"
+        assert picker.prompt_version == "v1"
+        assert picker.timeout_s == 5.0
+        # The fallback inside the LLM picker must be a heuristic picker
+        # (three-layer-resilience contract).
+        assert isinstance(picker.fallback, HeuristicStoryboardPicker)
+
+    def test_llm_picker_soft_fallback_when_no_api_key(self) -> None:
+        # Missing OPENAI_API_KEY: rather than crash, the factory
+        # returns the heuristic picker so the storyboard pipeline
+        # still produces output. The factory logs a WARNING for
+        # operator visibility — see ``stt_storyboard_llm_disabled_no_api_key``.
+        picker = build_storyboard_picker_from_settings(
+            _settings(
+                auto_shorts_product_v2_storyboard_mode_enabled=True,
+                auto_shorts_product_v2_storyboard_picker="llm",
+                openai_api_key="",
+            ),
+        )
+        assert isinstance(picker, HeuristicStoryboardPicker)
+
+    def test_llm_picker_soft_fallback_when_api_key_whitespace(self) -> None:
+        # Defensive — a misconfigured ``.env`` could leave the var as
+        # whitespace. ``.strip()`` should treat it the same as missing.
+        picker = build_storyboard_picker_from_settings(
+            _settings(
+                auto_shorts_product_v2_storyboard_mode_enabled=True,
+                auto_shorts_product_v2_storyboard_picker="llm",
+                openai_api_key="   ",
+            ),
+        )
+        assert isinstance(picker, HeuristicStoryboardPicker)
 
 
 class TestFactoryUnknownPicker:
