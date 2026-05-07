@@ -1,0 +1,157 @@
+"""Tier C system prompt + user-prompt builder.
+
+Plan: ``.claude/plans/storyboard-tier-c-llm-picker-2026-05-07.md``.
+
+Pure module — zero I/O, zero ``app.modules.*`` imports beyond
+``track_stt.models`` and ``storyboard.types`` for type names. The
+LLM picker (``llm_picker.py``) wires these into the
+``openai.chat.completions.create`` call; the rest of the pipeline
+doesn't see the prompt content.
+
+PROMPT_VERSION discipline:
+
+* Bump ``PROMPT_VERSION`` on EVERY edit to ``_SYSTEM_PROMPT`` —
+  goldens snapshot cache keys on this; an edit without a bump
+  silently invalidates eval reproducibility.
+* Mirror the bump in
+  ``settings.auto_shorts_product_v2_storyboard_llm_prompt_version``
+  default value. The factory passes the env var through; the picker
+  uses the env value at runtime but the module constant is the
+  source of truth.
+* English instructions + Korean transcript content. Same convention
+  as ``chunk_scorer.py``. gpt-4o-mini handles Korean transcripts
+  cleanly with English instructions; English keeps the system prompt
+  compact (~500 tokens vs ~700 if translated).
+"""
+
+from __future__ import annotations
+
+from app.modules.shorts_auto_product.track_stt.models import (
+    MentionSegment,  # noqa: F401  — kept for type-symmetry with future expansion
+    ScoredChunk,
+)
+from app.modules.shorts_auto_product.track_stt.storyboard.types import (
+    SlotBudgets,
+)
+
+
+# ====================================================================
+# PROMPT_VERSION — bump on every system-prompt edit. Eval cache keys
+# on this. Mirror the bump in
+# ``app.config.Settings.auto_shorts_product_v2_storyboard_llm_prompt_version``.
+# ====================================================================
+PROMPT_VERSION = "v1"
+
+
+_SYSTEM_PROMPT = """You are a livecommerce shorts director. Pick chunks from \
+the provided transcript to fill 4 narrative slots:
+
+- HOOK (5-10s): grabs attention, sets up curiosity, opens with energy.
+- INTRO (8-15s): names the product, frames the value proposition.
+- DETAIL (15-25s, 1-2 chunks): demonstration, mechanism, evidence, comparison.
+- CTA (5-10s): purchase prompt, urgency, or closer.
+
+Rules:
+
+1. Use each chunk at most once. Return chunk_index from the provided list.
+2. The HOOK chunk must come from the FIRST third of the source video.
+3. The CTA chunk must come from the LAST third of the source video.
+4. DETAIL fragments play in source-time order among themselves.
+5. Prefer narrative coherence over per-chunk scores: a chunk that
+   answers the HOOK's question is better than the highest-hook chunk
+   in isolation.
+6. Avoid repetition: if HOOK and INTRO would say similar things, pick
+   a different INTRO.
+
+Return exactly one HOOK, one INTRO, one CTA, and 1-2 DETAIL fragments.
+For each fragment provide a one-sentence rationale in English explaining
+WHY this chunk fits this slot. Also provide a global_rationale (one
+sentence) explaining the overall narrative arc you chose.
+
+Be deterministic. Do not infer facts not present in the transcript."""
+
+
+def build_user_prompt(
+    *,
+    all_chunks: list[ScoredChunk],
+    target_duration_ms: int,
+    llm_label: str,
+    spoken_aliases: list[str],
+    slot_budgets: SlotBudgets,
+) -> str:
+    """Compose the user-message content for one OpenAI call.
+
+    Format mirrors ``chunk_scorer.py``'s per-chunk listing for visual
+    consistency in any debug capture. Korean transcript content is
+    embedded verbatim — the LLM handles the language switch itself.
+
+    Index discipline: chunks are listed in CHRONOLOGICAL order
+    (sorted by ``start_ms``). The LLM's response references the
+    1-based-display / 0-based-internal index of this listing. The
+    picker re-sorts incoming chunks chronologically before building
+    the prompt to ensure prompt-index ↔ list-index alignment is
+    deterministic.
+
+    ``mention_segments`` is intentionally NOT included in v1 (Path B
+    decision 2). Add as a "Segment context" section if eval shows
+    chunk-text-only narrative quality plateauing below Tier B.
+    """
+    chronological = sorted(all_chunks, key=lambda c: c.start_ms)
+
+    # Product context — single line, terse to keep token count low.
+    aliases_clean = [a.strip() for a in spoken_aliases if a and a.strip()]
+    if aliases_clean:
+        product_line = (
+            f"Product: {llm_label} "
+            f"(also called: {', '.join(aliases_clean)})"
+        )
+    else:
+        product_line = f"Product: {llm_label}"
+
+    # Slot budget line — gives the LLM a sense of how much each slot
+    # accommodates, which can shape its picks (e.g., favor a short,
+    # punchy chunk for HOOK if HOOK budget is small).
+    budget_line = (
+        f"Slot budgets: HOOK={slot_budgets.hook_ms // 1000}s "
+        f"INTRO={slot_budgets.intro_ms // 1000}s "
+        f"DETAIL={slot_budgets.detail_ms // 1000}s "
+        f"CTA={slot_budgets.cta_ms // 1000}s"
+    )
+
+    target_line = f"Target total duration: {target_duration_ms // 1000}s"
+
+    chunk_lines = ["Chunks (chronological, 0-indexed):"]
+    for idx, chunk in enumerate(chronological):
+        start_total_s = chunk.start_ms // 1000
+        end_total_s = chunk.end_ms // 1000
+        start_mm, start_ss = divmod(start_total_s, 60)
+        end_mm, end_ss = divmod(end_total_s, 60)
+        # ``importance``, ``hook``, ``has_cta`` mirror the per-chunk
+        # scoring features Tier B uses. Including them gives the LLM
+        # numeric anchors without forcing it to derive them from text.
+        score_line = (
+            f"importance={chunk.score.importance_score:.2f} "
+            f"hook={chunk.score.hook_score:.2f} "
+            f"has_cta={'true' if chunk.score.has_cta else 'false'}"
+        )
+        # Truncate very long transcript text — gpt-4o-mini handles 50+
+        # chunks fine but our chunk_scorer caps at ~30s windows so
+        # text rarely exceeds ~300 chars. Defensive cap at 600 chars.
+        text = (chunk.text or "").strip().replace("\n", " ")
+        if len(text) > 600:
+            text = text[:600] + "…"
+        chunk_lines.append(
+            f"[{idx}] {start_mm:02d}:{start_ss:02d}-"
+            f"{end_mm:02d}:{end_ss:02d} ({score_line}): \"{text}\""
+        )
+
+    return "\n".join(
+        [product_line, target_line, budget_line, "", *chunk_lines]
+    )
+
+
+__all__ = [
+    "PROMPT_VERSION",
+    "_SYSTEM_PROMPT",
+    "build_user_prompt",
+]

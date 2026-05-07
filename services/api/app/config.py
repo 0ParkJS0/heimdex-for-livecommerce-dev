@@ -545,6 +545,34 @@ class Settings(BaseSettings):
     # ``auto_shorts_product_v2_storyboard_mode_enabled`` is True.
     auto_shorts_product_v2_storyboard_shadow_mode: bool = False
 
+    # --- Auto-shorts: storyboard Tier C (LLM director) ---
+    # Plan: ``.claude/plans/storyboard-tier-c-llm-picker-2026-05-07.md``.
+    # Activated by setting
+    # ``auto_shorts_product_v2_storyboard_picker = "llm"`` (the master
+    # ``..._storyboard_mode_enabled`` flag must also be true). Default off:
+    # the factory builds ``HeuristicStoryboardPicker`` until the picker
+    # type is flipped.
+    #
+    # Cost shape: ~$0.0004 per scan with gpt-4o-mini (~1250 input tokens
+    # + ~300 output tokens). $5/day budget = ~12,500 scans/day cap.
+    # Separate bucket from chunk_scorer / image_caption / whisper /
+    # video_summary per the existing convention (every LLM consumer
+    # owns its budget bucket so exhaustion in one path doesn't starve
+    # the others).
+    auto_shorts_product_v2_storyboard_llm_model: str = "gpt-4o-mini"
+    # Per-call timeout (asyncio.wait_for + openai SDK timeout). 5s
+    # is comfortably above gpt-4o-mini's median 1-3s end-to-end for
+    # ~300 output tokens. On timeout the picker falls back to Tier B
+    # silently.
+    auto_shorts_product_v2_storyboard_llm_timeout_s: float = 5.0
+    auto_shorts_product_v2_storyboard_llm_daily_budget_usd: float = 5.0
+    # Mirrors ``llm_prompt.PROMPT_VERSION``. Bumped in lockstep on every
+    # system-prompt edit; goldens snapshot cache keys on this. Drift
+    # between this env var and the module constant is a misconfig
+    # signal — the picker logs a WARNING and continues with the
+    # module's value.
+    auto_shorts_product_v2_storyboard_llm_prompt_version: str = "v1"
+
     # --- Auto-shorts: post-render Whisper subtitle refinement ---
     # Plan: ``.claude/plans/auto-shorts-whisper-subtitles-2026-05-06.md``
     # Off-by-default master flag. Even with the column migration
