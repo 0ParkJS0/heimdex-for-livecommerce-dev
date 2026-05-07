@@ -302,17 +302,58 @@ async def _run_refinement(parent_job_id: UUID) -> None:
         )
         return
 
-    # ---- 6. Re-acquire session, create child, link, publish ----
+    # ---- 6. Re-acquire session, persist (overlay mode) OR create child ----
+    overlay_mode = settings.auto_shorts_product_v2_overlay_mode_enabled
     async with session_factory() as session:
         # Re-lock parent. By now another runner may have already
-        # refined it (raced through guards while we were on Whisper).
+        # persisted/refined it (raced through guards while we were
+        # on Whisper).
         parent = await refinement_repository.lock_parent_or_none(
             session, parent_job_id
         )
-        if parent is None or parent.replaced_by_render_job_id is not None:
+        if parent is None or parent.replaced_by_render_job_id is not None or (
+            overlay_mode and parent.refinement_source is not None
+        ):
             logger.info(
                 "whisper_refine_skipped_raced",
                 **{"parent_job_id": str(parent_job_id)},
+            )
+            return
+
+        if overlay_mode:
+            # Overlay mode: write cues onto the parent and stop. No
+            # child row, no SQS publish, no chain link. The parent's
+            # MP4 stays sub-less (composition_builder emits
+            # subtitles=[]) and the FE renders cues via a DOM overlay.
+            try:
+                await refinement_repository.persist_overlay_subtitles_on_parent(
+                    session,
+                    parent_id=parent_job_id,
+                    refined_input_spec=refined_spec,
+                )
+                await session.commit()
+            except Exception:
+                logger.exception(
+                    "whisper_refine_db_write_failed",
+                    **{"parent_job_id": str(parent_job_id)},
+                )
+                await session.rollback()
+                return
+
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            logger.info(
+                "whisper_refine_overlay_persisted",
+                **{
+                    "parent_job_id": str(parent_job_id),
+                    "word_count": len(result.words),
+                    "subtitle_count_before": len(
+                        parent_input_spec.get("subtitles", [])
+                    ),
+                    "subtitle_count_after": len(new_subtitles),
+                    "whisper_cost_usd": result.cost_usd,
+                    "whisper_latency_ms": result.latency_ms,
+                    "total_elapsed_ms": elapsed_ms,
+                },
             )
             return
 
@@ -394,6 +435,9 @@ def _check_guards(parent: Any) -> str | None:
 
     Guards (any one short-circuits):
       - ``manual_edit``: operator hand-edited subtitles; do not overwrite.
+      - ``whisper_overlay``: overlay-mode persisted Whisper cues on the
+        parent row already; defends against the rare double-fire of
+        the post-render hook on the same parent.
       - ``already_refined``: forward pointer set; refinement already happened.
       - ``refined_from``: this row IS a refined child; don't recurse.
       - ``no_output_s3_key``: render never produced an MP4 to transcribe.
@@ -408,6 +452,13 @@ def _check_guards(parent: Any) -> str | None:
     """
     if parent.refinement_source == "manual_edit":
         return "manual_edit"
+    if parent.refinement_source == "whisper":
+        # Overlay-mode set this on a prior pass. In OFF mode the
+        # parent never carries refinement_source='whisper' (the
+        # CHILD does), so this branch is overlay-mode-only in
+        # practice. Defends against double-fire under SQS redelivery
+        # races that slip past complete_idempotent.
+        return "whisper_overlay"
     if parent.replaced_by_render_job_id is not None:
         return "already_refined"
     if parent.refined_from_render_job_id is not None:

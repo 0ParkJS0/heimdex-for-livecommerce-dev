@@ -577,6 +577,22 @@ class Settings(BaseSettings):
     # right hop.
     auto_shorts_product_v2_whisper_s3_download_timeout_s: float = 30.0
 
+    # --- Auto-shorts: overlay-mode caption flow ---
+    # Plan: ``.claude/plans/auto-shorts-overlay-mode-2026-05-07.md``.
+    # When ON: parents render with empty subtitles (no burn-in);
+    # Whisper post-render writes cues to the parent's
+    # ``input_spec.subtitles`` + sets ``refinement_source='whisper'``
+    # in place (no child render created); the FE renders cues via a
+    # WYSIWYG DOM overlay; ``/rerender`` produces an export child
+    # that burns subs in but does NOT replace the parent (no
+    # ``replaced_by`` link). The parent stays canonical for editing.
+    # When OFF (default, prod-safe): existing behavior — Whisper
+    # creates a refined child render and links via ``replaced_by``.
+    # Staging-only feature; auto-shorts product mode is staging-gated
+    # at the feature level. Drives BOTH the refinement-write path AND
+    # the rerender-link skip — single switch, both behaviors cohere.
+    auto_shorts_product_v2_overlay_mode_enabled: bool = False
+
     # --- CORS ---
     cors_allow_origin_regex: str = (
         r"^https?://"

@@ -112,6 +112,42 @@ async def link_parent_to_child(
     await session.flush()
 
 
+async def persist_overlay_subtitles_on_parent(
+    session: AsyncSession,
+    *,
+    parent_id: UUID,
+    refined_input_spec: dict[str, Any],
+) -> None:
+    """Overlay-mode write path: in-place update the parent.
+
+    Used by the post-render Whisper hook when
+    ``auto_shorts_product_v2_overlay_mode_enabled`` is True.
+    Replaces ``parent.input_spec`` with the refined dict (carrying
+    Whisper-derived ``subtitles[]``) and stamps
+    ``refinement_source='whisper'`` so subsequent post-render
+    callbacks short-circuit via ``_check_guards``. Deliberately does
+    NOT create a child render row, link via
+    ``replaced_by_render_job_id``, or publish to SQS — those are the
+    OFF-path behaviors. The parent stays canonical; the FE renders
+    captions via a DOM overlay against the same ``input_spec.subtitles``
+    the worker would have used as input.
+
+    SQLAlchemy doesn't track in-place JSONB mutation — passing a NEW
+    dict via ``.values()`` ensures the UPDATE actually emits.
+    """
+    now = datetime.now(timezone.utc)
+    await session.execute(
+        update(ShortsRenderJob)
+        .where(ShortsRenderJob.id == parent_id)
+        .values(
+            input_spec=refined_input_spec,
+            refinement_source="whisper",
+            updated_at=now,
+        )
+    )
+    await session.flush()
+
+
 async def already_refined(
     session: AsyncSession,
     parent_job_id: UUID,
