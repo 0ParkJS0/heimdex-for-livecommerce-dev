@@ -69,6 +69,7 @@ jobs:
             APP_DIR=/opt/heimdex/dev-heimdex-for-livecommerce
             CONTRACTS_DIR=/opt/heimdex/heimdex-media-contracts
             PIPELINES_DIR=/opt/heimdex/heimdex-media-pipelines
+            WORKER_SDK_DIR=/opt/heimdex/heimdex-worker-sdk
             COMPOSE_OVERRIDE=/opt/heimdex/docker-compose.prod.yml
             LOG=/opt/heimdex/logs/deploy-$(date +%Y%m%d-%H%M%S).log
 
@@ -119,6 +120,21 @@ jobs:
             git remote prune origin 2>/dev/null || true
             git fetch origin main --force
             git reset --hard origin/main
+
+            # Production currently bakes the worker-sdk wheel into each
+            # worker image at build time (no override mount), so pulling
+            # this source has no immediate effect on running workers.
+            # Pulled anyway for symmetry with staging and to keep
+            # ad-hoc SSH ``pip install -e /opt/heimdex/heimdex-worker-sdk``
+            # from picking up stale code. Wrapped in a directory check
+            # because the repo may not be cloned on every prod host.
+            if [ -d "$WORKER_SDK_DIR/.git" ]; then
+              echo "--- git pull (worker-sdk) ---"
+              cd "$WORKER_SDK_DIR"
+              git remote prune origin 2>/dev/null || true
+              git fetch origin main --force
+              git reset --hard origin/main
+            fi
             echo ""
 
             cd "$APP_DIR"
