@@ -28,11 +28,11 @@ outputs to detect drift.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import Iterable
 from uuid import UUID
 
+from app.logging_config import get_logger
 from app.modules.shorts_auto_product.track_stt.models import (
     MentionSegment,
     ScoredChunk,
@@ -45,7 +45,10 @@ from app.modules.shorts_auto_product.track_stt.storyboard.types import (
     StoryboardPlan,
 )
 
-logger = logging.getLogger(__name__)
+# structlog so kwargs reach the JSON formatter; stdlib ``extra=`` was
+# silently dropped on staging (2026-05-07 finding — only event names
+# rendered, hobbling slot-fill diagnostics).
+logger = get_logger(__name__)
 
 
 # Importance floor for the INTRO slot — chunks below this still get
@@ -92,10 +95,8 @@ class HeuristicStoryboardPicker:
         if not all_chunks or not segments:
             logger.info(
                 "stt_storyboard_empty_input",
-                extra={
-                    "chunk_count": len(all_chunks),
-                    "segment_count": len(segments),
-                },
+                chunk_count=len(all_chunks),
+                segment_count=len(segments),
             )
             return StoryboardPlan(
                 fragments=[],
@@ -193,15 +194,13 @@ class HeuristicStoryboardPicker:
 
         logger.info(
             "stt_storyboard_assembled",
-            extra={
-                "fragment_count": len(fragments),
-                "slots_filled": sorted(s.value for s in slots_filled),
-                "fallbacks_used": fallbacks,
-                "total_duration_ms": total_duration_ms,
-                "target_duration_ms": target_duration_ms,
-                "segment_count": len(segments),
-                "chunk_count": len(all_chunks),
-            },
+            fragment_count=len(fragments),
+            slots_filled=sorted(s.value for s in slots_filled),
+            fallbacks_used=fallbacks,
+            total_duration_ms=total_duration_ms,
+            target_duration_ms=target_duration_ms,
+            segment_count=len(segments),
+            chunk_count=len(all_chunks),
         )
 
         return StoryboardPlan(

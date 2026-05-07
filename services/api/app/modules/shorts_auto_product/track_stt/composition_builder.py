@@ -41,14 +41,13 @@ after a 2-week soak.
 
 from __future__ import annotations
 
-import logging
-
 from heimdex_media_contracts.composition.schemas import (
     CompositionSpec,
     SceneClipSpec,
     SubtitleSpec,
 )
 
+from app.logging_config import get_logger
 from app.modules.shorts_auto_product.subtitle_layout import (
     DEFAULT_CANVAS_HEIGHT,
     DEFAULT_CANVAS_WIDTH,
@@ -64,7 +63,10 @@ from app.modules.shorts_auto_product.track_stt.storyboard import (
     StoryboardPlan,
 )
 
-logger = logging.getLogger(__name__)
+# structlog so kwargs reach the JSON formatter; stdlib ``extra=`` was
+# silently dropped on staging (2026-05-07 finding — only event names
+# rendered, masking compose_mode / fragment_count diagnostics).
+logger = get_logger(__name__)
 
 
 # Re-exported for backward compatibility with tests that import
@@ -198,11 +200,9 @@ def build_composition_spec(
             # not, skip rather than emit an invalid clip.
             logger.warning(
                 "stt_composition_range_no_overlap_skipped",
-                extra={
-                    "range_start_ms": range_start_ms,
-                    "range_end_ms": range_end_ms,
-                    "range_label": range_label,
-                },
+                range_start_ms=range_start_ms,
+                range_end_ms=range_end_ms,
+                range_label=range_label,
             )
             continue
         timed_sub_clips: list[tuple[str, int, int, int]] = []
@@ -267,25 +267,23 @@ def build_composition_spec(
     )
     logger.info(
         log_event,
-        extra={
-            "video_id": os_video_id,
-            "clip_count": len(clips),
-            "subtitle_count": len(subtitles),
-            "duration_ms": spec.total_duration_ms,
-            "title": title,
-            "captions_pending_whisper": not (
-                legacy_os_subtitles_enabled and not using_storyboard
-            ),
-            "compose_mode": "storyboard" if using_storyboard else "legacy_chunks",
-            "fragment_count": (
-                len(storyboard.fragments) if using_storyboard else None
-            ),
-            "fragment_roles": (
-                [f.role.value for f in storyboard.fragments]
-                if using_storyboard
-                else None
-            ),
-        },
+        video_id=os_video_id,
+        clip_count=len(clips),
+        subtitle_count=len(subtitles),
+        duration_ms=spec.total_duration_ms,
+        title=title,
+        captions_pending_whisper=not (
+            legacy_os_subtitles_enabled and not using_storyboard
+        ),
+        compose_mode="storyboard" if using_storyboard else "legacy_chunks",
+        fragment_count=(
+            len(storyboard.fragments) if using_storyboard else None
+        ),
+        fragment_roles=(
+            [f.role.value for f in storyboard.fragments]
+            if using_storyboard
+            else None
+        ),
     )
     return spec
 
