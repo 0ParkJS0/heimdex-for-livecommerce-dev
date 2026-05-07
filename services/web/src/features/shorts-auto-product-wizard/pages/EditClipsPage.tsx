@@ -49,6 +49,7 @@ import type {
 } from "@/features/shorts-editor/lib/types";
 
 import { SubtitleEditor } from "../components/SubtitleEditor";
+import { useRefinedRenderChain } from "../hooks/useRefinedRenderChain";
 import { useScanOrder } from "../hooks/useScanOrder";
 
 interface Props {
@@ -152,6 +153,25 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   const selectedChild = sortedChildren[selectedClipIdx];
   const selectedRenderJobId = selectedChild?.render_job_id ?? null;
 
+  // Follow the parent → Whisper-refined-child chain. Auto-shorts
+  // product mode renders ship with empty subtitles=[] (2026-05-07
+  // OS-decoupling); Whisper post-render produces a child render
+  // with the actual cues burned in and links it via
+  // replaced_by_render_job_id. Without this hook the page would
+  // stay on the parent forever and SubtitleEditor would render the
+  // "자막 생성 중..." placeholder permanently.
+  const { currentJob: effectiveJob } = useRefinedRenderChain(
+    selectedRenderJobId,
+    getAccessToken,
+    { enabled: selectedRenderJobId !== null },
+  );
+
+  // The render id whose composition + download URL we should display.
+  // Falls back to the parent until the chain hook resolves a child —
+  // that's a 1-tick difference, but matters for the empty-state
+  // (parent has 0 subs, child has Whisper-derived subs).
+  const effectiveRenderJobId = effectiveJob?.id ?? selectedRenderJobId;
+
   // Lazy-load per-clip data when the user switches to a clip we
   // haven't loaded yet. Note ``clipStates`` is intentionally NOT in
   // the dep array — including it caused a React race: the moment
@@ -163,20 +183,20 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   // setState updater, which sees the freshest state without making
   // the effect react to its own writes.
   useEffect(() => {
-    if (!selectedRenderJobId || !scenesByVideo) return;
+    if (!effectiveRenderJobId || !scenesByVideo) return;
 
     let cancelled = false;
     let alreadyLoaded = false;
     setClipStates((prev) => {
-      const existing = prev[selectedRenderJobId];
+      const existing = prev[effectiveRenderJobId];
       if (existing && !existing.error && !existing.loading) {
         alreadyLoaded = true;
         return prev;
       }
       return {
         ...prev,
-        [selectedRenderJobId]: {
-          renderJobId: selectedRenderJobId,
+        [effectiveRenderJobId]: {
+          renderJobId: effectiveRenderJobId,
           index: selectedClipIdx,
           title: "",
           clips: [],
@@ -197,8 +217,8 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
     (async () => {
       try {
         const [comp, job] = await Promise.all([
-          getShortComposition(selectedRenderJobId, getAccessToken),
-          getRenderJob(selectedRenderJobId, getAccessToken),
+          getShortComposition(effectiveRenderJobId, getAccessToken),
+          getRenderJob(effectiveRenderJobId, getAccessToken),
         ]);
         if (cancelled) return;
 
@@ -256,8 +276,8 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
 
         setClipStates((prev) => ({
           ...prev,
-          [selectedRenderJobId]: {
-            renderJobId: selectedRenderJobId,
+          [effectiveRenderJobId]: {
+            renderJobId: effectiveRenderJobId,
             index: selectedClipIdx,
             title: compTitle,
             clips: editorClips,
@@ -274,9 +294,9 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
         if (cancelled) return;
         setClipStates((prev) => ({
           ...prev,
-          [selectedRenderJobId]: {
-            ...(prev[selectedRenderJobId] ?? ({} as ClipState)),
-            renderJobId: selectedRenderJobId,
+          [effectiveRenderJobId]: {
+            ...(prev[effectiveRenderJobId] ?? ({} as ClipState)),
+            renderJobId: effectiveRenderJobId,
             index: selectedClipIdx,
             loading: false,
             error: err instanceof Error ? err.message : "클립을 불러올 수 없습니다.",
@@ -288,7 +308,7 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
       cancelled = true;
     };
   }, [
-    selectedRenderJobId, scenesByVideo, selectedClipIdx, getAccessToken, videoId,
+    effectiveRenderJobId, scenesByVideo, selectedClipIdx, getAccessToken, videoId,
   ]);
 
   // Reset playback state when switching clips.
@@ -301,7 +321,7 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
     }
   }, [selectedClipIdx]);
 
-  const currentClip = selectedRenderJobId ? clipStates[selectedRenderJobId] : undefined;
+  const currentClip = effectiveRenderJobId ? clipStates[effectiveRenderJobId] : undefined;
 
   // Adapt the parent's composition.subtitles[] (snake_case JSONB) into
   // the SubtitleEditor's SubtitleEdit shape. The editor owns its own
@@ -342,14 +362,14 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   // ``onCuesChange`` callback. Defaults to the burned-in editorCues
   // until the editor reports its first state — keeps the overlay in
   // sync if the operator never touches the editor.
-  const liveCues: SubtitleEdit[] = selectedRenderJobId
-    ? liveCuesByRender[selectedRenderJobId] ?? editorCues
+  const liveCues: SubtitleEdit[] = effectiveRenderJobId
+    ? liveCuesByRender[effectiveRenderJobId] ?? editorCues
     : editorCues;
 
   const handleCuesChange = useCallback((cues: SubtitleEdit[]) => {
-    if (!selectedRenderJobId) return;
-    setLiveCuesByRender((prev) => ({ ...prev, [selectedRenderJobId]: cues }));
-  }, [selectedRenderJobId]);
+    if (!effectiveRenderJobId) return;
+    setLiveCuesByRender((prev) => ({ ...prev, [effectiveRenderJobId]: cues }));
+  }, [effectiveRenderJobId]);
 
   // Divergence: live cues differ from the burned-in (compositional)
   // ones. Only when this is true do we render the DOM-overlay preview
@@ -376,13 +396,13 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   const previewSubtitles: EditorSubtitle[] = useMemo(() => {
     if (!previewDivergesFromBurnedIn) return [];
     return liveCues.map((c, idx) => ({
-      id: `live-${selectedRenderJobId}-${idx}`,
+      id: `live-${effectiveRenderJobId}-${idx}`,
       text: c.text,
       startMs: c.start_ms,
       endMs: c.end_ms,
       style: DEFAULT_SUBTITLE_STYLE as SubtitleStyle,
     }));
-  }, [previewDivergesFromBurnedIn, liveCues, selectedRenderJobId]);
+  }, [previewDivergesFromBurnedIn, liveCues, effectiveRenderJobId]);
 
   const onTogglePlay = useCallback(() => {
     const v = videoRef.current;
@@ -395,7 +415,7 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   }, []);
 
   const onRerenderRequested = useCallback(async () => {
-    if (!selectedRenderJobId) return;
+    if (!effectiveRenderJobId) return;
     setExportError(null);
     setExportSuccess(null);
     setExportInFlight(true);
@@ -406,8 +426,13 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
       // save is in flight or pending, so by the time we get here the
       // backend state is consistent). The /rerender endpoint reads
       // the parent's current input_spec server-side — no body needed.
+      // Targeting the EFFECTIVE render id (Whisper-refined child if
+      // present, else the original parent) preserves the manual-
+      // edit chain: the rerender's grandchild inherits the operator's
+      // PATCH'd subtitles and the ``manual_edit`` guard prevents
+      // Whisper from running again over hand-tuned cues.
       const child = await rerenderFromEdits(
-        selectedRenderJobId,
+        effectiveRenderJobId,
         getAccessToken,
       );
       setExportSuccess({ jobId: child.id, downloadUrl: child.download_url });
@@ -438,7 +463,7 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
     } finally {
       setExportInFlight(false);
     }
-  }, [selectedRenderJobId, getAccessToken]);
+  }, [effectiveRenderJobId, getAccessToken]);
 
   if (scanOrder.error) {
     return <ErrorState message={`클립 정보를 불러올 수 없습니다: ${scanOrder.error.message}`} />;
@@ -502,9 +527,9 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
         </div>
 
         <div className="w-[420px] overflow-y-auto border-l bg-white p-4">
-          {selectedRenderJobId && currentClip && !currentClip.loading ? (
+          {effectiveRenderJobId && currentClip && !currentClip.loading ? (
             <SubtitleEditor
-              renderId={selectedRenderJobId}
+              renderId={effectiveRenderJobId}
               initialCues={editorCues}
               getToken={getAccessToken}
               refinementSource={currentClip.refinementSource}
