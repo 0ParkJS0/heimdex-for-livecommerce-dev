@@ -49,7 +49,10 @@ import type {
 } from "@/features/shorts-editor/lib/types";
 
 import { SubtitleEditor } from "../components/SubtitleEditor";
-import { useRefinedRenderChain } from "../hooks/useRefinedRenderChain";
+import {
+  SubtitleOverlay,
+  type SubtitleOverlayCue,
+} from "../components/SubtitleOverlay";
 import { useScanOrder } from "../hooks/useScanOrder";
 
 interface Props {
@@ -153,24 +156,20 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   const selectedChild = sortedChildren[selectedClipIdx];
   const selectedRenderJobId = selectedChild?.render_job_id ?? null;
 
-  // Follow the parent → Whisper-refined-child chain. Auto-shorts
-  // product mode renders ship with empty subtitles=[] (2026-05-07
-  // OS-decoupling); Whisper post-render produces a child render
-  // with the actual cues burned in and links it via
-  // replaced_by_render_job_id. Without this hook the page would
-  // stay on the parent forever and SubtitleEditor would render the
-  // "자막 생성 중..." placeholder permanently.
-  const { currentJob: effectiveJob } = useRefinedRenderChain(
-    selectedRenderJobId,
-    getAccessToken,
-    { enabled: selectedRenderJobId !== null },
-  );
-
-  // The render id whose composition + download URL we should display.
-  // Falls back to the parent until the chain hook resolves a child —
-  // that's a 1-tick difference, but matters for the empty-state
-  // (parent has 0 subs, child has Whisper-derived subs).
-  const effectiveRenderJobId = effectiveJob?.id ?? selectedRenderJobId;
+  // Overlay-mode (.claude/plans/auto-shorts-overlay-mode-2026-05-07.md):
+  // the parent IS the canonical render. Whisper post-render writes
+  // cues into parent.input_spec.subtitles (no child render created),
+  // and the FE renders cues via <SubtitleOverlay> on top of the
+  // parent's sub-less MP4. No chain to walk — load the parent
+  // directly. The page polls via the loadClip useEffect for cue
+  // updates as Whisper completes.
+  //
+  // The legacy `useRefinedRenderChain` hook is intentionally NOT
+  // imported here; if the BE flag flips OFF, the parent stays
+  // canonical from the FE's perspective and the operator sees
+  // empty subs (degraded but not broken — staging-only fallback per
+  // the plan's risk register).
+  const effectiveRenderJobId = selectedRenderJobId;
 
   // Lazy-load per-clip data when the user switches to a clip we
   // haven't loaded yet. Note ``clipStates`` is intentionally NOT in
@@ -321,6 +320,91 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
     }
   }, [selectedClipIdx]);
 
+  // Overlay-mode (.claude/plans/auto-shorts-overlay-mode-2026-05-07.md):
+  // when the parent renders before Whisper post-render lands, the
+  // composition's ``subtitles[]`` is empty. Poll every 3s up to 60s
+  // for cues to arrive — the BE writes them in-place to
+  // parent.input_spec.subtitles + flips refinement_source='whisper'.
+  // Stops as soon as cues appear OR refinement_source flips.
+  // Doesn't run when refinement_source is 'manual_edit' (operator
+  // intentionally cleared cues; do not auto-replace) or already
+  // populated. Doesn't run on switching clips before the first
+  // composition fetch (currentClip null).
+  useEffect(() => {
+    if (!effectiveRenderJobId) return;
+    const clip = clipStates[effectiveRenderJobId];
+    if (!clip || clip.loading || clip.error) return;
+    if (clip.refinementSource === "manual_edit") return;
+    const compSubs = (clip.composition as { subtitles?: unknown[] } | null)
+      ?.subtitles;
+    if (Array.isArray(compSubs) && compSubs.length > 0) return;
+
+    let cancelled = false;
+    const startedAt = Date.now();
+    const POLL_MS = 3000;
+    const TIMEOUT_MS = 60_000;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const [comp, job] = await Promise.all([
+          getShortComposition(effectiveRenderJobId, getAccessToken),
+          getRenderJob(effectiveRenderJobId, getAccessToken),
+        ]);
+        if (cancelled) return;
+        const subsRaw = (comp.composition as { subtitles?: unknown[] } | null)
+          ?.subtitles;
+        const arrived = Array.isArray(subsRaw) && subsRaw.length > 0;
+        const sourceChanged =
+          (job.refinement_source ?? null) !== clip.refinementSource;
+        if (arrived || sourceChanged) {
+          // Re-derive editor cues + clip state. Mirrors the loadClip
+          // effect's mapping from composition → ClipState. We don't
+          // re-compute editorClips (timeline) because they don't
+          // change on a Whisper write.
+          const compositionSpec = comp.composition;
+          setClipStates((prev) => {
+            const existing = prev[effectiveRenderJobId];
+            if (!existing) return prev;
+            const newSubs: typeof existing.subtitles = [];
+            const compSubtitlesAll = extractCompositionSubtitles(compositionSpec);
+            for (const cs of compSubtitlesAll) {
+              newSubs.push({
+                id: makeSubtitleId(),
+                text: cs.text,
+                startMs: cs.start_ms,
+                endMs: cs.end_ms,
+                style: cs.style ?? DEFAULT_SUBTITLE_STYLE,
+              });
+            }
+            return {
+              ...prev,
+              [effectiveRenderJobId]: {
+                ...existing,
+                composition: compositionSpec,
+                subtitles: newSubs,
+                downloadUrl: job.download_url,
+                refinementSource: job.refinement_source ?? null,
+              },
+            };
+          });
+          return; // stop polling
+        }
+      } catch {
+        // Swallow — operator-visible error here is noise; the next
+        // tick will retry. The TIMEOUT_MS cap bounds total badness.
+      }
+      if (Date.now() - startedAt < TIMEOUT_MS && !cancelled) {
+        window.setTimeout(tick, POLL_MS);
+      }
+    };
+    const handle = window.setTimeout(tick, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [effectiveRenderJobId, clipStates, getAccessToken]);
+
   const currentClip = effectiveRenderJobId ? clipStates[effectiveRenderJobId] : undefined;
 
   // Adapt the parent's composition.subtitles[] (snake_case JSONB) into
@@ -359,9 +443,17 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
   }, [currentClip?.composition]);
 
   // Live cues for the active clip, populated by SubtitleEditor's
-  // ``onCuesChange`` callback. Defaults to the burned-in editorCues
+  // ``onCuesChange`` callback. Defaults to ``editorCues`` (which
+  // mirrors the parent's input_spec.subtitles at last load time)
   // until the editor reports its first state — keeps the overlay in
   // sync if the operator never touches the editor.
+  //
+  // In overlay mode the overlay ALWAYS renders these cues — there's
+  // no burned-in caption to compete with on the parent MP4 (parent
+  // composition_builder emits subtitles=[]). The previous
+  // "divergence-gating" logic was needed when the MP4 had captions
+  // burned in; it's deleted because the source of truth is now the
+  // overlay itself.
   const liveCues: SubtitleEdit[] = effectiveRenderJobId
     ? liveCuesByRender[effectiveRenderJobId] ?? editorCues
     : editorCues;
@@ -371,38 +463,16 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
     setLiveCuesByRender((prev) => ({ ...prev, [effectiveRenderJobId]: cues }));
   }, [effectiveRenderJobId]);
 
-  // Divergence: live cues differ from the burned-in (compositional)
-  // ones. Only when this is true do we render the DOM-overlay preview
-  // — otherwise the burned-in subtitles in the rendered MP4 are the
-  // single source of truth and the overlay would just duplicate them.
-  // Compares the three fields the renderer actually uses; ignores
-  // cosmetic style differences. O(n) — N is small (≤ ~20 cues).
-  const previewDivergesFromBurnedIn = useMemo(() => {
-    if (liveCues.length !== editorCues.length) return true;
-    for (let i = 0; i < liveCues.length; i++) {
-      const live = liveCues[i];
-      const burned = editorCues[i];
-      if (live.text !== burned.text) return true;
-      if (live.start_ms !== burned.start_ms) return true;
-      if (live.end_ms !== burned.end_ms) return true;
-    }
-    return false;
-  }, [liveCues, editorCues]);
-
-  // Subtitles handed to ClipPreview's overlay layer. Empty when the
-  // live cues match the burned-in source — prevents the
-  // double-subtitle bug where the same text was drawn both via FFmpeg
-  // drawtext (in the MP4) and via the React overlay.
-  const previewSubtitles: EditorSubtitle[] = useMemo(() => {
-    if (!previewDivergesFromBurnedIn) return [];
-    return liveCues.map((c, idx) => ({
-      id: `live-${effectiveRenderJobId}-${idx}`,
-      text: c.text,
-      startMs: c.start_ms,
-      endMs: c.end_ms,
-      style: DEFAULT_SUBTITLE_STYLE as SubtitleStyle,
-    }));
-  }, [previewDivergesFromBurnedIn, liveCues, effectiveRenderJobId]);
+  // Cue payload handed to <SubtitleOverlay>. The overlay reads
+  // (text, start_ms, end_ms) and ignores per-cue style — styling
+  // comes from the centralized subtitle-layout constants. Memoised
+  // by reference to keep the overlay's useMemo cheap.
+  const overlayCues: SubtitleOverlayCue[] = useMemo(
+    () => liveCues.map((c) => ({
+      text: c.text, start_ms: c.start_ms, end_ms: c.end_ms,
+    })),
+    [liveCues],
+  );
 
   const onTogglePlay = useCallback(() => {
     const v = videoRef.current;
@@ -516,7 +586,7 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
             <ClipPreview
               ref={videoRef}
               src={currentClip.downloadUrl}
-              subtitles={previewSubtitles}
+              cues={overlayCues}
               playheadMs={playheadMs}
               onPlayheadChange={setPlayheadMs}
               onPlayingChange={setIsPlaying}
@@ -529,6 +599,14 @@ export function EditClipsPage({ videoId, parentJobId }: Props) {
         <div className="w-[420px] overflow-y-auto border-l bg-white p-4">
           {effectiveRenderJobId && currentClip && !currentClip.loading ? (
             <SubtitleEditor
+              // Force remount when cues land: useSubtitleEditorState
+              // re-keys on `renderId` only, so a 0 → N transition
+              // (Whisper-driven cue arrival on the parent) wouldn't
+              // otherwise propagate into the editor's internal state.
+              // ``editorCues.length > 0`` partitions the lifecycle
+              // cleanly: empty parent → editor mounted with []; once
+              // cues arrive, editor remounts with full cue list.
+              key={`${effectiveRenderJobId}:${editorCues.length > 0 ? "has" : "empty"}`}
               renderId={effectiveRenderJobId}
               initialCues={editorCues}
               getToken={getAccessToken}
@@ -661,7 +739,7 @@ function makeSubtitleId(): string {
 
 interface ClipPreviewProps {
   src: string;
-  subtitles: EditorSubtitle[];
+  cues: SubtitleOverlayCue[];
   playheadMs: number;
   onPlayheadChange: (ms: number) => void;
   onPlayingChange: (playing: boolean) => void;
@@ -669,16 +747,35 @@ interface ClipPreviewProps {
 
 const ClipPreview = forwardRef<HTMLVideoElement, ClipPreviewProps>(
   function ClipPreview(
-    { src, subtitles, playheadMs, onPlayheadChange, onPlayingChange },
+    { src, cues, playheadMs, onPlayheadChange, onPlayingChange },
     ref,
   ) {
-    const active = subtitles.filter(
-      (s) => playheadMs >= s.startMs && playheadMs < s.endMs,
-    );
+    // Capture the rendered video dims so the overlay sizes itself
+    // proportionally. ResizeObserver keeps it in sync if the player
+    // is resized (window, fullscreen, sidebar collapse).
+    const [videoSize, setVideoSize] = useState<{ w: number; h: number }>({
+      w: 0, h: 0,
+    });
+    const localRef = useRef<HTMLVideoElement | null>(null);
+
+    useEffect(() => {
+      const el = localRef.current;
+      if (!el) return;
+      const update = () => setVideoSize({ w: el.clientWidth, h: el.clientHeight });
+      update();
+      const ro = new ResizeObserver(update);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }, []);
+
     return (
       <div className="relative aspect-[9/16] h-full max-h-[80vh] overflow-hidden rounded-lg bg-black">
         <video
-          ref={ref}
+          ref={(el) => {
+            localRef.current = el;
+            if (typeof ref === "function") ref(el);
+            else if (ref) (ref as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+          }}
           src={src}
           className="h-full w-full object-contain"
           controls
@@ -688,17 +785,12 @@ const ClipPreview = forwardRef<HTMLVideoElement, ClipPreviewProps>(
           onPlay={() => onPlayingChange(true)}
           onPause={() => onPlayingChange(false)}
         />
-        <div className="pointer-events-none absolute inset-x-0 bottom-12 flex justify-center">
-          {active.map((s) => (
-            <div
-              key={s.id}
-              className="rounded bg-black/70 px-3 py-1 text-sm font-medium text-white"
-              style={{ fontFamily: s.style.fontFamily }}
-            >
-              {s.text}
-            </div>
-          ))}
-        </div>
+        <SubtitleOverlay
+          cues={cues}
+          currentTimeMs={playheadMs}
+          videoWidth={videoSize.w || null}
+          videoHeight={videoSize.h || null}
+        />
       </div>
     );
   },
