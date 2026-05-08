@@ -14,6 +14,17 @@ import { cn } from "@/lib/utils";
 
 const PRESETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
+/**
+ * Smart-count interval: 1 suggested short per 10 minutes of video.
+ * Length-independent on purpose — the prior length-aware formula
+ * saturated at 10 for any video > ~10 min regardless of shorts
+ * length, so the answer never differentiated a 15-min video from
+ * a 60-min one. A pure time-based ratio gives a much more
+ * meaningful range-to-count mapping for typical livecommerce
+ * VODs (~30–90 min).
+ */
+const SUGGESTION_INTERVAL_MS = 10 * 60 * 1_000;
+
 interface Props {
   value: number;
   onChange: (next: number) => void;
@@ -23,7 +34,7 @@ interface Props {
    * durationMs otherwise. Pass 0 to suppress the suggestion line.
    */
   rangeMs: number;
-  /** Shorts length in seconds. Drives the suggestion compute. */
+  /** Shorts length in seconds. Shown in the suggestion copy for context. */
   lengthSeconds: number;
   disabled?: boolean;
 }
@@ -35,21 +46,21 @@ interface Suggestion {
 }
 
 /**
- * Computes the count-suggestion band for a given range and shorts length.
- * Pure — no React/DOM. Returns null when no meaningful suggestion can be
- * made (rangeMs ≤ 0 or lengthSeconds ≤ 0).
+ * Computes the count-suggestion band for a given range. Pure — no
+ * React/DOM. Returns null when no meaningful suggestion can be made
+ * (rangeMs ≤ 0).
  *
- * Formula (per locked decision #4):
- *   n = ceil(rangeMs / (lengthSeconds × 1000)), clamped to [1, 10]
+ * Formula:
+ *   n = ceil(rangeMs / SUGGESTION_INTERVAL_MS), clamped to [1, 10]
  *   band = [max(1, n − 1), min(10, n + 1)]
+ *
+ * Length-independent — see ``SUGGESTION_INTERVAL_MS`` rationale.
  */
 export function computeSmartCountSuggestion(
   rangeMs: number,
-  lengthSeconds: number,
 ): Suggestion | null {
-  if (rangeMs <= 0 || lengthSeconds <= 0) return null;
-  const lengthMs = lengthSeconds * 1000;
-  const raw = Math.ceil(rangeMs / lengthMs);
+  if (rangeMs <= 0) return null;
+  const raw = Math.ceil(rangeMs / SUGGESTION_INTERVAL_MS);
   const clamped = Math.max(1, Math.min(10, raw));
   return {
     rangeLabel: formatVideoTimestampHMS(rangeMs),
@@ -65,7 +76,7 @@ export function InlineCountSelector({
   lengthSeconds,
   disabled,
 }: Props) {
-  const suggestion = computeSmartCountSuggestion(rangeMs, lengthSeconds);
+  const suggestion = computeSmartCountSuggestion(rangeMs);
 
   return (
     <div className="space-y-2">

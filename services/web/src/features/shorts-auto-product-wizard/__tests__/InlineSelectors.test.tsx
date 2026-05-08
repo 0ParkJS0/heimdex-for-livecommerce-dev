@@ -32,38 +32,52 @@ describe("InlineLengthSelector", () => {
 });
 
 describe("computeSmartCountSuggestion", () => {
-  it("returns null for non-positive range or length", () => {
-    expect(computeSmartCountSuggestion(0, 60)).toBeNull();
-    expect(computeSmartCountSuggestion(60_000, 0)).toBeNull();
-    expect(computeSmartCountSuggestion(-1, 60)).toBeNull();
+  it("returns null for non-positive range", () => {
+    expect(computeSmartCountSuggestion(0)).toBeNull();
+    expect(computeSmartCountSuggestion(-1)).toBeNull();
   });
 
-  it("returns the band [n-1, n+1] around ceil(range / length)", () => {
-    // 15:40 of video, 60s shorts → ceil(940/60) = 16, clamped to 10 → band [9, 10]
-    expect(computeSmartCountSuggestion(940_000, 60)).toEqual({
+  it("returns the band [n-1, n+1] around ceil(range / 10min)", () => {
+    // 15:40 of video → ceil(940/600) = 2 → band [1, 3]
+    expect(computeSmartCountSuggestion(940_000)).toEqual({
       rangeLabel: "00:15:40",
-      lo: 9,
-      hi: 10,
+      lo: 1,
+      hi: 3,
     });
-    // 3 minutes / 60s shorts → ceil(180/60) = 3 → band [2, 4]
-    expect(computeSmartCountSuggestion(180_000, 60)).toEqual({
+    // 3 minutes → ceil(180/600) = 1 → band [1, 2] (lo clamped to 1)
+    expect(computeSmartCountSuggestion(180_000)).toEqual({
       rangeLabel: "00:03:00",
-      lo: 2,
-      hi: 4,
+      lo: 1,
+      hi: 2,
     });
-    // 30s / 60s shorts → ceil(0.5) = 1 → band [1, 2] (lo clamped to 1)
-    expect(computeSmartCountSuggestion(30_000, 60)).toEqual({
+    // 30s → ceil(30/600) = 1 → band [1, 2]
+    expect(computeSmartCountSuggestion(30_000)).toEqual({
       rangeLabel: "00:00:30",
       lo: 1,
       hi: 2,
     });
+    // 25min → ceil(1500/600) = 3 → band [2, 4]
+    expect(computeSmartCountSuggestion(1_500_000)).toEqual({
+      rangeLabel: "00:25:00",
+      lo: 2,
+      hi: 4,
+    });
   });
 
   it("clamps the band to [1, 10]", () => {
-    // 1hr / 15s = 240 → clamped to 10 → band [9, 10]
-    const high = computeSmartCountSuggestion(3_600_000, 15);
+    // 2hr → ceil(7200/600) = 12 → clamped to 10 → band [9, 10]
+    const high = computeSmartCountSuggestion(7_200_000);
     expect(high?.lo).toBe(9);
     expect(high?.hi).toBe(10);
+  });
+
+  it("is independent of shorts length (no longer takes lengthSeconds)", () => {
+    // Same range → same suggestion, no matter how the caller framed it.
+    // This test pins the API surface change so we don't accidentally
+    // re-introduce a length-aware overload.
+    expect(computeSmartCountSuggestion(1_800_000)).toEqual(
+      computeSmartCountSuggestion(1_800_000),
+    );
   });
 });
 
@@ -84,7 +98,8 @@ describe("InlineCountSelector", () => {
     }
     const suggestion = screen.getByTestId("inline-count-suggestion");
     expect(suggestion.textContent).toContain("00:05:00 영상에서 60초 쇼츠라면");
-    expect(suggestion.textContent).toContain("4~6개");
+    // 5min / 10min interval = ceil(0.5) = 1 → band [1, 2]
+    expect(suggestion.textContent).toContain("1~2개");
   });
 
   it("hides the suggestion line when rangeMs is 0", () => {

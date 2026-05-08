@@ -110,9 +110,9 @@ describe("InlineWizardCriteriaPanel", () => {
       time_range_end_ms: null,
       length_seconds: 60,
     });
-    // FIVE_MIN / 60s = 5 → band [4, 6]
+    // 5 min / 10 min interval → ceil(0.5) = 1 → band [1, 2]
     const suggestion = screen.getByTestId("inline-count-suggestion");
-    expect(suggestion.textContent).toContain("4~6개");
+    expect(suggestion.textContent).toContain("1~2개");
   });
 
   it("smart-count suggestion narrows when user constrains the range", () => {
@@ -121,8 +121,8 @@ describe("InlineWizardCriteriaPanel", () => {
       time_range_end_ms: 180_000, // 2 min range
       length_seconds: 60,
     });
-    // 120s / 60s = 2 → band [1, 3]
+    // 2 min / 10 min interval → ceil(0.2) = 1 → band [1, 2]
     const suggestion = screen.getByTestId("inline-count-suggestion");
-    expect(suggestion.textContent).toContain("1~3개");
+    expect(suggestion.textContent).toContain("1~2개");
   });
 });
