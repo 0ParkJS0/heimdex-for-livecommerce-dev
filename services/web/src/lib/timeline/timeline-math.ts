@@ -22,3 +22,19 @@ export function formatTimelineTimestamp(ms: number): string {
   }
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+/**
+ * Always renders ``HH:MM:SS`` with zero-padded hours, even when h=0.
+ * Used by the inline auto-shorts wizard where the Figma reference
+ * shows ``00:02:35`` style timestamps. Distinct from
+ * ``formatTimelineTimestamp`` which omits hours when zero — that
+ * stays the canonical formatter for shorts-editor / blur / timeline
+ * primitives, where a leading ``00:`` would clutter the display.
+ */
+export function formatVideoTimestampHMS(ms: number): string {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}

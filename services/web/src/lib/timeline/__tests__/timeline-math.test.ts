@@ -4,6 +4,7 @@ import {
   pixelsToMs,
   snapToGrid,
   formatTimelineTimestamp,
+  formatVideoTimestampHMS,
 } from "../timeline-math";
 
 describe("msToPixels", () => {
@@ -78,5 +79,25 @@ describe("formatTimelineTimestamp", () => {
 
   it("pads seconds to two digits", () => {
     expect(formatTimelineTimestamp(3000)).toBe("0:03");
+  });
+});
+
+describe("formatVideoTimestampHMS", () => {
+  it("always renders HH:MM:SS, even when h=0", () => {
+    expect(formatVideoTimestampHMS(0)).toBe("00:00:00");
+    expect(formatVideoTimestampHMS(5000)).toBe("00:00:05");
+    expect(formatVideoTimestampHMS(155_000)).toBe("00:02:35"); // 2:35 in shorts
+    expect(formatVideoTimestampHMS(940_000)).toBe("00:15:40"); // 15:40
+  });
+
+  it("includes hours when ms ≥ 1hr", () => {
+    expect(formatVideoTimestampHMS(3_600_000)).toBe("01:00:00");
+    expect(formatVideoTimestampHMS(3_661_000)).toBe("01:01:01");
+    expect(formatVideoTimestampHMS(36_000_000)).toBe("10:00:00");
+  });
+
+  it("clamps negative input to 00:00:00", () => {
+    expect(formatVideoTimestampHMS(-1)).toBe("00:00:00");
+    expect(formatVideoTimestampHMS(-9999)).toBe("00:00:00");
   });
 });
