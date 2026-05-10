@@ -59,8 +59,30 @@ RUN pip install --no-cache-dir -i https://www.paddlepaddle.org.cn/packages/stabl
 
 COPY dev-heimdex-for-livecommerce/services/drive-ocr-worker/src/ src/
 
+# Create appuser AND pre-create paddle/paddleocr cache directories
+# under /home/appuser so first-frame OCR doesn't hit
+# ``[Errno 13] Permission denied: '/home/appuser/.cache/paddle'``
+# (the OCR-Aircloud silent-fail incident, 2026-05-10). Paddle caches
+# its compiled CUDA kernels at ``~/.cache/paddle`` and PaddleOCR
+# downloads detection/recognition models to ``~/.paddleocr``; both
+# need to be writable by the runtime user, NOT root.
+#
+# The previous chown only touched /app — /home/appuser was created
+# by ``useradd -m`` with appuser ownership, BUT the ``.cache``
+# subdirectory didn't exist yet, and paddle's ``os.makedirs`` call
+# from within the eager-init / first-inference path failed with
+# Permission denied (cause unclear — possibly Aircloud's container
+# runtime mutates /home perms; pre-creating side-steps the issue).
 RUN useradd -m -u 1000 appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /home/appuser/.cache/paddle /home/appuser/.paddleocr \
+    && chown -R appuser:appuser /app /home/appuser
+
 USER appuser
+
+# Set HOME explicitly so paddle's ``os.path.expanduser('~')`` resolves
+# to the chowned directory even if the shell environment is stripped.
+# Defensive — useradd already sets this in /etc/passwd, but Aircloud's
+# entrypoint may not source that.
+ENV HOME=/home/appuser
 
 CMD ["python", "-m", "src.worker"]

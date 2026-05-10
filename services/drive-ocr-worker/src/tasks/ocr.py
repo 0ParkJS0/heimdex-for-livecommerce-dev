@@ -169,16 +169,93 @@ def _process_single_ocr(
 
         ocr_started = time.monotonic()
         if ocr_engine is None:
-            _create = importlib.import_module("heimdex_media_pipelines.ocr").create_ocr_engine
-            ocr_engine = _create(lang="korean", use_gpu=settings.use_gpu)
+            try:
+                _create = importlib.import_module("heimdex_media_pipelines.ocr").create_ocr_engine
+                # ``eager_init=True`` is the default after the
+                # heimdex-media-pipelines fix — paddle init / cache
+                # permission / version-mismatch failures raise
+                # OCREngineInitError here, NOT silently per-frame.
+                # See ``ocr-paddle-init-fix.md`` plan + the
+                # ``feedback_external_lib_eager_init_fail_loud.md`` memory.
+                ocr_engine = _create(lang="korean", use_gpu=settings.use_gpu)
+            except Exception as e:
+                # Don't mark ocr_status=done. The worker just discovered
+                # it can't OCR anything — treat as a worker-level failure
+                # so ops sees the unhealthy state via failed status +
+                # worker_event. Aircloud's healthcheck will then mark
+                # the replica unhealthy on container exit.
+                error_msg = f"ocr_engine_init_failed: {type(e).__name__}: {e}"
+                logger.exception(
+                    "ocr_engine_init_failed",
+                    extra={"org_id": org_id_str, "video_id": video_id},
+                )
+                _safe_update_job_status(
+                    api_client, video_id, file_id,
+                    job_type="ocr", status="failed",
+                    error=error_msg, lease_token=lease_token,
+                )
+                emit_event(
+                    service=_SERVICE_NAME, event_name="ocr_failed",
+                    category="job_failure", level="ERROR",
+                    org_id=org_id, job_id=file_id,
+                    duration_ms=int((time.monotonic() - t_start) * 1000),
+                    message=error_msg[:1000],
+                    metadata={
+                        "video_id": video_id,
+                        "stage": "engine_init",
+                        "error_class": type(e).__name__,
+                        "use_gpu": settings.use_gpu,
+                    },
+                )
+                # Re-raise so the SQS message is NOT ack'd as success.
+                # Worker will exit, Aircloud restarts/marks unhealthy.
+                raise
         engine = ocr_engine
         ocr_results: dict[int, str] = {}
+        ocr_engine_errors = 0  # NEW: per-frame engine-level errors
 
         for scene_idx, kf_path in downloaded_keyframes.items():
-            blocks = engine.detect(str(kf_path))
+            try:
+                blocks = engine.detect(str(kf_path))
+            except Exception as exc:
+                # ``engine.detect`` swallows per-image data errors and
+                # returns []. Anything that bubbles up to here is an
+                # engine-level error (paddle runtime bug, etc.). Count
+                # them — if EVERY frame errors, that's a worker bug,
+                # NOT "video had no text", and we MUST surface it as
+                # ocr_failed instead of ocr_completed-with-zeros.
+                ocr_engine_errors += 1
+                if ocr_engine_errors <= 3:
+                    logger.warning(
+                        "ocr_engine_per_frame_error",
+                        extra={
+                            "scene_idx": scene_idx,
+                            "kf_path": str(kf_path),
+                            "exc_type": type(exc).__name__,
+                            "exc_msg": str(exc)[:200],
+                        },
+                    )
+                continue
             text = " ".join(b.text for b in blocks if b.text.strip())
             if text:
                 ocr_results[scene_idx] = text
+
+        # Defense in depth: if EVERY frame errored at the engine level,
+        # this is a worker bug (not "video genuinely had no text"). The
+        # OCR-Aircloud incident on 2026-05-10 had exactly this
+        # signature — 26/26 keyframes raised but ``ocr_status=done``
+        # still fired because the empty enrich_scenes path skipped
+        # the API POST. Surface as ocr_failed so the success-path event
+        # CAN'T fire with zeros across the board.
+        if (
+            ocr_engine_errors > 0
+            and ocr_engine_errors == len(downloaded_keyframes)
+        ):
+            raise RuntimeError(
+                f"OCR engine failed on all {ocr_engine_errors} keyframes "
+                f"(video_id={video_id}). Likely engine init or systemic "
+                f"GPU failure — check worker logs."
+            )
 
         updated_scenes: list[dict[str, Any]] = []
         total_ocr_chars = 0
@@ -254,6 +331,11 @@ def _process_single_ocr(
                 "frames_processed": len(downloaded_keyframes),
                 "frames_with_text": frames_with_text,
                 "total_ocr_chars": total_ocr_chars,
+                # NEW: track per-frame engine errors so partial
+                # degradation is visible going forward (the all-frames
+                # case raises before reaching here, so this is for
+                # detecting "5 of 26 frames errored" patterns).
+                "ocr_engine_errors": ocr_engine_errors,
             },
         )
 
