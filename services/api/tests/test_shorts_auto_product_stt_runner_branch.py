@@ -214,6 +214,13 @@ def _stub_clients(monkeypatch, runner):
     monkeypatch.setattr(openai, "AsyncOpenAI", MagicMock(return_value=fake_openai))
 
 
+def _lease_stub(*, heartbeat_ok: bool = True):
+    lease = MagicMock()
+    lease.set_stage = MagicMock()
+    lease.heartbeat_now = AsyncMock(return_value=heartbeat_ok)
+    return lease
+
+
 @pytest.mark.asyncio
 async def test_stt_happy_path_persists_render_job_id(monkeypatch):
     runner = _build_runner()
@@ -272,6 +279,7 @@ async def test_stt_happy_path_persists_render_job_id(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=catalog_id,
         catalog_label="my product",
+        lease=_lease_stub(),
     )
 
     # complete_tracking called with the render id from the pipeline.
@@ -320,6 +328,7 @@ async def test_stt_no_mentions_routes_to_complete_no_render(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        lease=_lease_stub(),
     )
     no_render_called.assert_awaited_once()
     assert no_render_called.await_args.kwargs["reason"] == "stt_no_mentions"
@@ -351,6 +360,7 @@ async def test_stt_transcript_unavailable_routes_to_complete_no_render(monkeypat
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        lease=_lease_stub(),
     )
     no_render_called.assert_awaited_once()
     assert no_render_called.await_args.kwargs["reason"] == "stt_transcript_unavailable"
@@ -383,6 +393,7 @@ async def test_stt_pipeline_error_marks_child_failed(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        lease=_lease_stub(),
     )
     fail_called.assert_awaited_once()
     no_render_called.assert_not_awaited()
@@ -420,6 +431,7 @@ async def test_stt_inputs_missing_routes_to_complete_no_render(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        lease=_lease_stub(),
     )
     no_render_called.assert_awaited_once()
     assert no_render_called.await_args.kwargs["reason"] == "stt_inputs_missing"

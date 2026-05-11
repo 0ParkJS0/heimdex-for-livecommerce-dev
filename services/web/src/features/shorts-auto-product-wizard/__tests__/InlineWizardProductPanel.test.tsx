@@ -75,6 +75,7 @@ describe("InlineWizardProductPanel", () => {
     triggerEnumerationMock.mockReset();
     getProductCatalogMock.mockReset();
     createScanOrderMock.mockReset();
+    vi.restoreAllMocks();
   });
 
   it("shows the loading state and triggers enumeration on mount", async () => {
@@ -279,6 +280,25 @@ describe("InlineWizardProductPanel", () => {
         screen.getByTestId("inline-product-no-products"),
       ).toBeInTheDocument();
     });
+  });
+
+  it("renders timeout separately from no-products while scan is still in progress", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(181_000);
+    triggerEnumerationMock.mockResolvedValue({ job_id: "j1", deduped: false });
+    getProductCatalogMock.mockResolvedValue({
+      video_id: "gd_test",
+      products: [],
+      scan_status: "in_progress",
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("inline-product-timeout")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("inline-product-no-products"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the error state when scan_status=failed", async () => {

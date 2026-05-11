@@ -11,6 +11,7 @@ Trigger points:
 """
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Optional
@@ -22,6 +23,18 @@ from app.config import get_settings
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+
+class QueuePublishError(RuntimeError):
+    """Raised when a required queue publish could not be completed."""
+
+
+@dataclass(frozen=True)
+class PublishResult:
+    backend: str
+    job_type: str
+    message_id: str | None = None
+    queue: str | None = None
 
 
 _gpu_settings_configured = False
@@ -185,6 +198,106 @@ def _publish(
         )
 
 
+def _publish_required(
+    job_type: str,
+    body: dict[str, Any],
+    deduplication_id: Optional[str] = None,
+) -> PublishResult:
+    """Publish a queue message, raising if the message is not accepted.
+
+    Use this for user-visible jobs where returning 202 without an
+    actual queue message leaves a row stuck forever. Best-effort
+    enrichment paths should continue to use :func:`_publish`.
+    """
+    settings = get_settings()
+
+    if settings.queue_backend == "rabbitmq":
+        return _publish_rabbitmq_required(job_type, body, deduplication_id)
+
+    if not settings.sqs_enabled:
+        logger.error(
+            "required_queue_missing_config",
+            backend="sqs",
+            job_type=job_type,
+            reason="sqs_disabled",
+        )
+        raise QueuePublishError(
+            f"SQS is disabled; cannot publish required job_type={job_type!r}"
+        )
+
+    queue_attr = _QUEUE_URL_ATTRS.get(job_type)
+    if queue_attr is None:
+        logger.error(
+            "required_queue_missing_config",
+            backend="sqs",
+            job_type=job_type,
+            reason="unknown_job_type",
+        )
+        raise QueuePublishError(f"unknown required job_type={job_type!r}")
+
+    queue_url = getattr(settings, queue_attr, "")
+    if not queue_url:
+        logger.error(
+            "required_queue_missing_config",
+            backend="sqs",
+            job_type=job_type,
+            reason="missing_queue_url",
+            queue_attr=queue_attr,
+        )
+        raise QueuePublishError(
+            f"{queue_attr.upper()} is not configured; "
+            f"cannot publish required job_type={job_type!r}"
+        )
+
+    try:
+        client = _get_sqs_client()
+        kwargs: dict[str, Any] = {
+            "QueueUrl": queue_url,
+            "MessageBody": json.dumps(body, default=str),
+            "MessageAttributes": {
+                "job_type": {"StringValue": job_type, "DataType": "String"},
+                "org_id": {
+                    "StringValue": body.get("org_id", ""),
+                    "DataType": "String",
+                },
+                "source": {"StringValue": "api", "DataType": "String"},
+            },
+        }
+        if deduplication_id and queue_url.endswith(".fifo"):
+            kwargs["MessageDeduplicationId"] = deduplication_id
+
+        resp = client.send_message(**kwargs)
+        result = PublishResult(
+            backend="sqs",
+            job_type=job_type,
+            message_id=resp.get("MessageId"),
+            queue=queue_url,
+        )
+        logger.info(
+            "required_queue_published",
+            backend=result.backend,
+            job_type=job_type,
+            message_id=result.message_id,
+            file_id=body.get("file_id", ""),
+            job_id=body.get("job_id", ""),
+        )
+        _wake_gpu_worker(job_type)
+        return result
+    except Exception as exc:
+        if isinstance(exc, QueuePublishError):
+            raise
+        logger.exception(
+            "required_queue_publish_failed",
+            backend="sqs",
+            job_type=job_type,
+            file_id=body.get("file_id", ""),
+            job_id=body.get("job_id", ""),
+        )
+        raise QueuePublishError(
+            f"failed to publish required job_type={job_type!r}: {exc}"
+        ) from exc
+
+
 # ── RabbitMQ publisher ────────────────────────────────────────────────
 
 _rabbitmq_client = None
@@ -265,6 +378,72 @@ def _publish_rabbitmq(
             job_type=job_type,
             file_id=body.get("file_id", ""),
         )
+
+
+def _publish_rabbitmq_required(
+    job_type: str,
+    body: dict[str, Any],
+    deduplication_id: Optional[str] = None,
+) -> PublishResult:
+    """RabbitMQ variant of :func:`_publish_required`."""
+    queue_attr = _QUEUE_URL_ATTRS.get(job_type)
+    if queue_attr is None:
+        logger.error(
+            "required_queue_missing_config",
+            backend="rabbitmq",
+            job_type=job_type,
+            reason="unknown_job_type",
+        )
+        raise QueuePublishError(f"unknown required job_type={job_type!r}")
+
+    settings = get_settings()
+    logical_name = queue_attr.replace("sqs_", "").replace("_queue_url", "")
+    queue_name = f"{settings.rabbitmq_queue_prefix}.{logical_name}"
+
+    try:
+        import pika
+
+        channel = _get_rabbitmq_client()
+        channel.queue_declare(queue=queue_name, durable=True)
+        channel.basic_publish(
+            exchange="",
+            routing_key=queue_name,
+            body=json.dumps(body, default=str),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                content_type="application/json",
+                message_id=deduplication_id or "",
+            ),
+        )
+        result = PublishResult(
+            backend="rabbitmq",
+            job_type=job_type,
+            queue=queue_name,
+            message_id=deduplication_id,
+        )
+        logger.info(
+            "required_queue_published",
+            backend=result.backend,
+            job_type=job_type,
+            queue=queue_name,
+            file_id=body.get("file_id", ""),
+            job_id=body.get("job_id", ""),
+        )
+        _wake_gpu_worker(job_type)
+        return result
+    except Exception as exc:
+        global _rabbitmq_client
+        _rabbitmq_client = None
+        logger.exception(
+            "required_queue_publish_failed",
+            backend="rabbitmq",
+            job_type=job_type,
+            file_id=body.get("file_id", ""),
+            job_id=body.get("job_id", ""),
+        )
+        raise QueuePublishError(
+            f"failed to publish required job_type={job_type!r}: {exc}"
+        ) from exc
 
 
 # ── Public API ─────────────────────────────────────────────────────────
@@ -789,17 +968,9 @@ def publish_shorts_render_job(
     """Publish a shorts render job to the render queue.
 
     Called from ShortsRenderService after creating a render job record.
-    Unlike other producers, this RAISES on failure so the service can
+    Unlike best-effort producers, this RAISES on failure so the service can
     mark the job as failed instead of leaving it stuck in "queued".
     """
-    settings = get_settings()
-    if not settings.sqs_enabled:
-        raise RuntimeError("SQS is not enabled — cannot enqueue render job")
-
-    queue_url = settings.sqs_shorts_render_queue_url
-    if not queue_url:
-        raise RuntimeError("SQS_SHORTS_RENDER_QUEUE_URL is not configured")
-
     now = datetime.now(timezone.utc)
     body = {
         "version": "1",
@@ -810,21 +981,12 @@ def publish_shorts_render_job(
         "video_id": video_id,
         "input_spec": input_spec,
     }
-
-    client = _get_sqs_client()
-    resp = client.send_message(
-        QueueUrl=queue_url,
-        MessageBody=json.dumps(body, default=str),
-        MessageAttributes={
-            "job_type": {"StringValue": "shorts_render", "DataType": "String"},
-            "org_id": {"StringValue": str(org_id), "DataType": "String"},
-            "source": {"StringValue": "api", "DataType": "String"},
-        },
-    )
+    dedup_id = f"{job_id}:shorts_render:{now.strftime('%Y%m%dT%H%M')}"
+    result = _publish_required("shorts_render", body, dedup_id)
     logger.info(
         "sqs_job_published",
         job_type="shorts_render",
-        message_id=resp.get("MessageId"),
+        message_id=result.message_id,
         job_id=str(job_id),
     )
 
@@ -850,10 +1012,6 @@ def publish_product_enumerate_job(
     Body shape MUST match
     ``heimdex_media_contracts.product.ProductEnumerateJob``.
     """
-    settings = get_settings()
-    if settings.queue_backend != "rabbitmq" and not settings.sqs_enabled:
-        return
-
     now = datetime.now(timezone.utc)
     body = {
         "version": "1",
@@ -869,7 +1027,7 @@ def publish_product_enumerate_job(
         "callback_base_url": callback_base_url,
     }
     dedup_id = f"{job_id}:product-enum:{now.strftime('%Y%m%dT%H%M')}"
-    _publish("product_enumerate", body, dedup_id)
+    _publish_required("product_enumerate", body, dedup_id)
 
 
 def publish_product_track_job(
@@ -915,10 +1073,6 @@ def publish_product_track_job(
     legacy v0.13.0-shaped publish doesn't see noise. Workers parse via
     the v0.14.0 ProductTrackJob model which accepts both shapes.
     """
-    settings = get_settings()
-    if settings.queue_backend != "rabbitmq" and not settings.sqs_enabled:
-        return
-
     now = datetime.now(timezone.utc)
     body: dict[str, object] = {
         "version": "1",
@@ -956,4 +1110,4 @@ def publish_product_track_job(
         body["intent"] = intent
 
     dedup_id = f"{job_id}:product-track:{now.strftime('%Y%m%dT%H%M')}"
-    _publish("product_track", body, dedup_id)
+    _publish_required("product_track", body, dedup_id)

@@ -66,6 +66,7 @@ describe("WizardStepSelectProduct", () => {
     triggerEnumerationMock.mockReset();
     getProductCatalogMock.mockReset();
     createScanOrderMock.mockReset();
+    vi.restoreAllMocks();
     mockSearchParams = VALID_CRITERIA_PARAMS;
   });
 
@@ -244,6 +245,25 @@ describe("WizardStepSelectProduct", () => {
 
     const err = await screen.findByTestId("poll-error");
     expect(err.textContent).toContain("poll dead");
+  });
+
+  it("shows timeout separately from no-products while scan is still in progress", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(181_000);
+    triggerEnumerationMock.mockResolvedValue({
+      job_id: "j1",
+      deduped: false,
+    });
+    getProductCatalogMock.mockResolvedValue({
+      video_id: "gd_test",
+      products: [],
+      scan_status: "in_progress",
+    });
+
+    render(<WizardStepSelectProduct videoId="gd_test" />);
+
+    const timeout = await screen.findByTestId("enumeration-timeout");
+    expect(timeout).toBeInTheDocument();
+    expect(screen.queryByTestId("no-products")).not.toBeInTheDocument();
   });
 
   it("retry button restarts the polling effect", async () => {

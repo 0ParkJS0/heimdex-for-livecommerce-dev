@@ -10,6 +10,7 @@ import pytest
 from app.sqs_producer import (
     _QUEUE_URL_ATTRS,
     _publish,
+    QueuePublishError,
     publish_shorts_render_job,
 )
 
@@ -21,6 +22,7 @@ def _make_settings(**overrides):
     """Build a mock Settings object with SQS fields."""
     defaults = {
         "sqs_enabled": False,
+        "queue_backend": "sqs",
         "sqs_endpoint_url": "",
         "sqs_region": "ap-northeast-2",
         "sqs_shorts_render_queue_url": "http://localhost:9324/000000000000/heimdex-shorts-render-queue",
@@ -118,27 +120,28 @@ class TestShortsRenderEnabled:
 
 
 class TestShortsRenderDisabled:
-    """When sqs_enabled=False or queue URL empty, no SQS calls happen."""
+    """Required render publishes fail loudly when queue config is invalid."""
 
     @patch("app.sqs_producer._get_sqs_client")
     @patch("app.sqs_producer.get_settings")
-    def test_noop_when_disabled(self, mock_settings, mock_get_client):
-        """sqs_enabled=False -> send_message NOT called."""
+    def test_raises_when_disabled(self, mock_settings, mock_get_client):
+        """sqs_enabled=False -> QueuePublishError."""
         mock_settings.return_value = _make_settings(sqs_enabled=False)
 
-        publish_shorts_render_job(
-            job_id=uuid4(),
-            org_id=uuid4(),
-            video_id="gd_test123",
-            input_spec=_sample_input_spec(),
-        )
+        with pytest.raises(QueuePublishError):
+            publish_shorts_render_job(
+                job_id=uuid4(),
+                org_id=uuid4(),
+                video_id="gd_test123",
+                input_spec=_sample_input_spec(),
+            )
 
         mock_get_client.assert_not_called()
 
     @patch("app.sqs_producer._get_sqs_client")
     @patch("app.sqs_producer.get_settings")
-    def test_noop_when_queue_url_empty(self, mock_settings, mock_get_client):
-        """sqs_shorts_render_queue_url='' -> does NOT send."""
+    def test_raises_when_queue_url_empty(self, mock_settings, mock_get_client):
+        """sqs_shorts_render_queue_url='' -> QueuePublishError."""
         mock_settings.return_value = _make_settings(
             sqs_enabled=True,
             sqs_shorts_render_queue_url="",
@@ -146,12 +149,13 @@ class TestShortsRenderDisabled:
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
-        publish_shorts_render_job(
-            job_id=uuid4(),
-            org_id=uuid4(),
-            video_id="gd_test123",
-            input_spec=_sample_input_spec(),
-        )
+        with pytest.raises(QueuePublishError):
+            publish_shorts_render_job(
+                job_id=uuid4(),
+                org_id=uuid4(),
+                video_id="gd_test123",
+                input_spec=_sample_input_spec(),
+            )
 
         mock_client.send_message.assert_not_called()
 
@@ -160,24 +164,35 @@ class TestShortsRenderDisabled:
 
 
 class TestShortsRenderFailure:
-    """SQS send failures must not raise."""
+    """Required render publishes raise on SQS send failures."""
 
     @patch("app.sqs_producer._get_sqs_client")
     @patch("app.sqs_producer.get_settings")
-    def test_send_failure_swallowed(self, mock_settings, mock_get_client):
-        """SQS send_message raises exception -> does NOT raise."""
+    def test_send_failure_raises(self, mock_settings, mock_get_client):
+        """SQS send_message raises exception -> QueuePublishError."""
         mock_settings.return_value = _make_settings(sqs_enabled=True)
         mock_client = MagicMock()
         mock_client.send_message.side_effect = Exception("SQS connection refused")
         mock_get_client.return_value = mock_client
 
-        # Must not raise
-        publish_shorts_render_job(
-            job_id=uuid4(),
-            org_id=uuid4(),
-            video_id="gd_test123",
-            input_spec=_sample_input_spec(),
-        )
+        with pytest.raises(QueuePublishError):
+            publish_shorts_render_job(
+                job_id=uuid4(),
+                org_id=uuid4(),
+                video_id="gd_test123",
+                input_spec=_sample_input_spec(),
+            )
+
+    @patch("app.sqs_producer._get_sqs_client")
+    @patch("app.sqs_producer.get_settings")
+    def test_best_effort_publish_still_swallows(self, mock_settings, mock_get_client):
+        """The shared best-effort helper keeps its old fire-and-forget contract."""
+        mock_settings.return_value = _make_settings(sqs_enabled=True)
+        mock_client = MagicMock()
+        mock_client.send_message.side_effect = Exception("SQS connection refused")
+        mock_get_client.return_value = mock_client
+
+        _publish("shorts_render", {"org_id": str(uuid4())}, "dedup")
 
 
 # ── Deduplication & mapping ──────────────────────────────────────────────────

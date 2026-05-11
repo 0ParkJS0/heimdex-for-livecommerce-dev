@@ -90,7 +90,7 @@ def _scan_order_body(**overrides):
 
 
 def _capture_publish_body():
-    """Patch the underlying ``_publish`` and capture the body dict
+    """Patch the underlying ``_publish_required`` and capture the body dict
     for inspection."""
     captured = {}
 
@@ -106,7 +106,7 @@ def test_publish_legacy_flow_carries_catalog_entry_id(monkeypatch):
     """Legacy single-product path: catalog_entry_id + duration_preset_sec
     set, mode defaults to 'enumerate', no wizard fields in the body."""
     captured, fake = _capture_publish_body()
-    monkeypatch.setattr(sqs_producer, "_publish", fake)
+    monkeypatch.setattr(sqs_producer, "_publish_required", fake)
 
     settings = MagicMock()
     settings.queue_backend = "sqs"
@@ -143,7 +143,7 @@ def test_publish_scan_order_flow_carries_wizard_fields(monkeypatch):
     """Wizard parent path: mode='scan_order' + full wizard field set;
     no catalog_entry_id, no duration_preset_sec."""
     captured, fake = _capture_publish_body()
-    monkeypatch.setattr(sqs_producer, "_publish", fake)
+    monkeypatch.setattr(sqs_producer, "_publish_required", fake)
 
     settings = MagicMock()
     settings.queue_backend = "sqs"
@@ -182,29 +182,31 @@ def test_publish_scan_order_flow_carries_wizard_fields(monkeypatch):
     assert "duration_preset_sec" not in body
 
 
-def test_publish_skips_when_queue_disabled(monkeypatch):
-    """Off-switch — neither RabbitMQ nor SQS enabled → no-op."""
-    captured, fake = _capture_publish_body()
-    monkeypatch.setattr(sqs_producer, "_publish", fake)
+def test_publish_raises_when_required_queue_disabled(monkeypatch):
+    """Product track publishes are required and cannot silently no-op."""
+    def fake_publish(queue_name, body, dedup_id):
+        raise sqs_producer.QueuePublishError("queue disabled")
+
+    monkeypatch.setattr(sqs_producer, "_publish_required", fake_publish)
 
     settings = MagicMock()
     settings.queue_backend = "sqs"
     settings.sqs_enabled = False
     monkeypatch.setattr(sqs_producer, "get_settings", lambda: settings)
 
-    sqs_producer.publish_product_track_job(
-        job_id=uuid4(),
-        org_id=uuid4(),
-        video_id=uuid4(),
-        requested_by_user_id=uuid4(),
-        tracker_version="v1.0",
-        enumeration_prompt_version="v1.0",
-        callback_base_url="https://x",
-        mode="scan_order",
-        length_seconds=60,
-        requested_count=5,
-    )
-    assert captured == {}
+    with pytest.raises(sqs_producer.QueuePublishError):
+        sqs_producer.publish_product_track_job(
+            job_id=uuid4(),
+            org_id=uuid4(),
+            video_id=uuid4(),
+            requested_by_user_id=uuid4(),
+            tracker_version="v1.0",
+            enumeration_prompt_version="v1.0",
+            callback_base_url="https://x",
+            mode="scan_order",
+            length_seconds=60,
+            requested_count=5,
+        )
 
 
 # ======================================================================

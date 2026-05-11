@@ -56,6 +56,10 @@ def _make_job(
         output_size_bytes=None,
         output_s3_key=output_s3_key,
         error=None,
+        input_spec=_make_composition()["composition"],
+        replaced_by_render_job_id=None,
+        refined_from_render_job_id=None,
+        refinement_source=None,
     )
     return job
 
@@ -63,9 +67,13 @@ def _make_job(
 def _build_service():
     repo = MagicMock()
     repo.create = AsyncMock()
+    repo.update_status = AsyncMock()
     repo.get_by_id = AsyncMock()
     repo.list_by_user = AsyncMock()
     repo.delete = AsyncMock()
+    repo.find_recent_duplicate = AsyncMock(return_value=None)
+    repo.session = MagicMock()
+    repo.session.commit = AsyncMock()
 
     scene_search = MagicMock()
     scene_search.mget_scenes = AsyncMock()
@@ -96,10 +104,10 @@ def test_create_render_job_calls_repo_and_sqs():
     assert result.id == job.id
 
 
-# --- Test 17: SQS failure does not fail the call ---
+# --- Test 17: SQS failure marks render failed ---
 
 
-def test_create_render_job_sqs_failure_does_not_fail():
+def test_create_render_job_sqs_failure_marks_job_failed():
     service, repo, scene_search = _build_service()
     org_id, user_id = uuid4(), uuid4()
     job = _make_job(org_id=org_id)
@@ -118,6 +126,9 @@ def test_create_render_job_sqs_failure_does_not_fail():
         result = asyncio.run(service.create_render_job(org_id, user_id, payload))
 
     assert result.id == job.id
+    assert result.status == "failed"
+    assert result.error == "Failed to enqueue render job"
+    repo.update_status.assert_awaited_once()
 
 
 # --- Test 18: get_render_job completed → download_url populated ---
@@ -126,13 +137,21 @@ def test_create_render_job_sqs_failure_does_not_fail():
 def test_get_render_job_completed_has_download_url():
     service, repo, _ = _build_service()
     org_id = uuid4()
+    user_id = uuid4()
     job_id = uuid4()
     job = _make_job(status="completed", output_s3_key="renders/out.mp4", job_id=job_id, org_id=org_id)
     repo.get_by_id.return_value = job
 
-    result = asyncio.run(service.get_render_job(org_id, job_id))
+    with patch("app.storage.s3.S3Client") as MockS3:
+        mock_s3_instance = MagicMock()
+        mock_s3_instance.generate_presigned_url_async = AsyncMock(
+            return_value="https://signed.example/render.mp4",
+        )
+        MockS3.return_value = mock_s3_instance
 
-    assert result.download_url == f"/api/shorts/render/{job_id}/download"
+        result = asyncio.run(service.get_render_job(org_id, user_id, job_id))
+
+    assert result.download_url == "https://signed.example/render.mp4"
 
 
 # --- Test 19: get_render_job not found → 404 ---
@@ -143,7 +162,7 @@ def test_get_render_job_not_found_raises_404():
     repo.get_by_id.return_value = None
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(service.get_render_job(uuid4(), uuid4()))
+        asyncio.run(service.get_render_job(uuid4(), uuid4(), uuid4()))
 
     assert exc_info.value.status_code == 404
 
@@ -168,6 +187,7 @@ def test_list_render_jobs_returns_response():
 def test_delete_render_job_with_s3_key_deletes_both():
     service, repo, _ = _build_service()
     org_id = uuid4()
+    user_id = uuid4()
     job_id = uuid4()
     job = _make_job(output_s3_key="renders/out.mp4", job_id=job_id, org_id=org_id)
     repo.get_by_id.return_value = job
@@ -176,10 +196,10 @@ def test_delete_render_job_with_s3_key_deletes_both():
         mock_s3_instance = MagicMock()
         MockS3.return_value = mock_s3_instance
 
-        asyncio.run(service.delete_render_job(org_id, job_id))
+        asyncio.run(service.delete_render_job(org_id, user_id, job_id))
 
     mock_s3_instance.delete.assert_called_once_with("renders/out.mp4")
-    repo.delete.assert_awaited_once_with(org_id, job_id)
+    repo.delete.assert_awaited_once_with(org_id, user_id, job_id)
 
 
 # --- Test 22: delete_render_job without S3 key → DB only ---
@@ -188,15 +208,16 @@ def test_delete_render_job_with_s3_key_deletes_both():
 def test_delete_render_job_without_s3_key_deletes_db_only():
     service, repo, _ = _build_service()
     org_id = uuid4()
+    user_id = uuid4()
     job_id = uuid4()
     job = _make_job(output_s3_key=None, job_id=job_id, org_id=org_id)
     repo.get_by_id.return_value = job
 
     with patch("app.storage.s3.S3Client") as MockS3:
-        asyncio.run(service.delete_render_job(org_id, job_id))
+        asyncio.run(service.delete_render_job(org_id, user_id, job_id))
 
     MockS3.assert_not_called()
-    repo.delete.assert_awaited_once_with(org_id, job_id)
+    repo.delete.assert_awaited_once_with(org_id, user_id, job_id)
 
 
 # --- Test 23: delete_render_job not found → 404 ---
@@ -207,7 +228,7 @@ def test_delete_render_job_not_found_raises_404():
     repo.get_by_id.return_value = None
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(service.delete_render_job(uuid4(), uuid4()))
+        asyncio.run(service.delete_render_job(uuid4(), uuid4(), uuid4()))
 
     assert exc_info.value.status_code == 404
 

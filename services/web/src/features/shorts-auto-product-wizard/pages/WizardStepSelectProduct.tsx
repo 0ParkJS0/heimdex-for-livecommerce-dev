@@ -112,7 +112,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
 
   const [entries, setEntries] = useState<CatalogProductSummary[]>([]);
   const [pollState, setPollState] = useState<
-    "enumerating" | "ready" | "no_products" | "error"
+    "enumerating" | "ready" | "no_products" | "timeout" | "error"
   >("enumerating");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // PR 3 of multi-product wizard: multi-select state. See
@@ -170,7 +170,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
           return;
         }
         if (Date.now() - startedAtRef.current >= POLL_TIMEOUT_MS) {
-          setPollState("no_products");
+          setPollState("timeout");
           return;
         }
         timer = setTimeout(poll, POLL_INTERVAL_MS);
@@ -307,6 +307,35 @@ export function WizardStepSelectProduct({ videoId }: Props) {
             영상을 선택하거나, 영상에 제품이 잘 보이는 시간 구간을
             지정해 보세요.
           </p>
+        </div>
+      ) : null}
+
+      {pollState === "timeout" ? (
+        <div
+          className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-6"
+          data-testid="enumeration-timeout"
+        >
+          <h2 className="text-lg font-semibold text-amber-900">
+            제품 스캔이 아직 끝나지 않았어요
+          </h2>
+          <p className="text-sm text-amber-800">
+            처리 시간이 예상보다 길어지고 있습니다. 스캔은 계속 진행될 수
+            있으니 잠시 후 다시 확인해 주세요.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              startedAtRef.current = Date.now();
+              setEntries([]);
+              setSelectedIds(new Set());
+              setErrorMessage(null);
+              setPollState("enumerating");
+              setRetryCount((n) => n + 1);
+            }}
+            className="rounded-md bg-amber-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-800"
+          >
+            다시 확인
+          </button>
         </div>
       ) : null}
 

@@ -106,6 +106,7 @@ def _build_runner(monkeypatch, *, settings=None, fake_repo=None,
     _claimed_default.started_at = _now
     _claimed_default.claimed_at = _now
     fake_repo.claim = AsyncMock(return_value=_claimed_default)
+    fake_repo.heartbeat = AsyncMock(return_value=MagicMock())
 
     fake_repo.complete_tracking = AsyncMock(return_value=MagicMock())
     fake_repo.fail = AsyncMock()
@@ -225,6 +226,91 @@ async def test_process_child_payload_no_render_path_handles_lease_loss(monkeypat
     await runner._process_child_payload(uuid4())
 
     fake_repo.complete_tracking.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_child_lease_heartbeat_extends_current_claim(monkeypatch):
+    """The runner-owned heartbeat must renew a child lease with the
+    same claimed_by token used for the original claim. A stale runner
+    gets ``None`` back from the repo and treats the lease as lost.
+    """
+    settings = _settings_stub(lease_seconds=123)
+    runner, fake_repo = _build_runner(monkeypatch, settings=settings)
+    child_id = uuid4()
+
+    ok = await runner._heartbeat_child_lease(
+        child_id=child_id,
+        stage="rendering",
+        progress_pct=75,
+        progress_label="rendering",
+    )
+
+    assert ok is True
+    fake_repo.heartbeat.assert_awaited_once()
+    kwargs = fake_repo.heartbeat.await_args.kwargs
+    assert kwargs["job_id"] == child_id
+    assert kwargs["claimed_by"] == "api-child-test-replica"
+    assert kwargs["stage"] == "rendering"
+    assert kwargs["progress_pct"] == 75
+    assert kwargs["progress_label"] == "rendering"
+    assert kwargs["lease_seconds"] == 123
+
+
+@pytest.mark.asyncio
+async def test_render_enqueue_skipped_when_child_lease_lost(monkeypatch):
+    """Before creating a ShortsRenderJob the runner performs a fresh
+    heartbeat. If that guarded write returns None, another replica or
+    cancellation owns the row, so this runner must not enqueue a render.
+    """
+    runner, _ = _build_runner(monkeypatch)
+    child_id = uuid4()
+    catalog_id = uuid4()
+    child = MagicMock(
+        id=child_id,
+        catalog_entry_id=catalog_id,
+        shorts_index=1,
+    )
+    parent = MagicMock(
+        id=uuid4(),
+        org_id=uuid4(),
+        video_id=uuid4(),
+        product_distribution=None,
+        length_seconds=60,
+        duration_preset_sec=None,
+        requested_by_user_id=uuid4(),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_load_child_context",
+        AsyncMock(return_value=(child, parent, {catalog_id: "Product"})),
+    )
+
+    appearance = MagicMock()
+    appearance.scene_id = "gd_video_1_scene_001"
+    appearance.window_start_ms = 0
+    appearance.window_end_ms = 5000
+    appearance.avg_bbox_area_pct = 0.2
+    appearance.avg_confidence = 0.9
+    appearance.rejected_reason = None
+    appearance.has_narration_mention = False
+    appearance.has_ocr_overlap = False
+    monkeypatch.setattr(
+        runner,
+        "_load_appearances_for_catalog",
+        AsyncMock(return_value=[appearance]),
+    )
+    create_render = AsyncMock()
+    monkeypatch.setattr(runner, "_create_render_job", create_render)
+
+    lease = MagicMock()
+    lease.set_stage = MagicMock()
+    lease.heartbeat_now = AsyncMock(return_value=False)
+
+    await runner._process_claimed_child_payload(child_id=child_id, lease=lease)
+
+    lease.set_stage.assert_called_once()
+    lease.heartbeat_now.assert_awaited_once()
+    create_render.assert_not_awaited()
 
 
 @pytest.mark.asyncio

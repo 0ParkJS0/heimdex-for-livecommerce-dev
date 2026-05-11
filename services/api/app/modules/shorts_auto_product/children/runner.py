@@ -99,6 +99,7 @@ from app.modules.shorts_auto_product.children.scene_id_utils import (
 from app.modules.shorts_auto_product.models import (
     PRODUCT_DISTRIBUTION_SINGLE,
     SCAN_STAGE_ASSEMBLING,
+    SCAN_STAGE_RENDERING,
     ProductAppearance,
     ProductScanJob,
 )
@@ -128,6 +129,103 @@ def _default_instance_id() -> str:
     back to the OS hostname for dev.
     """
     return os.getenv("HOSTNAME") or socket.gethostname() or "api-unknown"
+
+
+class _ChildLeaseRenewer:
+    """Keep a claimed render_child lease alive while in-process work runs."""
+
+    def __init__(
+        self,
+        runner: "ChildRunner",
+        *,
+        child_id: UUID,
+        stage: str,
+        progress_pct: int,
+        progress_label: str | None,
+    ) -> None:
+        self._runner = runner
+        self._child_id = child_id
+        self._stage = stage
+        self._progress_pct = progress_pct
+        self._progress_label = progress_label
+        self._lost = False
+        self._stop_event = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    @property
+    def lost(self) -> bool:
+        return self._lost
+
+    def start(self) -> "_ChildLeaseRenewer":
+        self._task = asyncio.create_task(
+            self._loop(),
+            name=f"shorts-child-lease-{self._child_id}",
+        )
+        return self
+
+    def set_stage(
+        self,
+        *,
+        stage: str,
+        progress_pct: int,
+        progress_label: str | None,
+    ) -> None:
+        self._stage = stage
+        self._progress_pct = progress_pct
+        self._progress_label = progress_label
+
+    async def heartbeat_now(self) -> bool:
+        if self._lost:
+            return False
+        ok = await self._runner._heartbeat_child_lease(
+            child_id=self._child_id,
+            stage=self._stage,
+            progress_pct=self._progress_pct,
+            progress_label=self._progress_label,
+        )
+        if not ok:
+            self._lost = True
+        return ok
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+        if self._task is None:
+            return
+        try:
+            await asyncio.wait_for(self._task, timeout=1.0)
+        except asyncio.TimeoutError:
+            self._task.cancel()
+
+    async def _loop(self) -> None:
+        interval = self._runner._child_heartbeat_interval_seconds()
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                ok = await self.heartbeat_now()
+            except Exception:
+                logger.exception(
+                    "child_lease_heartbeat_failed",
+                    extra={
+                        "child_id": str(self._child_id),
+                        "instance_id": self._runner.instance_id,
+                    },
+                )
+                self._lost = True
+                return
+            if not ok:
+                logger.warning(
+                    "child_lease_heartbeat_lost",
+                    extra={
+                        "child_id": str(self._child_id),
+                        "instance_id": self._runner.instance_id,
+                        "stage": self._stage,
+                    },
+                )
+                return
 
 
 class ChildRunner:
@@ -190,6 +288,52 @@ class ChildRunner:
         ``settings.worker_id``).
         """
         return f"api-child-{self.instance_id}"
+
+    def _child_heartbeat_interval_seconds(self) -> float:
+        lease_seconds = self.settings.auto_shorts_product_v2_child_lease_seconds
+        return max(5.0, min(60.0, float(lease_seconds) / 3.0))
+
+    def _start_child_lease_renewer(
+        self,
+        *,
+        child_id: UUID,
+        stage: str,
+        progress_pct: int,
+        progress_label: str | None,
+    ) -> _ChildLeaseRenewer:
+        return _ChildLeaseRenewer(
+            self,
+            child_id=child_id,
+            stage=stage,
+            progress_pct=progress_pct,
+            progress_label=progress_label,
+        ).start()
+
+    async def _heartbeat_child_lease(
+        self,
+        *,
+        child_id: UUID,
+        stage: str,
+        progress_pct: int,
+        progress_label: str | None,
+    ) -> bool:
+        async with self.session_factory() as session:
+            repo = ProductScanJobRepository(session)
+            updated = await repo.heartbeat(
+                job_id=child_id,
+                claimed_by=self.claimed_by,
+                stage=stage,
+                progress_pct=progress_pct,
+                progress_label=progress_label,
+                cost_delta_usd=Decimal("0"),
+                lease_seconds=(
+                    self.settings.auto_shorts_product_v2_child_lease_seconds
+                ),
+            )
+            if updated is None:
+                return False
+            await session.commit()
+            return True
 
     def start(self) -> asyncio.Task[None]:
         """Schedule the main loop. Idempotent — calling start twice
@@ -416,9 +560,29 @@ class ChildRunner:
                         ),
                         "re_claimed_at": claimed.claimed_at.isoformat(),
                     },
-                )
+            )
             await session.commit()
 
+        lease = self._start_child_lease_renewer(
+            child_id=child_id,
+            stage=SCAN_STAGE_ASSEMBLING,
+            progress_pct=20,
+            progress_label="assembling",
+        )
+        try:
+            await self._process_claimed_child_payload(
+                child_id=child_id,
+                lease=lease,
+            )
+        finally:
+            await lease.stop()
+
+    async def _process_claimed_child_payload(
+        self,
+        *,
+        child_id: UUID,
+        lease: _ChildLeaseRenewer,
+    ) -> None:
         # ── 2. Read child + parent + catalog set ──────────────────
         loaded = await self._load_child_context(child_id=child_id)
         if loaded is None:
@@ -511,6 +675,7 @@ class ChildRunner:
                 parent=parent,
                 chosen_catalog_id=chosen_catalog_id,
                 catalog_label=catalog_label,
+                lease=lease,
             )
             return
 
@@ -581,6 +746,21 @@ class ChildRunner:
         # collapsing into one render row — fixes the staging
         # 2026-05-06 collision where the LLM enumerator picked the
         # same product for clips 1 and 5.
+        lease.set_stage(
+            stage=SCAN_STAGE_RENDERING,
+            progress_pct=75,
+            progress_label="rendering",
+        )
+        if not await lease.heartbeat_now():
+            logger.warning(
+                "child_render_enqueue_skipped_lease_lost",
+                extra={
+                    "child_id": str(child_id),
+                    "instance_id": self.instance_id,
+                },
+            )
+            return
+
         render_job_id = await self._create_render_job(
             org_id=parent.org_id,
             user_id=parent.requested_by_user_id,
@@ -638,6 +818,7 @@ class ChildRunner:
         parent: ProductScanJob,
         chosen_catalog_id: UUID,
         catalog_label: str | None,
+        lease: _ChildLeaseRenewer,
     ) -> None:
         """STT-track replacement for steps 4-6 of ``_process_child_payload``.
 
@@ -710,6 +891,13 @@ class ChildRunner:
         # both paths must forward ``scan_job_id`` so render dedupe
         # is scoped per scan_job (migration 057).
         async def _enqueue_render(spec) -> UUID:
+            lease.set_stage(
+                stage=SCAN_STAGE_RENDERING,
+                progress_pct=75,
+                progress_label="rendering",
+            )
+            if not await lease.heartbeat_now():
+                raise SttPipelineError("child lease lost before render enqueue")
             return await self._create_render_job(
                 org_id=parent.org_id,
                 user_id=parent.requested_by_user_id,
