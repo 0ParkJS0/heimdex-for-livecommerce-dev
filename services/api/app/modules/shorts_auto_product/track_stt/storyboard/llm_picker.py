@@ -134,6 +134,11 @@ class LlmStoryboardPicker:
     budgets: SlotBudgets
     budget_tracker: _BudgetTracker
     fallback: HeuristicStoryboardPicker
+    # Minimum CTA position as a fraction of source duration (0.0–1.0).
+    # 0.667 enforces the original last-third rule; 0.5 loosens to last
+    # half. Tuned via ``auto_shorts_product_v2_storyboard_cta_min_position``
+    # in config.
+    cta_min_position: float = 0.5
     _reservation_usd: float = field(default=_RESERVATION_USD, init=False)
 
     async def assemble(
@@ -299,7 +304,11 @@ class LlmStoryboardPicker:
         try:
             content = _extract_response_content(response)
             plan_response = _LlmPlanResponse.model_validate_json(content)
-            _validate_semantic_constraints(plan_response, chronological)
+            _validate_semantic_constraints(
+                plan_response,
+                chronological,
+                cta_min_position=self.cta_min_position,
+            )
         except (ValidationError, ValueError, KeyError, AttributeError) as exc:
             self.budget_tracker.release_reservation(self._reservation_usd)
             logger.warning(
@@ -540,6 +549,8 @@ def _select_chunks_for_prompt(
 def _validate_semantic_constraints(
     plan: _LlmPlanResponse,
     chronological: list[ScoredChunk],
+    *,
+    cta_min_position: float = 0.5,
 ) -> None:
     """Constraints that need ``chronological`` as context.
 
@@ -550,7 +561,9 @@ def _validate_semantic_constraints(
     This function adds:
       * ``chunk_index`` in bounds.
       * HOOK chunk's ``start_ms`` ≤ 1/3 × source duration.
-      * CTA chunk's ``start_ms`` ≥ 2/3 × source duration.
+      * CTA chunk's ``start_ms`` ≥ ``cta_min_position`` × source
+        duration (default 0.5 = last half; tighten toward 0.667 for
+        last-third or relax toward 0.4 for early CTAs).
       * DETAIL fragments are chronologically ordered relative to each
         other.
       * HOOK < INTRO < CTA in ``start_ms`` (loose role-temporal
@@ -568,10 +581,10 @@ def _validate_semantic_constraints(
             )
 
     # Source duration = end_ms of the latest chunk. Used to anchor the
-    # first/last-third constraints.
+    # first-third (HOOK) and CTA-position constraints.
     source_duration = max(c.end_ms for c in chronological)
     first_third_cutoff = source_duration // 3
-    last_third_cutoff = (source_duration * 2) // 3
+    last_third_cutoff = int(source_duration * cta_min_position)
 
     by_role: dict[str, list[_LlmFragmentPick]] = {}
     for f in plan.fragments:

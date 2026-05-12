@@ -126,6 +126,11 @@ def build_storyboard_picker_from_settings(
             "auto_shorts_product_v2_storyboard_llm_prompt_version",
             "v1",
         )
+        cta_min_position = float(getattr(
+            settings,
+            "auto_shorts_product_v2_storyboard_cta_min_position",
+            0.5,
+        ))
         logger.debug(
             "stt_storyboard_picker_built",
             extra={
@@ -134,6 +139,7 @@ def build_storyboard_picker_from_settings(
                 "timeout_s": timeout_s,
                 "daily_budget_usd": daily_budget_usd,
                 "prompt_version": prompt_version,
+                "cta_min_position": cta_min_position,
                 "budgets": budgets.__dict__,
             },
         )
@@ -147,6 +153,7 @@ def build_storyboard_picker_from_settings(
                 daily_budget_usd=daily_budget_usd,
             ),
             fallback=HeuristicStoryboardPicker(budgets=budgets),
+            cta_min_position=cta_min_position,
         )
 
     raise ValueError(

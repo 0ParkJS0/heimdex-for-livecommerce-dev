@@ -34,7 +34,10 @@ class TestPromptVersion:
     def test_module_constant_exists(self):
         # Bumped v1 → v2 in PR 9 (chunk-cap + small-chunk hint —
         # changes prompt input shape, eval cache invalidates).
-        assert PROMPT_VERSION == "v2"
+        # Bumped v2 → v3 2026-05-13 (CTA position rule relaxed from
+        # "last third" to "last half" to match Korean livecommerce
+        # CTAs that empirically land at 50-65% of source).
+        assert PROMPT_VERSION == "v3"
 
     def test_system_prompt_non_empty(self):
         assert len(_SYSTEM_PROMPT) > 100

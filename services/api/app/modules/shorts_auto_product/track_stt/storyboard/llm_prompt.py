@@ -49,7 +49,7 @@ from app.modules.shorts_auto_product.track_stt.storyboard.types import (
 #     the prompt no longer scales with source-video duration.
 # v1: initial.
 # ====================================================================
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 
 _SYSTEM_PROMPT = """You are a livecommerce shorts director. Pick chunks from \
@@ -64,7 +64,9 @@ Rules:
 
 1. Use each chunk at most once. Return chunk_index from the provided list.
 2. The HOOK chunk must come from the FIRST third of the source video.
-3. The CTA chunk must come from the LAST third of the source video.
+3. The CTA chunk must come from the LAST half of the source video. \
+Korean livecommerce CTAs often land mid-stream (50-70%); picking earlier \
+than that breaks the closer beat.
 4. DETAIL fragments play in source-time order among themselves.
 5. Prefer narrative coherence over per-chunk scores: a chunk that
    answers the HOOK's question is better than the highest-hook chunk

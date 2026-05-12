@@ -638,7 +638,17 @@ class Settings(BaseSettings):
     # between this env var and the module constant is a misconfig
     # signal — the picker logs a WARNING and continues with the
     # module's value.
-    auto_shorts_product_v2_storyboard_llm_prompt_version: str = "v2"
+    auto_shorts_product_v2_storyboard_llm_prompt_version: str = "v3"
+    # Fraction of source duration after which the CTA chunk is allowed
+    # (0.0–1.0). 0.667 = last third (original strict rule), 0.5 = last
+    # half (more permissive, matches Korean livecommerce CTAs that
+    # often land mid-stream). The LLM picker validates against this
+    # AND the system prompt embeds the same threshold so the model
+    # doesn't waste tokens picking CTAs that will be rejected. If the
+    # ratio of ``stt_storyboard_llm_skipped`` events with
+    # ``reason=validation_failed`` stays high after tuning, lower
+    # further (toward 0.4) before considering full removal.
+    auto_shorts_product_v2_storyboard_cta_min_position: float = 0.5
 
     # --- Auto-shorts: post-render Whisper subtitle refinement ---
     # Plan: ``.claude/plans/auto-shorts-whisper-subtitles-2026-05-06.md``
