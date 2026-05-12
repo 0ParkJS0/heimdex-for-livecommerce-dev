@@ -50,3 +50,19 @@ services:
              pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
              pip install --no-deps -e /opt/heimdex-worker-sdk 2>/dev/null;
              python -m src.worker"
+
+  # Mounted into the override 2026-05-12 so the short-poll + adaptive
+  # backoff SDK change (heimdex-worker-sdk feat/short-poll-adaptive-backoff)
+  # can be baked on staging without a PyPI release. Once the bake is
+  # green, this entry stays — same iteration pattern as the drive
+  # workers above. Reverting is a one-line removal here.
+  shorts-render-worker:
+    volumes:
+      - ../heimdex-worker-sdk:/opt/heimdex-worker-sdk:ro
+    environment:
+      - PYTHONPATH=/app:/opt/heimdex-worker-sdk/src
+    command: >
+      sh -c "pip install --no-deps -e /opt/heimdex-media-contracts 2>/dev/null;
+             pip install --no-deps -e /opt/heimdex-media-pipelines 2>/dev/null;
+             pip install --no-deps -e /opt/heimdex-worker-sdk 2>/dev/null;
+             python -m src.worker"
