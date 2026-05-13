@@ -557,6 +557,19 @@ export function SavedShortsPage() {
                         편집
                       </Link>
                     )}
+                    {item.type === "render" && isCompleted(item) && (
+                      // Opens the wizard's per-clip editor in single-render
+                      // mode (route added in PR /export/shorts/[renderJobId]/edit).
+                      // After edits + rerender, the refined child becomes the
+                      // new leaf and download serves the sub-burned MP4.
+                      <Link
+                        href={`/export/shorts/${encodeURIComponent(item.id)}/edit`}
+                        className="text-xs text-indigo-500 hover:text-indigo-600 transition-colors"
+                        data-testid="saved-shorts-render-edit-link"
+                      >
+                        편집
+                      </Link>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleDelete(item)}
