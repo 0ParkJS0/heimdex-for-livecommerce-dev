@@ -53,6 +53,14 @@ export interface RenderJobResponse {
   replaced_by_render_job_id: string | null;
   refined_from_render_job_id: string | null;
   refinement_source: string | null;
+  // ``effective_render_job_id``: leaf of the replaced_by chain
+  // reachable from this row. ``null`` when ``self`` IS the leaf
+  // (the common case — the listing endpoint filters intermediates
+  // out, so callers usually hold leaf ids). Populated when a caller
+  // fetches an intermediate render directly (e.g., a bookmarked
+  // editor URL pointing at a now-superseded render); the FE
+  // redirects onto this id to land on the current canonical row.
+  effective_render_job_id: string | null;
 }
 
 // Subset of heimdex_media_contracts.composition.SubtitleSpec sent by the

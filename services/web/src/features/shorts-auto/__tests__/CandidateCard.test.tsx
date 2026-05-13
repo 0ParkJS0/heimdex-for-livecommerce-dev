@@ -78,6 +78,7 @@ describe("CandidateCard", () => {
             replaced_by_render_job_id: null,
             refined_from_render_job_id: null,
             refinement_source: null,
+            effective_render_job_id: null,
           },
         }}
         onSelect={() => {}}
@@ -113,6 +114,7 @@ describe("CandidateCard", () => {
             replaced_by_render_job_id: null,
             refined_from_render_job_id: null,
             refinement_source: null,
+            effective_render_job_id: null,
           },
         }}
         onSelect={() => {}}

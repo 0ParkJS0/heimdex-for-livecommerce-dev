@@ -53,6 +53,7 @@ function makeJob(overrides: Partial<api.RenderJobResponse> = {}): api.RenderJobR
     replaced_by_render_job_id: null,
     refined_from_render_job_id: null,
     refinement_source: null,
+    effective_render_job_id: null,
     ...overrides,
   };
 }
@@ -116,6 +117,7 @@ describe("useRefinedRenderChain — refined child swap", () => {
         status: childPollCount > 1 ? "completed" : "rendering",
         download_url: childPollCount > 1 ? "https://s3/refined.mp4" : null,
         refinement_source: "whisper",
+        effective_render_job_id: null,
       });
     });
 
@@ -257,9 +259,11 @@ describe("schema mirror", () => {
       replaced_by_render_job_id: null,
       refined_from_render_job_id: null,
       refinement_source: null,
+      effective_render_job_id: null,
     };
     expect(job.replaced_by_render_job_id).toBeNull();
     expect(job.refined_from_render_job_id).toBeNull();
     expect(job.refinement_source).toBeNull();
+    expect(job.effective_render_job_id).toBeNull();
   });
 });

@@ -24,7 +24,7 @@ export default function EditClipsRoute() {
         </div>
       }
     >
-      <EditClipsPage videoId={videoId} parentJobId={parentJobId} />
+      <EditClipsPage mode="wizard" videoId={videoId} parentJobId={parentJobId} />
     </Suspense>
   );
 }

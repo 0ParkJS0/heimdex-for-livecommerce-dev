@@ -60,6 +60,7 @@ import {
 } from "../components/SubtitleOverlay";
 import { useExportBatch } from "../hooks/useExportBatch";
 import { useScanOrder } from "../hooks/useScanOrder";
+import { useSyntheticScanOrder } from "../hooks/useSyntheticScanOrder";
 import {
   applyGlobalStyleToCues,
   deriveGlobalStyle,
@@ -68,10 +69,31 @@ import {
   type SubtitleStyleDraft,
 } from "../lib/global-style";
 
-interface Props {
+// Wizard mode: the original auto-shorts wizard flow. The page drives a
+// scan-order parent and renders 1-N clips as tabs. ``parentJobId``
+// is the ``scan_order`` UUID; ``useScanOrder`` polls it.
+interface WizardModeProps {
+  mode: "wizard";
   videoId: string;
   parentJobId: string;
 }
+
+// Single mode: a saved-shorts row in ``/export/shorts`` was clicked
+// to edit one specific render. No parent scan-order exists; we
+// synthesize a one-child ``ScanOrderStatusResponse`` from the
+// render via ``useSyntheticScanOrder`` so the rest of the page
+// renders unchanged.
+interface SingleModeProps {
+  mode: "single";
+  videoId: string;
+  renderJobId: string;
+}
+
+// ``mode`` is REQUIRED on both branches so TypeScript can narrow
+// ``props.parentJobId`` vs. ``props.renderJobId`` at the use sites.
+// The existing wizard route mounting this page must pass
+// ``mode="wizard"`` explicitly — that's a one-line touch.
+type Props = WizardModeProps | SingleModeProps;
 
 interface ClipState {
   /** Render job id for this clip (Clip 1, Clip 2, ...). */
@@ -102,11 +124,25 @@ interface ClipState {
   refinementSource: string | null;
 }
 
-export function EditClipsPage({ videoId, parentJobId }: Props) {
+export function EditClipsPage(props: Props) {
+  const { videoId, mode } = props;
   const { getAccessToken } = useAuth();
   const searchParams = useSearchParams();
 
-  const scanOrder = useScanOrder(parentJobId, getAccessToken);
+  // Both hooks are called unconditionally to satisfy the rules of
+  // hooks; the inactive one short-circuits on a ``null`` id (both
+  // ``useScanOrder`` and ``useSyntheticScanOrder`` handle null
+  // explicitly — see their bodies). Narrow via ``props.mode`` so
+  // the type checker can resolve ``parentJobId`` vs ``renderJobId``.
+  const wizardScanOrder = useScanOrder(
+    props.mode === "wizard" ? props.parentJobId : null,
+    getAccessToken,
+  );
+  const singleScanOrder = useSyntheticScanOrder(
+    props.mode === "single" ? props.renderJobId : null,
+    getAccessToken,
+  );
+  const scanOrder = mode === "wizard" ? wizardScanOrder : singleScanOrder;
 
   const children = useMemo(
     () => scanOrder.status?.children ?? [],
