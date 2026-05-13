@@ -93,6 +93,18 @@ class RenderJobResponse(BaseModel):
     refined_from_render_job_id: UUID | None = None
     refinement_source: str | None = None
 
+    # ``effective_render_job_id``: the leaf of the
+    # ``replaced_by_render_job_id`` chain reachable from this row.
+    # ``None`` when ``self`` is the leaf (the common case after
+    # ``list_render_jobs`` filters to leaves). Populated when a
+    # caller fetches an intermediate render directly — e.g., a
+    # bookmarked editor URL pointing at a now-superseded render —
+    # so the FE can redirect to the current canonical row instead
+    # of editing stale state. ``download_url`` is ALWAYS the leaf's
+    # MP4 regardless of which row was queried; this field exists
+    # only to surface the leaf's id for navigation.
+    effective_render_job_id: UUID | None = None
+
     model_config = ConfigDict(from_attributes=True)
 
 

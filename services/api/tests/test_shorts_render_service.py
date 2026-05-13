@@ -70,6 +70,7 @@ def _build_service():
     repo.update_status = AsyncMock()
     repo.get_by_id = AsyncMock()
     repo.list_by_user = AsyncMock()
+    repo.walk_to_leaf = AsyncMock()
     repo.delete = AsyncMock()
     repo.find_recent_duplicate = AsyncMock(return_value=None)
     repo.session = MagicMock()
@@ -152,6 +153,122 @@ def test_get_render_job_completed_has_download_url():
         result = asyncio.run(service.get_render_job(org_id, user_id, job_id))
 
     assert result.download_url == "https://signed.example/render.mp4"
+
+
+# --- get_render_job: refinement chain resolution ---
+
+
+def test_get_render_job_intermediate_resolves_to_leaf():
+    """When called with an intermediate render's id, the response keeps the
+    requested row's metadata (so the FE can see 'you asked for X') but
+    download_url + effective_render_job_id point at the chain's leaf."""
+    service, repo, _ = _build_service()
+    org_id = uuid4()
+    user_id = uuid4()
+
+    leaf = _make_job(
+        status="completed",
+        output_s3_key="renders/leaf.mp4",
+        org_id=org_id,
+    )
+    leaf.refinement_source = "manual_edit"
+    intermediate = _make_job(
+        status="completed",
+        output_s3_key="renders/intermediate.mp4",
+        org_id=org_id,
+    )
+    intermediate.replaced_by_render_job_id = leaf.id
+    intermediate.refinement_source = "whisper"
+
+    repo.get_by_id.return_value = intermediate
+    repo.walk_to_leaf.return_value = leaf
+
+    with patch("app.storage.s3.S3Client") as MockS3:
+        s3 = MagicMock()
+        s3.generate_presigned_url_async = AsyncMock(
+            return_value="https://signed.example/leaf.mp4",
+        )
+        MockS3.return_value = s3
+
+        result = asyncio.run(
+            service.get_render_job(org_id, user_id, intermediate.id),
+        )
+
+    # Identity preserved: caller asked for the intermediate.
+    assert result.id == intermediate.id
+    # But download + effective pointer steer to the leaf.
+    assert result.download_url == "https://signed.example/leaf.mp4"
+    assert result.effective_render_job_id == leaf.id
+    # S3 was presigned against the leaf's key, not the intermediate's.
+    s3.generate_presigned_url_async.assert_awaited_once()
+    presigned_key = s3.generate_presigned_url_async.await_args.args[0]
+    assert presigned_key == "renders/leaf.mp4"
+
+
+def test_get_render_job_leaf_skips_chain_walk():
+    """The common path: a row that is already its own leaf must NOT
+    call walk_to_leaf. Saves a query per request on the hot path."""
+    service, repo, _ = _build_service()
+    org_id = uuid4()
+    user_id = uuid4()
+
+    leaf = _make_job(
+        status="completed",
+        output_s3_key="renders/leaf.mp4",
+        org_id=org_id,
+    )
+    # replaced_by_render_job_id is None by default in _make_job.
+
+    repo.get_by_id.return_value = leaf
+
+    with patch("app.storage.s3.S3Client") as MockS3:
+        s3 = MagicMock()
+        s3.generate_presigned_url_async = AsyncMock(
+            return_value="https://signed.example/leaf.mp4",
+        )
+        MockS3.return_value = s3
+
+        result = asyncio.run(service.get_render_job(org_id, user_id, leaf.id))
+
+    assert result.download_url == "https://signed.example/leaf.mp4"
+    assert result.effective_render_job_id is None
+    # walk_to_leaf must not be invoked on the common "self is leaf" path.
+    repo.walk_to_leaf.assert_not_awaited()
+
+
+def test_get_render_job_broken_chain_falls_back_to_self():
+    """If walk_to_leaf returns None (deleted leaf) or somehow returns the
+    same row, the response falls back to the requested row's own MP4 —
+    avoids 500-ing on dangling FK state."""
+    service, repo, _ = _build_service()
+    org_id = uuid4()
+    user_id = uuid4()
+
+    intermediate = _make_job(
+        status="completed",
+        output_s3_key="renders/intermediate.mp4",
+        org_id=org_id,
+    )
+    intermediate.replaced_by_render_job_id = uuid4()  # dangling
+
+    repo.get_by_id.return_value = intermediate
+    repo.walk_to_leaf.return_value = None  # leaf deleted
+
+    with patch("app.storage.s3.S3Client") as MockS3:
+        s3 = MagicMock()
+        s3.generate_presigned_url_async = AsyncMock(
+            return_value="https://signed.example/intermediate.mp4",
+        )
+        MockS3.return_value = s3
+
+        result = asyncio.run(
+            service.get_render_job(org_id, user_id, intermediate.id),
+        )
+
+    assert result.download_url == "https://signed.example/intermediate.mp4"
+    assert result.effective_render_job_id is None
+    presigned_key = s3.generate_presigned_url_async.await_args.args[0]
+    assert presigned_key == "renders/intermediate.mp4"
 
 
 # --- Test 19: get_render_job not found → 404 ---

@@ -136,10 +136,23 @@ class ShortsRenderJobRepository:
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[list[ShortsRenderJob], int]:
-        """List render jobs for a user with pagination. Returns (jobs, total_count)."""
+        """List render jobs for a user with pagination. Returns (jobs, total_count).
+
+        Filters out intermediate (superseded) renders — rows whose
+        ``replaced_by_render_job_id`` points at a refined child. The
+        saved-shorts UI shows one logical short per chain; surfacing
+        intermediates duplicates the same content with stale subtitles
+        and confuses operators after a Whisper / manual_edit rerender.
+
+        To inspect a chain's history (audit / debugging), use
+        ``get_by_id`` directly with the intermediate's id — the row
+        still exists in the table, it's just hidden from the user-
+        facing listing.
+        """
         where = (
             ShortsRenderJob.org_id == org_id,
             ShortsRenderJob.user_id == user_id,
+            ShortsRenderJob.replaced_by_render_job_id.is_(None),
         )
 
         count_result = await self.session.execute(
@@ -156,6 +169,51 @@ class ShortsRenderJobRepository:
         )
         jobs = list(result.scalars().all())
         return jobs, total
+
+    async def walk_to_leaf(
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        job_id: UUID,
+        *,
+        max_depth: int = 8,
+    ) -> ShortsRenderJob | None:
+        """Walk ``replaced_by_render_job_id`` forward to the chain's leaf.
+
+        Returns the row at the end of the chain (where
+        ``replaced_by_render_job_id IS NULL``). Returns the starting
+        row if it's already the leaf, or ``None`` if the starting row
+        doesn't exist / isn't owned by this (org, user).
+
+        Bounded by ``max_depth`` (default 8) as a defense against
+        pathological state — the chain depth in practice is ≤ 3
+        (Whisper refine + 1-2 manual_edit re-saves). FK constraints
+        prevent literal cycles, but a deleted leaf can produce a
+        broken chain: in that case we return the last row before the
+        dangling pointer rather than failing — the caller (e.g.
+        ``_to_response``) treats it as "leaf reached" and uses that
+        row's MP4 as the download target.
+        """
+        current = await self.get_by_id(org_id, user_id, job_id)
+        if current is None:
+            return None
+
+        for _ in range(max_depth):
+            if current.replaced_by_render_job_id is None:
+                return current
+            next_job = await self.get_by_id(
+                org_id, user_id, current.replaced_by_render_job_id,
+            )
+            if next_job is None:
+                # Broken chain (deleted refined child). The last
+                # reachable row is the effective leaf for download
+                # purposes.
+                return current
+            current = next_job
+
+        # max_depth reached without finding a leaf — return whatever
+        # we last saw rather than looping forever.
+        return current
 
     async def update_status(
         self,

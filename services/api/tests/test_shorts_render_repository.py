@@ -40,6 +40,12 @@ def _make_job(**overrides):
         expires_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
         created_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
         updated_at=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        # Refinement chain (migration 056). None by default so the row
+        # behaves as a leaf in walk_to_leaf / list_by_user tests
+        # unless a test sets these explicitly.
+        replaced_by_render_job_id=None,
+        refined_from_render_job_id=None,
+        refinement_source=None,
     )
     defaults.update(overrides)
     job = MagicMock(spec=ShortsRenderJob)
@@ -332,3 +338,142 @@ class TestListExpired:
 
         await repo.list_expired(datetime(2026, 5, 1, tzinfo=timezone.utc))
         session.execute.assert_awaited_once()
+
+
+# ── walk_to_leaf ─────────────────────────────────────────────────────────────
+
+
+class TestWalkToLeaf:
+    """Refinement-chain walker.
+
+    Each get_by_id call inside walk_to_leaf hits session.execute once
+    (the underlying SELECT). Tests stage a sequence of scalar_one_or_none
+    return values so each iteration sees the next row in the chain.
+    """
+
+    @staticmethod
+    def _stage_chain(session, *rows):
+        """Sequence ``session.execute`` return values to simulate
+        successive ``get_by_id`` calls returning the rows in order.
+
+        Pass ``None`` to simulate a deleted/missing row at that step.
+        """
+        results = []
+        for row in rows:
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = row
+            results.append(mock_result)
+        session.execute.side_effect = results
+
+    @pytest.mark.asyncio
+    async def test_walk_to_leaf_returns_self_when_no_chain(self, repo, session):
+        """A row with replaced_by=NULL is already its own leaf — single fetch."""
+        leaf = _make_job(replaced_by_render_job_id=None)
+        self._stage_chain(session, leaf)
+
+        result = await repo.walk_to_leaf(leaf.org_id, leaf.user_id, leaf.id)
+        assert result is leaf
+        # Only the initial get_by_id should fire — no follow-on lookups.
+        assert session.execute.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_walk_to_leaf_follows_one_link(self, repo, session):
+        """Whisper-refined chain: original → refined leaf."""
+        org = uuid4()
+        user = uuid4()
+        leaf = _make_job(org_id=org, user_id=user, replaced_by_render_job_id=None)
+        original = _make_job(
+            org_id=org, user_id=user, replaced_by_render_job_id=leaf.id,
+        )
+        self._stage_chain(session, original, leaf)
+
+        result = await repo.walk_to_leaf(org, user, original.id)
+        assert result is leaf
+        assert session.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_walk_to_leaf_follows_two_links(self, repo, session):
+        """Whisper + manual_edit: original → whisper child → manual_edit leaf."""
+        org = uuid4()
+        user = uuid4()
+        leaf = _make_job(
+            org_id=org, user_id=user,
+            refinement_source="manual_edit",
+            replaced_by_render_job_id=None,
+        )
+        middle = _make_job(
+            org_id=org, user_id=user,
+            refinement_source="whisper",
+            replaced_by_render_job_id=leaf.id,
+        )
+        original = _make_job(
+            org_id=org, user_id=user,
+            refinement_source=None,
+            replaced_by_render_job_id=middle.id,
+        )
+        self._stage_chain(session, original, middle, leaf)
+
+        result = await repo.walk_to_leaf(org, user, original.id)
+        assert result is leaf
+        assert session.execute.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_walk_to_leaf_returns_none_when_root_missing(
+        self, repo, session,
+    ):
+        """Walking from a non-existent / unowned id surfaces None — caller
+        treats it as 404 just like a direct get_by_id."""
+        self._stage_chain(session, None)
+
+        result = await repo.walk_to_leaf(uuid4(), uuid4(), uuid4())
+        assert result is None
+        assert session.execute.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_walk_to_leaf_returns_last_reachable_when_chain_broken(
+        self, repo, session,
+    ):
+        """Refined child was deleted but original still points at it:
+        return the original (last reachable row) rather than failing."""
+        org = uuid4()
+        user = uuid4()
+        dangling_target_id = uuid4()
+        original = _make_job(
+            org_id=org, user_id=user,
+            replaced_by_render_job_id=dangling_target_id,
+        )
+        # First get_by_id returns original; second (for the dangling
+        # child) returns None.
+        self._stage_chain(session, original, None)
+
+        result = await repo.walk_to_leaf(org, user, original.id)
+        assert result is original
+        assert session.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_walk_to_leaf_caps_at_max_depth(self, repo, session):
+        """Defensive: even with a cyclic-looking chain (FK should
+        prevent this but we don't trust state), the walker stops at
+        max_depth and returns the last seen row rather than looping
+        forever."""
+        org = uuid4()
+        user = uuid4()
+        # Build 10 rows where each points to the next. With max_depth=3
+        # the walker visits 3 of them and stops, returning the third.
+        rows = []
+        for i in range(10):
+            rows.append(_make_job(org_id=org, user_id=user))
+        for i in range(9):
+            rows[i].replaced_by_render_job_id = rows[i + 1].id
+        rows[9].replaced_by_render_job_id = rows[0].id  # cyclic-looking
+        self._stage_chain(session, *rows[:4])  # only 4 fetches expected
+
+        result = await repo.walk_to_leaf(
+            org, user, rows[0].id, max_depth=3,
+        )
+        # 3 iterations of the loop = 3 follow-up fetches after the
+        # initial. Total execute count = 1 (initial get_by_id) + 3
+        # (each iteration's get_by_id) = 4. The result is the row we
+        # last reached.
+        assert session.execute.call_count == 4
+        assert result is rows[3]

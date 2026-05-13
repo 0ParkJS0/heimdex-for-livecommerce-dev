@@ -270,7 +270,12 @@ async def _build_playback_url(job: ShortsRenderJob) -> str | None:
     )
 
 
-def _to_response(job: ShortsRenderJob, download_url: str | None = None) -> RenderJobResponse:
+def _to_response(
+    job: ShortsRenderJob,
+    download_url: str | None = None,
+    *,
+    effective_render_job_id: UUID | None = None,
+) -> RenderJobResponse:
     # Extract thumbnail from first scene clip in input_spec
     thumb_vid = None
     thumb_scene = None
@@ -302,6 +307,11 @@ def _to_response(job: ShortsRenderJob, download_url: str | None = None) -> Rende
         replaced_by_render_job_id=job.replaced_by_render_job_id,
         refined_from_render_job_id=job.refined_from_render_job_id,
         refinement_source=job.refinement_source,
+        # ``effective_render_job_id`` is None when ``job`` IS the
+        # leaf (the common case — listing filters to leaves; single-
+        # get on a leaf passes None through). Populated by callers
+        # who fetched an intermediate row and resolved its chain.
+        effective_render_job_id=effective_render_job_id,
     )
 
 
@@ -482,6 +492,14 @@ class ShortsRenderService:
 
         Scoped to org AND user — a user cannot view another user's job
         in the same org even if they guess the UUID.
+
+        Refinement-chain resolution: when the requested ``job_id`` is
+        an intermediate render (its ``replaced_by_render_job_id`` is
+        not NULL), the response keeps the requested row's metadata
+        (so the caller can see "you asked for X") but the
+        ``download_url`` and ``effective_render_job_id`` fields point
+        to the chain's leaf. The FE uses ``effective_render_job_id``
+        to redirect bookmark URLs onto the current canonical row.
         """
         job = await self.repository.get_by_id(org_id, user_id, job_id)
         if job is None:
@@ -490,8 +508,26 @@ class ShortsRenderService:
                 detail="Render job not found",
             )
 
-        download_url = await _build_playback_url(job)
-        return _to_response(job, download_url=download_url)
+        # Most calls hit a leaf (the listing filters intermediates
+        # out, so callers normally have leaf ids). Only walk when the
+        # row points forward — saves a query on the common path.
+        if job.replaced_by_render_job_id is None:
+            download_url = await _build_playback_url(job)
+            return _to_response(job, download_url=download_url)
+
+        leaf = await self.repository.walk_to_leaf(org_id, user_id, job_id)
+        if leaf is None or leaf.id == job.id:
+            # Broken chain or somehow walked back to ourselves —
+            # fall back to self's MP4.
+            download_url = await _build_playback_url(job)
+            return _to_response(job, download_url=download_url)
+
+        download_url = await _build_playback_url(leaf)
+        return _to_response(
+            job,
+            download_url=download_url,
+            effective_render_job_id=cast(UUID, leaf.id),
+        )
 
     async def update_render_job_title(
         self,
