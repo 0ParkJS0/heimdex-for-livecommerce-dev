@@ -95,6 +95,7 @@ def _make_drive_file(
     f.ocr_status = ocr_status
     f.face_status = face_status
     f.enrichment_state = enrichment_state
+    f.scene_count = 1
     f.keyframe_s3_prefix = keyframe_s3_prefix
     f.audio_s3_key = audio_s3_key
     f.is_deleted = is_deleted

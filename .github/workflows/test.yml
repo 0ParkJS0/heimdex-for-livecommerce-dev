@@ -5,7 +5,7 @@ name: Test
 #   docker services (minio/opensearch/SQS). The allowlist widens as stale
 #   tests get repaired. Run the full suite locally with:
 #     cd services/api && pytest -m "not integration and not quality"
-# - Frontend vitest (entire suite — ~3.5s, 605 tests).
+# - Frontend vitest (entire suite — currently 1000+ tests).
 #
 # NOT run here: integration/quality-marked tests, end-to-end tests, e2e/
 # Playwright specs. Deploy workflows stay independent.
@@ -125,6 +125,16 @@ jobs:
           #   - tests/test_shorts_auto_llm_scorer.py
           # They pass locally (`cd services/api && pytest`) and in the
           # API container (volume-mounted contracts).
+
+      - name: Report backend test lane inventory
+        run: python scripts/test_inventory.py
+
+      - name: Run marker-based core lane (shadow)
+        # Non-blocking while Phase 2 classifies the remaining API tests.
+        # Once this proves stable in CI, replace the path allowlist above
+        # with this marker-based command.
+        continue-on-error: true
+        run: pytest -m core --tb=short
 
   frontend:
     name: Frontend (vitest + tsc)

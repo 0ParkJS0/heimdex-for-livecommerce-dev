@@ -19,6 +19,7 @@ const API_URL = process.env.API_URL ?? "http://devorg.app.heimdex.local:8000";
 export default defineConfig({
   testDir: __dirname,
   testMatch: "*.spec.ts",
+  testIgnore: process.env.INCLUDE_LEGACY_E2E === "true" ? [] : "premiere-export.spec.ts",
   fullyParallel: false, // Sequential — tests may share state (logged-in session)
   retries: process.env.CI ? 1 : 0,
   workers: 1,

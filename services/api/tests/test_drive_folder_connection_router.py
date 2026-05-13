@@ -55,7 +55,14 @@ async def test_create_folder_connection_populates_drive_id_for_shared_drive_fold
         ),
         patch("app.modules.drive.google_client.DriveClient.from_oauth_token", return_value=drive_client),
     ):
-        conn = await create_folder_connection(body=body, org_ctx=org_ctx, db=db, _=None)
+        conn = await create_folder_connection(
+            body=body,
+            org_ctx=org_ctx,
+            _admin=MagicMock(role="admin"),
+            db=db,
+            secret_repo=secret_repo,
+            _=None,
+        )
 
     assert conn.drive_id == "shared-drive-123"
     drive_service.files.return_value.get.assert_called_once_with(

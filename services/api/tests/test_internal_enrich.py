@@ -8,6 +8,13 @@ from app.modules.ingest.service import SceneIngestService, generate_tags
 from app.modules.orgs.repository import OrgRepository
 
 
+def _mock_no_scene_overrides(session: AsyncMock) -> None:
+    """Scene enrichment now protects user overrides via a DB lookup."""
+    result = MagicMock()
+    result.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+
+
 class TestInternalEnrichService:
     @pytest.fixture
     def mock_scene_client(self):
@@ -19,6 +26,7 @@ class TestInternalEnrichService:
 
     @pytest.fixture
     def service(self, mock_db_session, mock_scene_client):
+        _mock_no_scene_overrides(mock_db_session)
         return SceneIngestService(mock_db_session, mock_scene_client)
 
     @pytest.mark.asyncio
@@ -280,7 +288,7 @@ class TestInternalEnrichEndpoint:
                 await internal_enrich_scenes(
                     request=request,
                     x_heimdex_org_id=str(org_id),
-                    _token="valid",
+                    verified_service_id="drive-worker",
                     db=mock_db,
                     org_repo=mock_org_repo,
                     ingest_service=mock_ingest_service,
@@ -336,6 +344,7 @@ class TestEnrichTagGeneration:
 
     @pytest.fixture
     def service(self, mock_db_session, mock_scene_client):
+        _mock_no_scene_overrides(mock_db_session)
         return SceneIngestService(mock_db_session, mock_scene_client)
 
     @pytest.mark.asyncio

@@ -12,6 +12,13 @@ import json
 import pytest
 from pydantic import ValidationError
 
+shorts_scorer = pytest.importorskip(
+    "heimdex_media_contracts.shorts.scorer",
+    reason="cross-package contract test requires heimdex-media-contracts shorts scorer",
+)
+
+pytestmark = pytest.mark.contract
+
 from app.modules.shorts_auto.llm.prompt import (
     PROMPT_VERSION,
     build_prompt,
@@ -19,7 +26,8 @@ from app.modules.shorts_auto.llm.prompt import (
 )
 from app.modules.shorts_auto.llm.schema import LLMResponse, RESPONSE_JSON_SCHEMA
 from heimdex_media_contracts.scenes.schemas import SceneDocument
-from heimdex_media_contracts.shorts.scorer import ScoringMode
+
+ScoringMode = shorts_scorer.ScoringMode
 
 
 def _scene(i: int, *, video_id: str = "vid") -> SceneDocument:

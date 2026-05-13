@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -11,6 +12,37 @@ from uuid import uuid4
 import app.db.models  # noqa: F401
 
 from app.modules.tenancy.context import OrgContext
+
+
+TESTS_ROOT = Path(__file__).resolve().parent
+API_ROOT = TESTS_ROOT.parent
+CORE_TEST_FILE_MANIFEST = TESTS_ROOT / "core_test_files.txt"
+
+
+def _load_core_test_files() -> set[str]:
+    if not CORE_TEST_FILE_MANIFEST.exists():
+        return set()
+    return {
+        line.strip()
+        for line in CORE_TEST_FILE_MANIFEST.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+CORE_TEST_FILES = _load_core_test_files()
+
+
+def pytest_collection_modifyitems(items):
+    """Apply lane markers from central manifests during the migration.
+
+    This keeps the current path-based CI allowlist and the new marker-based
+    `core` lane in sync without touching dozens of stable test files at once.
+    """
+    core_marker = pytest.mark.core
+    for item in items:
+        relpath = Path(item.fspath).resolve().relative_to(API_ROOT).as_posix()
+        if relpath in CORE_TEST_FILES:
+            item.add_marker(core_marker)
 
 
 @pytest.fixture

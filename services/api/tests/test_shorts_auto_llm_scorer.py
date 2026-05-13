@@ -13,6 +13,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+shorts_scorer = pytest.importorskip(
+    "heimdex_media_contracts.shorts.scorer",
+    reason="cross-package contract test requires heimdex-media-contracts shorts scorer",
+)
+
+pytestmark = pytest.mark.contract
+
 from app.modules.shorts_auto.llm.budget import (
     BudgetExceededError,
     InMemoryBudgetTracker,
@@ -30,7 +37,8 @@ from app.modules.shorts_auto.scorers import (
     ScoringContext,
 )
 from heimdex_media_contracts.scenes.schemas import SceneDocument
-from heimdex_media_contracts.shorts.scorer import ScoringMode
+
+ScoringMode = shorts_scorer.ScoringMode
 
 
 def _scene(short: str, start_ms: int = 0, end_ms: int = 10_000, *, video_id: str = "vid") -> SceneDocument:

@@ -8,11 +8,19 @@ from uuid import uuid4
 
 import pytest
 
+shorts_scorer = pytest.importorskip(
+    "heimdex_media_contracts.shorts.scorer",
+    reason="cross-package contract test requires heimdex-media-contracts shorts scorer",
+)
+
+pytestmark = pytest.mark.contract
+
 from app.modules.shorts_auto.selector import (
     AutoShortsSelector,
     _derive_index_from_scene_id,
 )
-from heimdex_media_contracts.shorts.scorer import ScoringMode
+
+ScoringMode = shorts_scorer.ScoringMode
 
 
 def _mock_scene_client(hits: list[dict] | None = None):

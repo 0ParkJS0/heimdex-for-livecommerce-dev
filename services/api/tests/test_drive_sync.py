@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.dependencies import get_scene_opensearch_client
 from app.db.base import get_db_session
+from app.modules.auth.service import get_current_user
 from app.modules.drive.router import router as drive_router
 from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository
 from app.modules.tenancy.context import OrgContext
@@ -43,8 +44,12 @@ def _build_drive_app(
     async def _mock_scene_client() -> AsyncMock:
         return scene_client or AsyncMock()
 
+    async def _mock_current_user() -> SimpleNamespace:
+        return SimpleNamespace(role="admin")
+
     app.dependency_overrides[get_db_session] = _mock_get_db_session
     app.dependency_overrides[get_current_org] = _mock_get_current_org
+    app.dependency_overrides[get_current_user] = _mock_current_user
     app.dependency_overrides[get_scene_opensearch_client] = _mock_scene_client
     return app
 

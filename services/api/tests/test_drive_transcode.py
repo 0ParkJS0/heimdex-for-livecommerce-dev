@@ -1,6 +1,15 @@
 import pytest
 
-from heimdex_media_pipelines.transcoding import ProbeResult, TranscodeDecision, make_transcode_decision
+transcoding = pytest.importorskip(
+    "heimdex_media_pipelines.transcoding",
+    reason="cross-package contract test requires heimdex-media-pipelines",
+)
+
+pytestmark = pytest.mark.contract
+
+ProbeResult = transcoding.ProbeResult
+TranscodeDecision = transcoding.TranscodeDecision
+make_transcode_decision = transcoding.make_transcode_decision
 
 
 def _make_probe(

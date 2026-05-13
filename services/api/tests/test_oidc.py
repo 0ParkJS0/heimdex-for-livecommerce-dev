@@ -66,7 +66,7 @@ class TestAuth0TokenValidation:
         settings.auth0_enabled = False
         mock_settings.return_value = settings
         
-        with pytest.raises(ValueError, match="Auth0 is not enabled"):
+        with pytest.raises(ValueError, match="OIDC authentication is not enabled"):
             validate_auth0_token("some_token")
     
     @patch("app.modules.auth.oidc.get_settings")
@@ -75,9 +75,10 @@ class TestAuth0TokenValidation:
         settings.auth0_enabled = True
         settings.auth0_domain = ""
         settings.auth0_audience = "test"
+        settings.oidc_issuer = ""
         mock_settings.return_value = settings
         
-        with pytest.raises(ValueError, match="domain and audience must be configured"):
+        with pytest.raises(ValueError, match="Auth0 domain/audience or OIDC issuer must be configured"):
             validate_auth0_token("some_token")
 
 
