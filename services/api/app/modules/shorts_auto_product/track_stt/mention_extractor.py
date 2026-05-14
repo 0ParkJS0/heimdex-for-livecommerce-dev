@@ -212,6 +212,75 @@ async def find_mentioned_scenes(
     )
     return scenes
 
+def filter_by_dominance(
+    scenes: list[MentionedScene],
+    *,
+    primary_aliases: list[str],
+    other_aliases_groups: list[list[str]],
+    threshold: float,
+) -> list[MentionedScene]:
+    """Drop scenes where other selected products dominate the text.
+
+    For each scene, count substring occurrences of (a) primary catalog's
+    aliases vs (b) all OTHER selected catalogs' aliases, across
+    transcript_text + caption_text + ocr_text (case-folded). Drop the
+    scene if ``primary_count / (primary_count + others_count) < threshold``.
+
+    Args:
+        scenes: BM25-matched scenes from ``find_mentioned_scenes``.
+        primary_aliases: The current child's catalog ``[llm_label, *spoken_aliases]``.
+        other_aliases_groups: One list per OTHER selected catalog.
+            Empty list (no other catalogs selected) is a no-op.
+        threshold: 0.0 = off. Typical staging value 0.3-0.5.
+
+    Returns:
+        Filtered scenes preserving original order/score.
+
+    Note:
+        Zero extra OS queries — uses already-fetched
+        ``transcript_text + caption_text + ocr_text`` on each
+        ``MentionedScene``. Cost: O(scenes * total_aliases).
+    """
+    if threshold <= 0.0 or not other_aliases_groups or not primary_aliases:
+        return scenes
+
+    primary_terms = [a.casefold() for a in primary_aliases if a]
+    other_terms = [
+        a.casefold()
+        for group in other_aliases_groups
+        for a in group
+        if a
+    ]
+    if not primary_terms:
+        return scenes
+
+    kept: list[MentionedScene] = []
+    for scene in scenes:
+        haystack = " ".join(
+            [scene.transcript_text, scene.caption_text, scene.ocr_text]
+        ).casefold()
+        if not haystack.strip():
+            kept.append(scene)
+            continue
+        primary_hits = sum(haystack.count(term) for term in primary_terms)
+        other_hits = sum(haystack.count(term) for term in other_terms)
+        total = primary_hits + other_hits
+        if total == 0:
+            kept.append(scene)
+            continue
+        dominance = primary_hits / total
+        if dominance >= threshold:
+            kept.append(scene)
+    logger.info(
+        "stt_mention_dominance_filter",
+        extra={
+            "threshold": threshold,
+            "input_count": len(scenes),
+            "kept_count": len(kept),
+            "dropped_count": len(scenes) - len(kept),
+        },
+    )
+    return kept
 
 # ---------- internals ----------
 
