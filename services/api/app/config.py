@@ -650,6 +650,22 @@ class Settings(BaseSettings):
     # further (toward 0.4) before considering full removal.
     auto_shorts_product_v2_storyboard_cta_min_position: float = 0.5
 
+    # --- Auto-shorts: Phase 1 live-only segmentation filter ---
+    # When True, the STT pipeline partitions a video's scenes into
+    # "live blocks" (contiguous runs with STT speech signal) and
+    # restricts BM25 mention extraction to scenes inside one. Excludes
+    # silent intro / outro b-roll cycles from the clip-source pool.
+    #
+    # Phase 0 eval (``scripts/eval_live_block_filter.py``) on 7
+    # devorg staging VODs found 66.6%–80.4% of scenes are pre/post-roll
+    # — they're available to today's picker but contain no host
+    # commentary. This flag is the dominant fix for "wrong product in
+    # the short" reports caused by the picker sourcing from b-roll.
+    #
+    # Default ``False`` for back-compat. Flip on per-environment in
+    # ``.env`` (staging first, prod after operator validation).
+    auto_shorts_product_v2_live_only_enabled: bool = False
+
     # --- Auto-shorts: post-render Whisper subtitle refinement ---
     # Plan: ``.claude/plans/auto-shorts-whisper-subtitles-2026-05-06.md``
     # Off-by-default master flag. Even with the column migration

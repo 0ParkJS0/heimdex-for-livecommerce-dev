@@ -93,6 +93,7 @@ async def find_mentioned_scenes(
     result_cap: int = _DEFAULT_RESULT_CAP,
     ocr_rerank_enabled: bool = False,
     ocr_boost: float = 0.6,
+    scene_id_allowlist: frozenset[str] | None = None,
 ) -> list[MentionedScene]:
     """Run a single BM25 query and return matched scenes.
 
@@ -110,6 +111,11 @@ async def find_mentioned_scenes(
             empty (PR 1b backfill not yet run for this entry); the
             query falls back to ``llm_label`` only in that case.
         result_cap: Defensive cap on returned hits.
+        scene_id_allowlist: Phase 1 live-block gate. When provided,
+            BM25 hits whose ``scene_id`` is NOT in this set are
+            dropped before returning. ``None`` (default) is the
+            back-compat no-op — every hit passes through, matching
+            the pre-Phase-1 behavior.
 
     Returns:
         ``MentionedScene[]`` ordered by OS ``_score`` descending. May
@@ -174,6 +180,16 @@ async def find_mentioned_scenes(
 
     hits = response.get("hits", {}).get("hits", [])
     scenes = [_hit_to_scene(h, llm_label, spoken_aliases) for h in hits]
+
+    # Phase 1 live-block gate. Filter AFTER the BM25 query (rather
+    # than pushing the constraint into the OS body) so the segmenter
+    # is the single source of truth for "what counts as live" — the
+    # ``_is_live`` OR-of-three-signals can't be expressed as a single
+    # OS clause without losing the defense-in-depth guarantee.
+    pre_filter_count = len(scenes)
+    if scene_id_allowlist is not None:
+        scenes = [s for s in scenes if s.scene_id in scene_id_allowlist]
+
     # OS returned them ranked by score; keep the order. Caller
     # may re-sort by start_ms in the assembler.
     logger.info(
@@ -186,6 +202,12 @@ async def find_mentioned_scenes(
             "max_score": scenes[0].score if scenes else 0.0,
             "ocr_rerank_enabled": ocr_rerank_enabled,
             "ocr_match_count": sum(1 for s in scenes if s.ocr_match),
+            "live_filter_active": scene_id_allowlist is not None,
+            "live_filter_dropped": (
+                pre_filter_count - len(scenes)
+                if scene_id_allowlist is not None
+                else 0
+            ),
         },
     )
     return scenes

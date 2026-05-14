@@ -23,6 +23,7 @@ from app.modules.shorts_auto_product.track_stt import (
     service,
 )
 from app.modules.shorts_auto_product.track_stt.errors import (
+    LiveBlockTooShortError,
     MentionExtractionError,
     NoMentionsFoundError,
     SttPipelineError,
@@ -706,3 +707,309 @@ class TestServiceStoryboardWiring:
             c.end_ms - c.start_ms for c in spec.scene_clips
         )
         assert total_clip_duration > 8_000
+
+
+# ============================================================
+# Phase 1 live-only filter — mention_extractor allowlist + service
+# ============================================================
+
+
+def _seg_hit(
+    scene_id: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    speaker_transcript: str = "",
+    speech_segment_count: int = 0,
+) -> dict[str, Any]:
+    """OS hit shape returned by the segmentation pre-fetch in
+    ``service._fetch_scenes_for_segmentation``. Distinct from the
+    BM25 ``_hit`` helper so a test fixture makes its intent obvious.
+    """
+    return {
+        "_source": {
+            "scene_id": scene_id,
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "speaker_transcript": speaker_transcript,
+            "transcript_raw": "",
+            "speech_segment_count": speech_segment_count,
+        },
+    }
+
+
+class _RoutedOSClient:
+    """Fake OS client that routes responses based on the query body.
+
+    The Phase 1 live-only path issues TWO different OS queries:
+      1. Segmentation pre-fetch — filter-only query, ``_source``
+         includes ``speech_segment_count``.
+      2. BM25 mention extraction — bool query with ``must`` clauses.
+
+    The plain ``_FakeOSClient`` returns the same hits for both, which
+    would mask whether the segmentation step ran. This fake routes by
+    inspecting the body's ``_source`` field to decide which canned
+    response to return.
+    """
+
+    def __init__(
+        self,
+        *,
+        seg_hits: list[dict[str, Any]] | None = None,
+        bm25_hits: list[dict[str, Any]] | None = None,
+    ):
+        self._seg_hits = seg_hits or []
+        self._bm25_hits = bm25_hits or []
+        self.calls: list[dict[str, Any]] = []
+        self.seg_call_count = 0
+        self.bm25_call_count = 0
+
+    async def search(self, *, index: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append({"index": index, "body": body})
+        source = body.get("_source") or []
+        if "speech_segment_count" in source:
+            self.seg_call_count += 1
+            hits = self._seg_hits
+        else:
+            self.bm25_call_count += 1
+            hits = self._bm25_hits
+        return {"hits": {"total": {"value": len(hits)}, "hits": hits}}
+
+
+class TestMentionExtractorAllowlist:
+    """Allowlist filtering — the API change paired with the service's
+    live-block pre-step. Independent unit coverage so a regression
+    here surfaces without needing to run the full pipeline.
+    """
+
+    @pytest.mark.asyncio
+    async def test_allowlist_none_is_passthrough(self):
+        """Back-compat: None preserves today's behavior."""
+        os_client = _FakeOSClient(
+            hits=[
+                _hit("scene_001", 0, 5_000, transcript="달심", score=2.0),
+                _hit("scene_002", 5_000, 10_000, transcript="달심", score=1.5),
+            ],
+        )
+        result = await mention_extractor.find_mentioned_scenes(
+            os_client=os_client,
+            index_alias="heimdex_scenes",
+            org_id=uuid4(),
+            video_id="gd_x",
+            llm_label="달심",
+            spoken_aliases=[],
+            scene_id_allowlist=None,
+        )
+        assert {s.scene_id for s in result} == {"scene_001", "scene_002"}
+
+    @pytest.mark.asyncio
+    async def test_allowlist_filters_hits(self):
+        """Hits whose scene_id is not in the allowlist are dropped."""
+        os_client = _FakeOSClient(
+            hits=[
+                _hit("live_001", 0, 5_000, transcript="달심", score=2.0),
+                _hit("silent_001", 5_000, 10_000, transcript="달심", score=1.5),
+                _hit("live_002", 10_000, 15_000, transcript="달심", score=1.0),
+            ],
+        )
+        result = await mention_extractor.find_mentioned_scenes(
+            os_client=os_client,
+            index_alias="heimdex_scenes",
+            org_id=uuid4(),
+            video_id="gd_x",
+            llm_label="달심",
+            spoken_aliases=[],
+            scene_id_allowlist=frozenset({"live_001", "live_002"}),
+        )
+        # ``silent_001`` filtered out; relative order of survivors
+        # preserved (OS already ranked them by score).
+        assert [s.scene_id for s in result] == ["live_001", "live_002"]
+
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_returns_empty(self):
+        """``frozenset()`` is not the same as ``None`` — empty
+        allowlist must drop everything (no live block found)."""
+        os_client = _FakeOSClient(
+            hits=[_hit("scene_001", 0, 5_000, transcript="달심", score=2.0)],
+        )
+        result = await mention_extractor.find_mentioned_scenes(
+            os_client=os_client,
+            index_alias="heimdex_scenes",
+            org_id=uuid4(),
+            video_id="gd_x",
+            llm_label="달심",
+            spoken_aliases=[],
+            scene_id_allowlist=frozenset(),
+        )
+        assert result == []
+
+
+class TestServiceLiveOnly:
+    """End-to-end ``assemble_stt_clip`` with the Phase 1 flag on.
+
+    The ``_RoutedOSClient`` proves the segmentation pre-fetch actually
+    issued an OS query and the BM25 step received the resulting
+    allowlist — together with the test assertions on
+    ``seg_call_count`` / ``bm25_call_count`` this catches regressions
+    where the flag is silently a no-op.
+    """
+
+    @pytest.mark.asyncio
+    async def test_live_only_false_skips_segmentation_query(self):
+        """Flag off → behavior identical to pre-Phase-1: a single
+        OS round trip (BM25), no segmentation fetch.
+        """
+        os_client = _RoutedOSClient(
+            bm25_hits=[
+                _hit("scene_001", 0, 15_000, transcript="달심 좋아요"),
+                _hit("scene_002", 15_000, 30_000, transcript="달심 가격"),
+            ],
+        )
+        openai = _FakeOpenAI()
+
+        async def _enqueue(spec):
+            return uuid4()
+
+        await service.assemble_stt_clip(
+            org_id=uuid4(),
+            catalog_entry_id=uuid4(),
+            llm_label="달심",
+            spoken_aliases=[],
+            os_video_id="gd_x",
+            target_duration_ms=30_000,
+            title=None,
+            os_client=os_client,
+            openai_client=openai,
+            enqueue_render=_enqueue,
+            live_only=False,
+        )
+        assert os_client.seg_call_count == 0
+        assert os_client.bm25_call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_live_only_true_filters_mentions_to_live_block(self):
+        """Flag on with two BM25 hits — one in the live block, one
+        in the silent pre-roll. Only the live-block hit reaches the
+        pipeline; pre-roll is dropped before scoring.
+        """
+        os_client = _RoutedOSClient(
+            seg_hits=[
+                # 0–10s: silent pre-roll (b-roll)
+                _seg_hit("preroll_001", 0, 5_000),
+                _seg_hit("preroll_002", 5_000, 10_000),
+                # 10–40s: live host pitch (30s — enough to satisfy
+                # target_duration_ms below)
+                _seg_hit("live_001", 10_000, 25_000, speaker_transcript="달심 안녕", speech_segment_count=2),
+                _seg_hit("live_002", 25_000, 40_000, speaker_transcript="달심 좋아요", speech_segment_count=3),
+                # 40–50s: silent outro
+                _seg_hit("outro_001", 40_000, 50_000),
+            ],
+            bm25_hits=[
+                # Pre-roll match — must be dropped by the live filter
+                _hit("preroll_001", 0, 5_000, transcript="달심 (OCR caption)", score=2.5),
+                # Live matches — must survive
+                _hit("live_001", 10_000, 25_000, transcript="달심 안녕", score=2.0),
+                _hit("live_002", 25_000, 40_000, transcript="달심 좋아요", score=1.8),
+            ],
+        )
+        openai = _FakeOpenAI(
+            raw_text=json.dumps({"scores": [{"hook_score": 0.7, "has_cta": False, "importance_score": 0.9}]})
+        )
+
+        async def _enqueue(spec):
+            return uuid4()
+
+        result = await service.assemble_stt_clip(
+            org_id=uuid4(),
+            catalog_entry_id=uuid4(),
+            llm_label="달심",
+            spoken_aliases=[],
+            os_video_id="gd_x",
+            target_duration_ms=20_000,
+            title=None,
+            os_client=os_client,
+            openai_client=openai,
+            enqueue_render=_enqueue,
+            live_only=True,
+        )
+        assert os_client.seg_call_count == 1
+        assert os_client.bm25_call_count == 1
+        # 3 BM25 hits, but only 2 survived (preroll_001 dropped).
+        assert result.mentioned_scene_count == 2
+
+    @pytest.mark.asyncio
+    async def test_live_only_true_raises_when_block_too_short(self):
+        """Flag on, live block exists but is shorter than the
+        requested clip length — caller gets a friendly-failure
+        ``LiveBlockTooShortError`` (NOT a generic pipeline error).
+        """
+        os_client = _RoutedOSClient(
+            seg_hits=[
+                _seg_hit("preroll_001", 0, 10_000),
+                # 10s live block — caller wants 30s.
+                _seg_hit(
+                    "live_001",
+                    10_000,
+                    20_000,
+                    speaker_transcript="달심",
+                    speech_segment_count=1,
+                ),
+                _seg_hit("outro_001", 20_000, 30_000),
+            ],
+            bm25_hits=[_hit("live_001", 10_000, 20_000, transcript="달심")],
+        )
+        openai = _FakeOpenAI()
+
+        async def _enqueue(spec):
+            return uuid4()
+
+        with pytest.raises(LiveBlockTooShortError, match="host commentary"):
+            await service.assemble_stt_clip(
+                org_id=uuid4(),
+                catalog_entry_id=uuid4(),
+                llm_label="달심",
+                spoken_aliases=[],
+                os_video_id="gd_x",
+                target_duration_ms=30_000,
+                title=None,
+                os_client=os_client,
+                openai_client=openai,
+                enqueue_render=_enqueue,
+                live_only=True,
+            )
+        # BM25 must NOT have been called — too-short check fires
+        # before mention extraction would have run.
+        assert os_client.seg_call_count == 1
+        assert os_client.bm25_call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_live_only_true_raises_when_no_live_blocks(self):
+        """All-silent video (no STT signal anywhere) → live_total_ms
+        is 0 < target → too-short error.
+        """
+        os_client = _RoutedOSClient(
+            seg_hits=[
+                _seg_hit("silent_001", 0, 10_000),
+                _seg_hit("silent_002", 10_000, 20_000),
+            ],
+            bm25_hits=[_hit("silent_001", 0, 10_000, transcript="달심")],
+        )
+        openai = _FakeOpenAI()
+
+        async def _enqueue(spec):
+            return uuid4()
+
+        with pytest.raises(LiveBlockTooShortError):
+            await service.assemble_stt_clip(
+                org_id=uuid4(),
+                catalog_entry_id=uuid4(),
+                llm_label="달심",
+                spoken_aliases=[],
+                os_video_id="gd_x",
+                target_duration_ms=20_000,
+                title=None,
+                os_client=os_client,
+                openai_client=openai,
+                enqueue_render=_enqueue,
+                live_only=True,
+            )

@@ -199,6 +199,10 @@ services:
       - AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_TIMEOUT_S=${AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_TIMEOUT_S:-5.0}
       - AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_DAILY_BUDGET_USD=${AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_DAILY_BUDGET_USD:-5.0}
       - AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_PROMPT_VERSION=${AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_PROMPT_VERSION:-v1}
+      # Phase 1 live-block filter (only source clips from scenes
+      # where the host was actively talking). See
+      # ``config.py::auto_shorts_product_v2_live_only_enabled``.
+      - AUTO_SHORTS_PRODUCT_V2_LIVE_ONLY_ENABLED=${AUTO_SHORTS_PRODUCT_V2_LIVE_ONLY_ENABLED:-false}
       # Auth0 configuration
       - AUTH0_ENABLED=${AUTH0_ENABLED:-false}
       - AUTH0_DOMAIN=${AUTH0_DOMAIN:-}

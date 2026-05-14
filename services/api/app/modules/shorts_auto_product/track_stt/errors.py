@@ -50,3 +50,16 @@ class MentionExtractionError(SttPipelineError):
     orchestrator treats this as retryable; ``NoMentionsFoundError``
     is the explicit zero-hits signal.
     """
+
+
+class LiveBlockTooShortError(SttPipelineError):
+    """The video's combined live-block duration is shorter than the
+    requested target clip length. The Phase 1 live-only filter is on
+    and the host commentary segment is too brief to source a clip
+    from.
+
+    NOT an internal error — the wizard should surface a Korean
+    message like "이 영상의 호스트 발화 구간(Xs)이 요청하신 쇼츠
+    길이(Ys)보다 짧아 영상을 만들 수 없습니다." so the user picks
+    a different length or a different source video.
+    """

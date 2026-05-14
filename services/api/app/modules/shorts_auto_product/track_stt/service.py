@@ -42,6 +42,7 @@ from app.modules.shorts_auto_product.track_stt import (
     segment_assembler,
 )
 from app.modules.shorts_auto_product.track_stt.errors import (
+    LiveBlockTooShortError,
     NoMentionsFoundError,
     SttPipelineError,
     TranscriptUnavailableError,
@@ -49,6 +50,11 @@ from app.modules.shorts_auto_product.track_stt.errors import (
 from app.modules.shorts_auto_product.track_stt.models import (
     ScoredChunk,
     SttClipResult,
+)
+from app.modules.shorts_auto_product.track_stt.segmentation import (
+    partition_live_blocks,
+    scene_ids_in_live_blocks,
+    summarize,
 )
 from app.modules.shorts_auto_product.track_stt.storyboard import (
     StoryboardPicker,
@@ -62,6 +68,54 @@ logger = logging.getLogger(__name__)
 # render_job_id. The orchestrator constructs this — typically by
 # lazy-importing ShortsRenderService and constructing a closure.
 RenderEnqueuer = Callable[[CompositionSpec], Awaitable[UUID]]
+
+
+# Defensive cap on the segmentation pre-fetch. Worst-case observed on
+# staging is ~525 scenes per livecommerce VOD (gd_e5e15db2fca98249);
+# 5000 leaves a 10× headroom for future longer recordings without
+# risking an OS over-fetch.
+_SEGMENTATION_SCENE_CAP = 5000
+
+
+async def _fetch_scenes_for_segmentation(
+    *,
+    os_client: Any,
+    index_alias: str,
+    org_id: UUID,
+    video_id: str,
+) -> list[dict[str, Any]]:
+    """Tiny OS query that returns just the fields the segmenter
+    needs (one round trip, one source per scene).
+
+    Lives here rather than in segmentation.py so the segmenter module
+    stays pure (no I/O). Mirrors mention_extractor's pattern: I/O at
+    the orchestrator boundary, pure transforms downstream.
+    """
+    body = {
+        "size": _SEGMENTATION_SCENE_CAP,
+        "query": {
+            "bool": {
+                "filter": [
+                    {"term": {"org_id": str(org_id)}},
+                    {"term": {"video_id": video_id}},
+                ]
+            }
+        },
+        "_source": [
+            "scene_id",
+            "start_ms",
+            "end_ms",
+            "speaker_transcript",
+            "transcript_raw",
+            "speech_segment_count",
+        ],
+        "sort": [{"start_ms": "asc"}],
+    }
+    response = await os_client.search(index=index_alias, body=body)
+    return [
+        hit.get("_source", {})
+        for hit in response.get("hits", {}).get("hits", [])
+    ]
 
 
 async def assemble_stt_clip(
@@ -83,6 +137,7 @@ async def assemble_stt_clip(
     storyboard_shadow_mode: bool = False,
     ocr_rerank_enabled: bool = False,
     ocr_boost: float = 0.6,
+    live_only: bool = False,
 ) -> SttClipResult:
     """End-to-end STT pipeline. Returns the render_job_id wrapped in
     :class:`SttClipResult`.
@@ -105,6 +160,12 @@ async def assemble_stt_clip(
         index_alias: OpenSearch index alias. Default
             ``"heimdex_scenes"`` (the production alias).
         chunker_model: gpt-4o-mini model id. Override only for tests.
+        live_only: Phase 1 segmentation gate. When ``True``, scenes
+            are partitioned into live blocks (contiguous runs with
+            STT speech signal) before BM25, and only scenes inside
+            a live block are eligible for mention extraction. Default
+            ``False`` for back-compat — caller passes
+            ``settings.auto_shorts_product_v2_live_only_enabled``.
 
     Raises:
         :class:`NoMentionsFoundError`: BM25 found no qualifying
@@ -114,9 +175,60 @@ async def assemble_stt_clip(
         :class:`TranscriptUnavailableError`: BM25 hit some scenes
             but every one of them had empty ``transcript_raw`` AND
             empty ``scene_caption`` — there was nothing to score.
+        :class:`LiveBlockTooShortError`: ``live_only=True`` and the
+            video's combined live-block duration is shorter than the
+            requested ``target_duration_ms``. Friendly-message
+            failure — the wizard guides the user to a shorter clip
+            length or a different source video.
         :class:`SttPipelineError`: Any other failure (OS unreachable,
             etc.). Raised by sub-modules.
     """
+
+    # ---- 0. Live-block segmentation (Phase 1, flag-gated) ----
+    #
+    # When the flag is on, partition the video's scenes by STT
+    # speech signal and build an allowlist of scene_ids that fall
+    # inside a live block (i.e., where the host was actually
+    # talking). Mention extraction filters its BM25 hits against
+    # this set, so clips sourced from silent intro / outro b-roll
+    # cycles are dropped before any picker sees them.
+    #
+    # The flag stays off for the manual shorts editor and any other
+    # caller that hasn't opted in — back-compat is the default.
+    scene_id_allowlist: frozenset[str] | None = None
+    if live_only:
+        seg_scenes = await _fetch_scenes_for_segmentation(
+            os_client=os_client,
+            index_alias=index_alias,
+            org_id=org_id,
+            video_id=os_video_id,
+        )
+        blocks = partition_live_blocks(seg_scenes)
+        summary = summarize(seg_scenes, blocks)
+        logger.info(
+            "stt_pipeline_live_block_partition",
+            extra={
+                "org_id": str(org_id),
+                "catalog_entry_id": str(catalog_entry_id),
+                "video_id": os_video_id,
+                "total_scenes": summary.total_scenes,
+                "live_scenes": summary.live_scenes,
+                "excluded_scenes": summary.excluded_scenes,
+                "live_block_count": summary.live_block_count,
+                "live_total_ms": summary.live_total_ms,
+                "longest_live_block_ms": summary.longest_live_block_ms,
+                "exclusion_pct": round(summary.exclusion_pct, 2),
+            },
+        )
+        if summary.live_total_ms < target_duration_ms:
+            # Friendly-message failure — the wizard's
+            # ``friendlyParentError`` mapper turns this into the
+            # Korean copy described in the error class docstring.
+            raise LiveBlockTooShortError(
+                f"video {os_video_id} has only {summary.live_total_ms}ms of "
+                f"host commentary; requested clip is {target_duration_ms}ms"
+            )
+        scene_id_allowlist = scene_ids_in_live_blocks(blocks)
 
     # ---- 1. Mention extraction ----
     mentioned = await mention_extractor.find_mentioned_scenes(
@@ -128,6 +240,7 @@ async def assemble_stt_clip(
         spoken_aliases=spoken_aliases,
         ocr_rerank_enabled=ocr_rerank_enabled,
         ocr_boost=ocr_boost,
+        scene_id_allowlist=scene_id_allowlist,
     )
     if not mentioned:
         logger.info(

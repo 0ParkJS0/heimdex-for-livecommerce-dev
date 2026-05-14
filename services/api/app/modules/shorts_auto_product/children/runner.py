@@ -849,6 +849,7 @@ class ChildRunner:
 
         from app.modules.shorts_auto_product.track_stt import service as stt_service
         from app.modules.shorts_auto_product.track_stt.errors import (
+            LiveBlockTooShortError,
             NoMentionsFoundError,
             SttPipelineError,
             TranscriptUnavailableError,
@@ -956,6 +957,16 @@ class ChildRunner:
                         "auto_shorts_product_v2_ocr_boost",
                         0.6,
                     ),
+                    # Phase 1 live-block filter (only source clips
+                    # from scenes where the host was actively talking).
+                    # Default OFF for back-compat; staging flips this
+                    # in ``.env`` once the Phase 0 numbers are
+                    # validated. See ``segmentation.py``.
+                    live_only=getattr(
+                        self.settings,
+                        "auto_shorts_product_v2_live_only_enabled",
+                        False,
+                    ),
                 )
             except NoMentionsFoundError as e:
                 logger.info(
@@ -984,6 +995,26 @@ class ChildRunner:
                 await self._complete_no_render(
                     child_id=child.id,
                     reason="stt_transcript_unavailable",
+                )
+                return
+            except LiveBlockTooShortError as e:
+                # Phase 1 friendly-failure: video has too little host
+                # commentary for the requested clip length. Same
+                # ``_complete_no_render`` treatment as no_mentions —
+                # the wizard surfaces a Korean message and the user
+                # picks a shorter length or a different source video.
+                logger.info(
+                    "stt_runner_live_block_too_short",
+                    extra={
+                        "child_id": str(child.id),
+                        "video_id": os_video_id,
+                        "target_duration_ms": target_duration_ms,
+                        "reason": str(e)[:200],
+                    },
+                )
+                await self._complete_no_render(
+                    child_id=child.id,
+                    reason="stt_live_block_too_short",
                 )
                 return
             except SttPipelineError as e:
