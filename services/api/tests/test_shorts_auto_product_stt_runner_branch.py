@@ -108,9 +108,10 @@ async def test_stt_branch_invoked_when_flag_set(monkeypatch):
     )
     catalog_id = uuid4()
     catalog_label_lookup = {catalog_id: "Test product"}
+    catalog_aliases_lookup = {catalog_id: ["Test product"]}
     monkeypatch.setattr(
         runner, "_load_child_context",
-        AsyncMock(return_value=(child, parent, catalog_label_lookup)),
+        AsyncMock(return_value=(child, parent, catalog_label_lookup, catalog_aliases_lookup)),
     )
 
     # Patch the repo class to return a fake that grants the claim.
@@ -166,7 +167,7 @@ async def test_sam2_branch_unchanged_when_flag_default(monkeypatch):
     catalog_id = uuid4()
     monkeypatch.setattr(
         runner, "_load_child_context",
-        AsyncMock(return_value=(child, parent, {catalog_id: "X"})),
+        AsyncMock(return_value=(child, parent, {catalog_id: "X"}, {catalog_id: ["X"]})),
     )
 
     import app.modules.shorts_auto_product.children.runner as runner_module
@@ -279,6 +280,7 @@ async def test_stt_happy_path_persists_render_job_id(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=catalog_id,
         catalog_label="my product",
+        catalog_aliases_lookup={catalog_id: ["my product"]},
         lease=_lease_stub(),
     )
 
@@ -328,6 +330,7 @@ async def test_stt_no_mentions_routes_to_complete_no_render(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        catalog_aliases_lookup={},
         lease=_lease_stub(),
     )
     no_render_called.assert_awaited_once()
@@ -360,6 +363,7 @@ async def test_stt_transcript_unavailable_routes_to_complete_no_render(monkeypat
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        catalog_aliases_lookup={},
         lease=_lease_stub(),
     )
     no_render_called.assert_awaited_once()
@@ -393,6 +397,7 @@ async def test_stt_pipeline_error_marks_child_failed(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        catalog_aliases_lookup={},
         lease=_lease_stub(),
     )
     fail_called.assert_awaited_once()
@@ -431,6 +436,7 @@ async def test_stt_inputs_missing_routes_to_complete_no_render(monkeypatch):
         child=child, parent=parent,
         chosen_catalog_id=uuid4(),
         catalog_label="x",
+        catalog_aliases_lookup={},
         lease=_lease_stub(),
     )
     no_render_called.assert_awaited_once()
