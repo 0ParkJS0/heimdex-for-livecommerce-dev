@@ -364,6 +364,13 @@ class Settings(BaseSettings):
     auto_shorts_product_v2_daily_budget_usd: float = 50.0
     auto_shorts_product_v2_budget_alert_pct: int = 80
 
+    # --- mention dominance check ---
+    # threshold=0.0 means OFF (back-compat default). Typical staging:
+    # 0.3-0.5. Drops scenes where other selected products dominate the
+    # text — addresses H1+H2 (false-positive BM25 hits and scenes with
+    # multiple products in the same window).
+    auto_shorts_product_v2_mention_dominance_threshold: float = 0.0
+
     # Concurrency cap. (N+1)-th in-flight scan from the same org
     # returns 429. Counts rows across all modes (scan_order,
     # enumerate, render_child) in ACTIVE_SCAN_STAGES — see
