@@ -592,7 +592,7 @@ class ChildRunner:
             )
             return
 
-        child, parent, catalog_label_lookup = loaded
+        child, parent, catalog_label_lookup, catalog_aliases_lookup = loaded
 
         # ── 3. Pick a catalog for this child ──────────────────────
         # Phase 4 single-mode is the only path live; Phase 5
@@ -675,6 +675,7 @@ class ChildRunner:
                 parent=parent,
                 chosen_catalog_id=chosen_catalog_id,
                 catalog_label=catalog_label,
+                catalog_aliases_lookup=catalog_aliases_lookup,
                 lease=lease,
             )
             return
@@ -818,6 +819,7 @@ class ChildRunner:
         parent: ProductScanJob,
         chosen_catalog_id: UUID,
         catalog_label: str | None,
+        catalog_aliases_lookup: dict[UUID, list[str]],
         lease: _ChildLeaseRenewer,
     ) -> None:
         """STT-track replacement for steps 4-6 of ``_process_child_payload``.
@@ -966,6 +968,17 @@ class ChildRunner:
                         self.settings,
                         "auto_shorts_product_v2_live_only_enabled",
                         False,
+                    ),
+                    # dominance filter
+                    other_aliases_groups=[
+                        aliases
+                        for ce_id, aliases in catalog_aliases_lookup.items()
+                        if ce_id != chosen_catalog_id
+                    ],
+                    mention_dominance_threshold=getattr(
+                        self.settings,
+                        "auto_shorts_product_v2_mention_dominance_threshold",
+                        0.0,
                     ),
                 )
             except NoMentionsFoundError as e:
@@ -1148,7 +1161,7 @@ class ChildRunner:
 
     async def _load_child_context(
         self, *, child_id: UUID,
-    ) -> tuple[ProductScanJob, ProductScanJob, dict[UUID, str]] | None:
+    ) -> tuple[ProductScanJob, ProductScanJob, dict[UUID, str], dict[UUID, list[str]]] | None:
         """Read child + parent + catalog (id → label) in one
         read-only session.
 
@@ -1157,7 +1170,7 @@ class ChildRunner:
         one place and the test seam is clean.
 
         Returns:
-            (child, parent, catalog_id_to_label) or None when the
+            (child, parent, catalog_id_to_label, catalog_id_to_aliases) or None when the
             child / parent is missing or the catalog set is empty.
             ``catalog_id_to_label`` prefers ``user_label`` over
             ``llm_label`` (matches the gallery's display rule).
@@ -1180,7 +1193,11 @@ class ChildRunner:
                 c.id: (c.user_label or c.llm_label)
                 for c in catalog_entries
             }
-            return (child, parent, catalog_label_lookup)
+            catalog_aliases_lookup = {
+                c.id: [c.llm_label, *(c.spoken_aliases or [])]
+                for c in catalog_entries
+            }
+            return (child, parent, catalog_label_lookup, catalog_aliases_lookup)
 
     async def _load_appearances_for_catalog(
         self, *, org_id: UUID, catalog_entry_id: UUID,
