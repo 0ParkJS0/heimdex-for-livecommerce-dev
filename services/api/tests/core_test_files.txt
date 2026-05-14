@@ -88,6 +88,7 @@ tests/test_subtitle_chunking_regression.py
 tests/test_subtitle_chunking_word_to_subtitle.py
 tests/test_subtitles_export.py
 tests/test_tenancy.py
+tests/test_track_stt_segmentation.py
 tests/test_track_stt_storyboard_factory.py
 tests/test_track_stt_storyboard_heuristic.py
 tests/test_track_stt_storyboard_llm_picker.py

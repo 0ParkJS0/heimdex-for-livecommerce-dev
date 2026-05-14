@@ -86,6 +86,7 @@ jobs:
             tests/test_track_stt_storyboard_llm_prompt.py \
             tests/test_track_stt_storyboard_llm_schemas.py \
             tests/test_track_stt_storyboard_llm_picker.py \
+            tests/test_track_stt_segmentation.py \
             tests/test_shorts_auto_product_enumeration_source.py \
             tests/test_shorts_auto_product_enumerate_stt.py \
             tests/test_whisper_transcribe_schemas.py \
