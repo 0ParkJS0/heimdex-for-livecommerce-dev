@@ -140,6 +140,8 @@ async def assemble_stt_clip(
     live_only: bool = False,
     other_aliases_groups: list[list[str]] | None = None,
     mention_dominance_threshold: float = 0.0,
+    other_catalog_names: list[str] | None = None,
+    chunk_catalog_match_threshold: float = 0.0,
 ) -> SttClipResult:
     """End-to-end STT pipeline. Returns the render_job_id wrapped in
     :class:`SttClipResult`.
@@ -173,6 +175,11 @@ async def assemble_stt_clip(
             None or empty = no-op.
         mention_dominance_threshold: 0.0 (default) = filter OFF.
             Typical staging value 0.3-0.5.
+        other_catalog_names: List of OTHER selected catalog entries'
+            names for the chunk scorer's catalog match signal. Should
+            be kept in sync with other_aliases_groups.
+        chunk_catalog_match_threshold: chunk-level catalog match filter.
+            0.0 (default) = filter OFF. Typical staging value 0.3-0.5.
 
     Raises:
         :class:`NoMentionsFoundError`: BM25 found no qualifying
@@ -311,6 +318,10 @@ async def assemble_stt_clip(
             segment=segment,
             openai_client=openai_client,
             model=chunker_model,
+            primary_catalog_name=llm_label,
+            primary_aliases=spoken_aliases,
+            other_catalog_names=other_catalog_names or [],
+            catalog_match_threshold=chunk_catalog_match_threshold,
         )
         all_chunks.extend(scored)
 
