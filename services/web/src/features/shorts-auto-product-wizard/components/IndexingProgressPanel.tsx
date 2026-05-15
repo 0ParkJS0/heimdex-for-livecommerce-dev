@@ -38,8 +38,11 @@ const STAGES: ReadonlyArray<{ id: IndexingStage; label: string }> = [
 ];
 
 interface Props {
-  criteria: WizardCriteriaDraft;
-  videoDurationMs: number;
+  // criteria + videoDurationMs are optional so the result-page can mount
+  // this panel without the wizard-criteria context (no summary chip / 다음
+  // button — the right cluster is hidden entirely when either is omitted).
+  criteria?: WizardCriteriaDraft;
+  videoDurationMs?: number;
   /** Overall progress in [0, 1]. */
   progress: number;
   /** The currently active stage, or null if queued. */
@@ -95,17 +98,19 @@ export function IndexingProgressPanel({
           <h2 className="text-[20px] font-semibold tracking-[-0.5px] text-grayscale-800">
             AI 쇼츠 생성
           </h2>
-          <div className="flex items-center gap-[12px]">
-            <span
-              className="rounded-full bg-neutral-h-50 px-[12px] py-[6px] text-[12px] font-medium text-grayscale-500"
-              data-testid="indexing-summary-chip"
-            >
-              {summaryChip(criteria, videoDurationMs)}
-            </span>
-            <Button variant="primary" size="sm" disabled>
-              다음
-            </Button>
-          </div>
+          {criteria && videoDurationMs != null ? (
+            <div className="flex items-center gap-[12px]">
+              <span
+                className="rounded-full bg-neutral-h-50 px-[12px] py-[6px] text-[12px] font-medium text-grayscale-500"
+                data-testid="indexing-summary-chip"
+              >
+                {summaryChip(criteria, videoDurationMs)}
+              </span>
+              <Button variant="primary" size="sm" disabled>
+                다음
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         <ol

@@ -114,6 +114,23 @@ describe("IndexingProgressPanel", () => {
     );
   });
 
+  it("hides the summary chip + 다음 cluster when criteria/videoDurationMs are omitted", () => {
+    render(
+      <IndexingProgressPanel
+        progress={0.5}
+        currentStage="tracking"
+        completedStages={["enumerating"]}
+      />,
+    );
+    expect(screen.queryByTestId("indexing-summary-chip")).toBeNull();
+    expect(screen.getByTestId("indexing-stage-tracking").dataset.state).toBe(
+      "active",
+    );
+    expect(screen.getByTestId("indexing-progress-percent")).toHaveTextContent(
+      "50%",
+    );
+  });
+
   it("renders the criteria summary chip with distribution + count", () => {
     render(
       <IndexingProgressPanel
