@@ -9,6 +9,7 @@ import { getShortComposition } from "@/lib/api/shorts-render";
 import type { VideoScenesResponse } from "@/lib/types";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
 import { useCompositionExport } from "../hooks/useCompositionExport";
+import { usePresets } from "../hooks/usePresets";
 import { EditorLayout } from "./EditorLayout";
 import { EditorHeader } from "./EditorHeader";
 import { FullscreenOverlay } from "./FullscreenOverlay";
@@ -17,10 +18,13 @@ import { TimelinePanel } from "./TimelinePanel";
 import { ClipProperties } from "./ClipProperties";
 import { TextOverlayPanel } from "./TextOverlayPanel";
 import { OverlayPanel } from "./OverlayPanel";
+import { TemplateSaveDialog } from "./TemplateSaveDialog";
+import { TemplateSaveMenu } from "./TemplateSaveMenu";
 import { isShortsEditorV2Enabled } from "@/lib/feature-flags";
 import type { EditorSubtitle } from "../lib/types";
-import type { EditorTextOverlay } from "../lib/overlay-types";
+import type { EditorOverlay, EditorTextOverlay, PresetKind } from "../lib/overlay-types";
 import { SceneListPanel } from "./SceneListPanel";
+import { useTopHeaderActions } from "@/components/layout/TopHeaderActionsContext";
 
 function BackArrowIcon() {
   return (
@@ -43,6 +47,7 @@ export function ShortsEditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
 
   const editor = useEditorState();
   const {
@@ -213,6 +218,48 @@ export function ShortsEditorPage() {
     },
     [v2Enabled, editor, v2TextOverlays],
   );
+
+  // GNB "템플릿 저장" entry — opens the same TemplateSaveDialog that the
+  // PresetSection uses, but driven from the global header. Save targets the
+  // currently selected overlay; menu is disabled when no overlay is selected
+  // or v2 is off (presets are V2-only).
+  const selectedOverlay = useMemo<EditorOverlay | null>(() => {
+    if (!v2Enabled || state.selectedOverlayId == null) return null;
+    return state.overlays.find((o) => o.id === state.selectedOverlayId) ?? null;
+  }, [v2Enabled, state.selectedOverlayId, state.overlays]);
+
+  const presetKind: PresetKind =
+    selectedOverlay?.kind === "background" ? "background" : "text";
+
+  const presetsApi = usePresets({
+    kind: presetKind,
+    getToken: getAccessToken,
+    enabled: v2Enabled,
+  });
+
+  const handleTemplateSave = useCallback(
+    async (name: string, isShared: boolean) => {
+      if (!selectedOverlay) {
+        setTemplateDialogOpen(false);
+        return;
+      }
+      await presetsApi.save(name, selectedOverlay, isShared);
+      setTemplateDialogOpen(false);
+    },
+    [selectedOverlay, presetsApi],
+  );
+
+  const headerMenu = useMemo(
+    () => (
+      <TemplateSaveMenu
+        onClick={() => setTemplateDialogOpen(true)}
+        disabled={!v2Enabled || selectedOverlay == null}
+      />
+    ),
+    [v2Enabled, selectedOverlay],
+  );
+
+  useTopHeaderActions(headerMenu);
 
   // Load from scene IDs (entry from ShortsCreatePage or ShortsPlanPanel)
   useEffect(() => {
@@ -538,6 +585,12 @@ export function ShortsEditorPage() {
           onClose={() => setIsFullscreen(false)}
         />
       )}
+
+      <TemplateSaveDialog
+        open={templateDialogOpen}
+        onClose={() => setTemplateDialogOpen(false)}
+        onSave={handleTemplateSave}
+      />
     </div>
   );
 }

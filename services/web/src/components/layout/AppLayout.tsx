@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { Sidebar } from "./Sidebar";
 import { TopHeader } from "./TopHeader";
+import { TopHeaderActionsProvider } from "./TopHeaderActionsContext";
 import { cn } from "@/lib/utils";
 
 interface AppLayoutProps {
@@ -72,20 +73,22 @@ export function AppLayout({ children }: AppLayoutProps) {
   }
 
   return (
-    <div className="flex min-h-screen overflow-hidden">
-      <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
-      <div
-        className={cn(
-          "flex min-w-0 flex-1 flex-col transition-[margin-left] duration-300 ease-in-out",
-          sidebarCollapsed ? "ml-0" : "ml-[200px]",
-        )}
-      >
-        <TopHeader
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={toggleSidebar}
-        />
-        <main className="min-w-0 flex-1 overflow-hidden px-6 pb-6">{children}</main>
+    <TopHeaderActionsProvider>
+      <div className="flex min-h-screen overflow-hidden">
+        <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 flex-col transition-[margin-left] duration-300 ease-in-out",
+            sidebarCollapsed ? "ml-0" : "ml-[200px]",
+          )}
+        >
+          <TopHeader
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+          />
+          <main className="min-w-0 flex-1 overflow-hidden px-6 pb-6">{children}</main>
+        </div>
       </div>
-    </div>
+    </TopHeaderActionsProvider>
   );
 }

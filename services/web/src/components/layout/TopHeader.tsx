@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useContext } from "react";
 import Link from "next/link";
 import { PanelLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getDevices } from "@/lib/api/devices";
 import { ApiError } from "@/lib/types";
 import type { DeviceListItem } from "@/lib/types";
+import { TopHeaderActionsContext } from "./TopHeaderActionsContext";
 
 const AGENT_STALE_MINUTES = 5;
 const POLL_INTERVAL_MS = 30_000;
@@ -98,6 +99,9 @@ export function TopHeader({ sidebarCollapsed, onToggleSidebar }: TopHeaderProps)
   const displayName = user?.name || user?.email || "User";
   const displayEmail = user?.email || "";
 
+  const headerActionsCtx = useContext(TopHeaderActionsContext);
+  const headerActions = headerActionsCtx?.actions ?? null;
+
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -129,6 +133,7 @@ export function TopHeader({ sidebarCollapsed, onToggleSidebar }: TopHeaderProps)
         )}
       </div>
       <div className="flex items-center gap-4">
+        {headerActions}
         <AgentStatusBadge />
 
         <button
