@@ -31,6 +31,9 @@ interface PreviewPanelProps {
   onSelectSubtitle: (index: number | null) => void;
   onUpdateSubtitlePosition: (index: number, positionX: number, positionY: number) => void;
   onUpdateSubtitleFontSize: (index: number, fontSizePx: number) => void;
+  // axis5d — when true, the preview container expands to the 352×626 iPhone
+  // mockup size used inside FullscreenOverlay. Layout/logic otherwise identical.
+  fullscreen?: boolean;
 }
 
 function PlayIcon() {
@@ -65,6 +68,7 @@ export function PreviewPanel({
   onSelectSubtitle,
   onUpdateSubtitlePosition,
   onUpdateSubtitleFontSize,
+  fullscreen = false,
 }: PreviewPanelProps) {
   const {
     videoRef,
@@ -312,7 +316,13 @@ export function PreviewPanel({
         ref={containerRef}
         className={cn(
           "relative w-full overflow-hidden rounded-lg bg-black",
-          aspectRatio === "9:16" ? "aspect-[9/16] max-w-[280px]" : "aspect-video max-w-[480px]",
+          aspectRatio === "9:16"
+            ? fullscreen
+              ? "aspect-[9/16] max-w-[352px]"
+              : "aspect-[9/16] max-w-[280px]"
+            : fullscreen
+              ? "aspect-video max-w-[626px]"
+              : "aspect-video max-w-[480px]",
         )}
         onClick={() => onSelectSubtitle(null)}
       >
@@ -453,7 +463,8 @@ export function PreviewPanel({
       {/* Transport controls — fade on idle, always shown while playing */}
       <div
         className={cn(
-          "flex w-full max-w-[280px] flex-col gap-2 transition-opacity duration-200",
+          "flex w-full flex-col gap-2 transition-opacity duration-200",
+          fullscreen ? "max-w-[352px]" : "max-w-[280px]",
           showTransport ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       >
