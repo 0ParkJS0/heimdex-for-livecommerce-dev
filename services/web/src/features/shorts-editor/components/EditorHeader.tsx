@@ -87,13 +87,13 @@ export function EditorHeader({
   }, [renderJob]);
 
   return (
-    <div className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-4">
+    <div className="flex h-16 items-center justify-between border-b border-grayscale-100 bg-white px-4">
       {/* Left: back + metadata */}
       <div className="flex items-center gap-3">
         <Link
           href="/export/shorts"
           onClick={handleBack}
-          className="rounded-full p-1.5 hover:bg-gray-100"
+          className="rounded-full p-1.5 text-grayscale-500 hover:bg-grayscale-10 hover:text-grayscale-800"
         >
           <BackArrowIcon />
         </Link>
@@ -103,12 +103,12 @@ export function EditorHeader({
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}
           placeholder={videoTitle ?? "제목 없음"}
-          className="max-w-64 truncate rounded-md border border-transparent px-2 py-1 text-sm font-semibold text-gray-900 placeholder-gray-400 hover:border-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          className="max-w-64 truncate rounded-md border border-transparent px-2 py-1 text-[18px] font-semibold leading-[1.4] tracking-[-0.45px] text-grayscale-800 placeholder-grayscale-300 hover:border-grayscale-100 focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
         />
 
-        <span className="text-xs text-gray-400">
+        <span className="text-xs font-medium text-grayscale-500">
           {clipCount}개 장면 &middot; {Math.round(totalDurationMs / 1000)}초
-          {isDirty && <span className="ml-1 text-amber-500">*</span>}
+          {isDirty && <span className="ml-1 text-amber-h-500">*</span>}
         </span>
       </div>
 
@@ -116,7 +116,7 @@ export function EditorHeader({
       <div className="flex items-center gap-2">
         {/* Error message */}
         {renderError && (
-          <span className="text-xs text-red-500 max-w-48 truncate">{renderError}</span>
+          <span className="text-xs text-red-h-500 max-w-48 truncate">{renderError}</span>
         )}
 
         {/* Completed: download + new render */}
@@ -125,7 +125,7 @@ export function EditorHeader({
             <button
               type="button"
               onClick={handleDownload}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-green-500 px-3 py-2 text-sm font-medium text-white hover:bg-green-600"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-heimdex-navy-500 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-heimdex-navy-600"
             >
               <DownloadIcon />
               다운로드
@@ -133,7 +133,7 @@ export function EditorHeader({
             <button
               type="button"
               onClick={onRenderReset}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-lg border border-grayscale-200 bg-white px-3 py-2 text-sm font-semibold text-grayscale-800 transition-colors hover:bg-grayscale-10"
             >
               다시 렌더링
             </button>
@@ -145,7 +145,7 @@ export function EditorHeader({
           <button
             type="button"
             onClick={onRenderReset}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="rounded-lg border border-grayscale-200 bg-white px-3 py-2 text-sm font-semibold text-grayscale-800 transition-colors hover:bg-grayscale-10"
           >
             재시도
           </button>
@@ -158,10 +158,10 @@ export function EditorHeader({
             onClick={onRender}
             disabled={!canRender}
             className={cn(
-              "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+              "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors",
               canRender
-                ? "bg-indigo-600 text-white hover:bg-indigo-700"
-                : "cursor-not-allowed bg-gray-200 text-gray-400",
+                ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                : "cursor-not-allowed bg-grayscale-100 text-grayscale-400",
             )}
           >
             {isWorking && (
