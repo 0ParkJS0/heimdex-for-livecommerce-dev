@@ -42,7 +42,7 @@ function CTAInner({
   if (isLoading && !renderWhileProbing) return null;
 
   const sharedClassName = cn(
-    "inline-flex items-center gap-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100",
+    "inline-flex items-center gap-2 rounded-lg bg-heimdex-navy-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-heimdex-navy-600",
     className,
   );
 
