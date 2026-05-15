@@ -102,7 +102,7 @@ export function Pagination({
             className={cn(
               btnBase,
               p === safePage
-                ? "bg-indigo-500 font-medium text-white"
+                ? "bg-heimdex-navy-500 font-medium text-white"
                 : "text-gray-600 hover:bg-gray-100",
             )}
           >
