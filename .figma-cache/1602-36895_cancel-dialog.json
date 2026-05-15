@@ -1,0 +1,7 @@
+{
+  "nodeId": "1602:36895",
+  "fileKey": "PYDMMAvFq7PmhjyVTftiU6",
+  "fetchedAt": "2026-05-15T00:00:00.000Z",
+  "designContext": "const imgIcon2 = \"https://www.figma.com/api/mcp/asset/4e303354-954e-4480-addd-45e606f7960c\";\nconst imgWarning = \"https://www.figma.com/api/mcp/asset/82658b36-40f6-4a9f-b255-61aab298a2e5\";\n\n// Sub-components: Secondary (button), Warning (red circle icon)\n// Main export: Component (삭제 팝업 = cancel/delete confirmation dialog)\n// Key elements:\n// - White card, rounded-[20px], shadow, padding 24px, gap 28px\n// - Top section (gap 12px, centered):\n//   - Warning icon: red circle (#d53b49 gradient), 24px\n//   - Title: '취소하시겠어요?' (Pretendard Bold 18px, #262626)\n//   - Body: '취소한 영상은 복구할 수 없어요.' (Pretendard Medium 14px, #272833, centered)\n// - Button row (gap 8px, 128px wide):\n//   - 취소 button: Secondary (no icon, border neutral/500, text neutral/500, h-36px)\n//   - 취소 (confirm) button: Primary red (#d53b49 bg, white text, h-36px, w-60px)\nexport default function Component() { /* full TSX code in raw response */ }",
+  "variableDefs": {"Grayscale/900":"#020314","Neutral/White":"#ffffff","Red/400":"#d53b49","Neutral/800":"#262626","Grayscale/800":"#272833","Neutral/500":"#7b7b7b"}
+}
