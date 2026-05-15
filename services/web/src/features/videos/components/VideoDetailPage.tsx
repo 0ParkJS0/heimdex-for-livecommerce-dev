@@ -1312,7 +1312,7 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
         </div>
       )}
 
-      <nav className="mb-6 flex items-center border-b border-gray-200">
+      <nav className="mb-6 flex items-center border-b border-grayscale-100">
         {([
           { key: "overview" as const, label: "개요", badge: undefined as number | undefined },
           { key: "scenes" as const, label: "장면 분석", badge: totalScenes > 0 ? totalScenes : undefined },
@@ -1325,13 +1325,13 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
             className={cn(
               "relative px-4 py-2.5 text-sm font-medium -mb-px border-b-2 transition-colors",
               view === tab.key
-                ? "border-indigo-500 text-indigo-600"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300",
+                ? "border-heimdex-navy-500 text-heimdex-navy-500"
+                : "border-transparent text-grayscale-500 hover:text-grayscale-800 hover:border-grayscale-200",
             )}
           >
             {tab.label}
             {tab.badge != null && (
-              <span className="ml-1.5 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+              <span className="ml-1.5 inline-flex items-center rounded-full bg-grayscale-100 px-2 py-0.5 text-xs font-medium text-grayscale-500">
                 {tab.badge}
               </span>
             )}
