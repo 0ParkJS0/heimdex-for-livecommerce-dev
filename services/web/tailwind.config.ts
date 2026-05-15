@@ -66,12 +66,17 @@ const config: Config = {
           50: "#ffefda",
           500: "#e07f00",
         },
+        softblue: {
+          600: "#3b83f6",
+        },
       },
       boxShadow: {
         card: "0px 4px 20px 0px rgba(232, 233, 248, 1)",
         "card-lg":
           "0px 4px 20px 0px rgba(232, 233, 248, 1), 10px 10px 20px 0px rgba(185, 185, 185, 0.1)",
         dialog: "2px 2px 20px 0px rgba(0, 0, 0, 0.25)",
+        input: "10px 10px 20px 0px rgba(185, 185, 185, 0.1)",
+        "left-pane": "10px 10px 20px 0px #f1f1ff",
       },
       borderRadius: {
         card: "10px",
