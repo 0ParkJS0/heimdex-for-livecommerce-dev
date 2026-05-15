@@ -31,8 +31,48 @@ import type {
 import { useAuth } from "@/lib/auth";
 
 import { ResultCard } from "../components/ResultCard";
-import { LoadingShortsSpinner } from "../components/LoadingShortsSpinner";
+import {
+  IndexingProgressPanel,
+  type IndexingStage,
+} from "../components/IndexingProgressPanel";
 import { useScanOrder } from "../hooks/useScanOrder";
+
+const INDEXING_STAGES: ReadonlyArray<IndexingStage> = [
+  "enumerating",
+  "tracking",
+  "assembling",
+  "rendering",
+];
+
+function mapStageToIndexing(stage: ScanStage | undefined): IndexingStage | null {
+  return stage === "enumerating" ||
+    stage === "tracking" ||
+    stage === "assembling" ||
+    stage === "rendering"
+    ? stage
+    : null;
+}
+
+function computeCompletedStages(
+  stage: ScanStage | undefined,
+): ReadonlyArray<IndexingStage> {
+  switch (stage) {
+    case "enumeration_done":
+    case "tracking":
+      return ["enumerating"];
+    case "assembling":
+      return ["enumerating", "tracking"];
+    case "rendering":
+      return ["enumerating", "tracking", "assembling"];
+    case "preview_ready":
+    case "fanned_out":
+    case "committed":
+    case "done":
+      return INDEXING_STAGES;
+    default:
+      return [];
+  }
+}
 
 interface Props {
   videoId: string;
@@ -133,12 +173,12 @@ export function WizardStepResult({ videoId, parentJobId }: Props) {
       {failure && status ? <FailureBanner status={status} /> : null}
 
       {childrenTotal === 0 ? (
-        /* NOTE(phase2-merge): IndexingProgressPanel 마운트 위치. 머지 후 wire */
-        <div
-          className="flex min-h-[420px] items-center justify-center rounded-card border border-grayscale-100 bg-white"
-          data-testid="result-grid-empty"
-        >
-          <LoadingShortsSpinner />
+        <div data-testid="result-grid-empty">
+          <IndexingProgressPanel
+            progress={(status?.parent.progress_pct ?? 0) / 100}
+            currentStage={mapStageToIndexing(status?.parent.stage)}
+            completedStages={computeCompletedStages(status?.parent.stage)}
+          />
         </div>
       ) : (
         <div
