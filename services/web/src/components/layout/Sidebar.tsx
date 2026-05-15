@@ -191,10 +191,10 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     <aside
       className={cn(
         "fixed left-0 top-0 z-40 h-screen border-r border-gray-200 bg-white transition-[width] duration-300 ease-in-out",
-        collapsed ? "w-0 overflow-hidden" : "w-[200px]",
+        collapsed ? "w-0 overflow-hidden" : "w-[270px]",
       )}
     >
-      <div className="flex w-[200px] flex-col h-full">
+      <div className="flex w-[270px] flex-col h-full">
         <div className="flex items-center justify-between pr-2">
           <Link href="/" className="flex items-center px-5 py-6">
             <HeimdexBrand />

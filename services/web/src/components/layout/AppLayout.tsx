@@ -79,7 +79,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         <div
           className={cn(
             "flex min-w-0 flex-1 flex-col transition-[margin-left] duration-300 ease-in-out",
-            sidebarCollapsed ? "ml-0" : "ml-[200px]",
+            sidebarCollapsed ? "ml-0" : "ml-[270px]",
           )}
         >
           <TopHeader
