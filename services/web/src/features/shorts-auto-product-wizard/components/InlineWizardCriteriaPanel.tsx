@@ -10,6 +10,7 @@
 
 "use client";
 
+import { Button } from "@/components/ui/figma-index";
 import type { ProductDistribution } from "@/lib/types/shorts-auto-product-wizard";
 
 import { InlineCountSelector } from "./InlineCountSelector";
@@ -83,64 +84,68 @@ export function InlineWizardCriteriaPanel({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-[20px] font-pretendard">
       <header className="flex items-center justify-between gap-4">
         <InlineWizardBreadcrumb currentStep={1} />
       </header>
 
-      <div className="space-y-6 rounded-xl border border-gray-200 bg-white p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-gray-900">옵션 설정</h2>
-          <button
-            type="button"
+      <div className="rounded-card bg-white p-[20px] shadow-card">
+        <div className="flex items-center justify-between gap-4 pb-[20px]">
+          <h2 className="text-[20px] font-semibold tracking-[-0.5px] text-grayscale-800">
+            옵션 설정
+          </h2>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={onNext}
             disabled={exceedsAggregateCap}
-            className="rounded-md bg-gray-900 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:bg-gray-300 disabled:text-gray-500"
             data-testid="inline-criteria-next"
           >
             다음
-          </button>
+          </Button>
         </div>
 
-        <InlineDistributionToggle
-          value={criteria.product_distribution}
-          onChange={(v) => update("product_distribution", v)}
-        />
+        <div className="flex flex-col gap-[60px]">
+          <InlineDistributionToggle
+            value={criteria.product_distribution}
+            onChange={(v) => update("product_distribution", v)}
+          />
 
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-900">
-            영상 구간 설정
-          </label>
-          <VideoSegmentRangeSlider
-            durationMs={videoDurationMs}
-            snapTargetsMs={snapTargetsMs}
-            startMs={criteria.time_range_start_ms}
-            endMs={criteria.time_range_end_ms}
-            onChange={({ startMs, endMs }) =>
-              onCriteriaChange({
-                ...criteria,
-                time_range_start_ms: startMs,
-                time_range_end_ms: endMs,
-              })
-            }
+          <div className="space-y-[12px]">
+            <label className="block text-[14px] font-semibold text-grayscale-800">
+              영상 구간 설정
+            </label>
+            <VideoSegmentRangeSlider
+              durationMs={videoDurationMs}
+              snapTargetsMs={snapTargetsMs}
+              startMs={criteria.time_range_start_ms}
+              endMs={criteria.time_range_end_ms}
+              onChange={({ startMs, endMs }) =>
+                onCriteriaChange({
+                  ...criteria,
+                  time_range_start_ms: startMs,
+                  time_range_end_ms: endMs,
+                })
+              }
+            />
+          </div>
+
+          <InlineLengthSelector
+            value={criteria.length_seconds}
+            onChange={(v) => update("length_seconds", v)}
+          />
+
+          <InlineCountSelector
+            value={criteria.requested_count}
+            onChange={(v) => update("requested_count", v)}
+            rangeMs={effectiveRangeMs}
+            lengthSeconds={criteria.length_seconds}
           />
         </div>
 
-        <InlineLengthSelector
-          value={criteria.length_seconds}
-          onChange={(v) => update("length_seconds", v)}
-        />
-
-        <InlineCountSelector
-          value={criteria.requested_count}
-          onChange={(v) => update("requested_count", v)}
-          rangeMs={effectiveRangeMs}
-          lengthSeconds={criteria.length_seconds}
-        />
-
         {exceedsAggregateCap ? (
           <p
-            className="rounded-md bg-amber-50 p-3 text-sm text-amber-800"
+            className="mt-[20px] rounded-[8px] bg-amber-h-50 p-[12px] text-[13px] font-medium text-amber-h-500"
             data-testid="inline-aggregate-cap-warning"
           >
             총 출력 길이 한도(30분) 초과: {criteria.requested_count}개 ×{" "}
