@@ -27,7 +27,7 @@ export function TransformSection({ overlay, onChange }: TransformSectionProps) {
 
   return (
     <section className="space-y-3">
-      <header className="text-xs font-semibold text-gray-700">
+      <header className="text-xs font-semibold text-grayscale-800">
         {t.transform.sectionLabel}
       </header>
 
@@ -97,7 +97,7 @@ function Row({
 }) {
   return (
     <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-      <span className="text-xs text-gray-500">{label}</span>
+      <span className="text-xs text-grayscale-500">{label}</span>
       <div className="flex items-stretch gap-2">{children}</div>
     </div>
   );

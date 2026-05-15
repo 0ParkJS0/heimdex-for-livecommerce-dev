@@ -67,7 +67,7 @@ export function EffectsSection({ effects, onChange }: EffectsSectionProps) {
         />
         {effects.stroke && (
           <div className="grid grid-cols-[80px_1fr_auto] items-center gap-2">
-            <span className="text-xs text-gray-500">{t.effects.stroke}</span>
+            <span className="text-xs text-grayscale-500">{t.effects.stroke}</span>
             <NumericStepper
               value={effects.stroke.widthPx}
               min={0}
@@ -104,7 +104,7 @@ export function EffectsSection({ effects, onChange }: EffectsSectionProps) {
         {effects.shadow && (
           <div className="space-y-2">
             <div className="grid grid-cols-[80px_1fr_auto] items-center gap-2">
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-grayscale-500">
                 {t.effects.shadowPositionColor}
               </span>
               <div className="flex gap-2">
@@ -136,7 +136,7 @@ export function EffectsSection({ effects, onChange }: EffectsSectionProps) {
             </div>
 
             <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-              <span className="text-xs text-gray-500">{t.effects.blur}</span>
+              <span className="text-xs text-grayscale-500">{t.effects.blur}</span>
               <LabeledSlider
                 value={effects.shadow.blurPx}
                 onChange={(v) => updateShadow({ blurPx: v })}
@@ -148,7 +148,7 @@ export function EffectsSection({ effects, onChange }: EffectsSectionProps) {
             </div>
 
             <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-              <span className="text-xs text-gray-500">{t.effects.spread}</span>
+              <span className="text-xs text-grayscale-500">{t.effects.spread}</span>
               <NumericStepper
                 value={effects.shadow.spreadPx}
                 min={0}
@@ -176,18 +176,18 @@ function Header({
 }) {
   if (onToggle == null) {
     return (
-      <h3 className="mb-2 text-xs font-semibold text-gray-700">{label}</h3>
+      <h3 className="mb-2 text-xs font-semibold text-grayscale-800">{label}</h3>
     );
   }
   return (
     <button
       type="button"
       onClick={onToggle}
-      className="mb-2 flex w-full items-center justify-between text-xs font-semibold text-gray-700 hover:text-gray-900"
+      className="mb-2 flex w-full items-center justify-between text-xs font-semibold text-grayscale-800 hover:text-heimdex-navy-500"
     >
       <span>{label}</span>
       <span
-        className={enabled ? "text-indigo-600" : "text-gray-300"}
+        className={enabled ? "text-heimdex-navy-500" : "text-grayscale-300"}
       >{enabled ? "ON" : "OFF"}</span>
     </button>
   );
