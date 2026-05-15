@@ -405,7 +405,7 @@ function OverviewPanel({
             </span>
           )}
           {!summaryLoading && hasSummary && !summaryData?.is_edited && (
-            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600">AI</span>
+            <span className="rounded-full bg-grayscale-100 px-2 py-0.5 text-xs font-medium text-heimdex-navy-500">AI</span>
           )}
           {!summaryLoading && summaryData?.is_edited && (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-600">수정됨</span>
@@ -946,8 +946,8 @@ function ScenesPanel({
             className={cn(
               "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
               selectedIds.size > 0
-                ? "bg-indigo-500 text-white hover:bg-indigo-600"
-                : "bg-gray-300 text-gray-500 cursor-not-allowed",
+                ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                : "bg-grayscale-200 text-grayscale-500 cursor-not-allowed",
             )}
           >
             <ScissorsIcon />
