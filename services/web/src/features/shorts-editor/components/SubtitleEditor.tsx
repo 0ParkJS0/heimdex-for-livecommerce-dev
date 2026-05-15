@@ -48,7 +48,7 @@ export function SubtitleEditor({
         <button
           type="button"
           onClick={() => onRemove(index)}
-          className="text-xs text-red-500 hover:text-red-600"
+          className="text-xs text-red-h-400 hover:text-red-h-500"
         >
           삭제
         </button>
@@ -63,7 +63,7 @@ export function SubtitleEditor({
           placeholder="자막 텍스트를 입력하세요..."
           maxLength={500}
           rows={3}
-          className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs text-gray-900 placeholder-gray-400 resize-none focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs text-gray-900 placeholder-gray-400 resize-none focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
         />
         <p className="text-right text-[9px] text-gray-400">{subtitle.text.length}/500</p>
       </div>
@@ -79,7 +79,7 @@ export function SubtitleEditor({
               value={subtitle.startMs}
               min={0}
               onChange={(e) => handleTimingChange("startMs", e.target.value)}
-              className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
             />
           </div>
           <div>
@@ -89,7 +89,7 @@ export function SubtitleEditor({
               value={subtitle.endMs}
               min={subtitle.startMs + 100}
               onChange={(e) => handleTimingChange("endMs", e.target.value)}
-              className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
             />
           </div>
         </div>
@@ -101,7 +101,7 @@ export function SubtitleEditor({
         <select
           value={subtitle.style.fontFamily}
           onChange={(e) => handleStyleChange("fontFamily", e.target.value)}
-          className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-indigo-400 focus:outline-none"
+          className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-heimdex-navy-500 focus:outline-none"
         >
           {FONT_OPTIONS.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
@@ -119,7 +119,7 @@ export function SubtitleEditor({
             min={8}
             max={200}
             onChange={(e) => handleStyleChange("fontSizePx", parseInt(e.target.value, 10) || 36)}
-            className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-indigo-400 focus:outline-none"
+            className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-heimdex-navy-500 focus:outline-none"
           />
         </div>
         <div className="space-y-1">
@@ -127,7 +127,7 @@ export function SubtitleEditor({
           <select
             value={subtitle.style.fontWeight}
             onChange={(e) => handleStyleChange("fontWeight", parseInt(e.target.value, 10))}
-            className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-indigo-400 focus:outline-none"
+            className="w-full rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-heimdex-navy-500 focus:outline-none"
           >
             <option value={400}>Regular</option>
             <option value={700}>Bold</option>
@@ -152,7 +152,7 @@ export function SubtitleEditor({
               const v = e.target.value;
               if (/^#[0-9A-Fa-f]{6}$/.test(v)) handleStyleChange("fontColor", v.toUpperCase());
             }}
-            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 font-mono focus:border-indigo-400 focus:outline-none"
+            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 font-mono focus:border-heimdex-navy-500 focus:outline-none"
           />
         </div>
       </div>
@@ -170,7 +170,7 @@ export function SubtitleEditor({
               step={0.05}
               value={subtitle.style.positionX}
               onChange={(e) => handleStyleChange("positionX", parseFloat(e.target.value))}
-              className="w-full accent-indigo-500"
+              className="w-full accent-heimdex-navy-500"
             />
           </div>
           <div>
@@ -182,7 +182,7 @@ export function SubtitleEditor({
               step={0.05}
               value={subtitle.style.positionY}
               onChange={(e) => handleStyleChange("positionY", parseFloat(e.target.value))}
-              className="w-full accent-indigo-500"
+              className="w-full accent-heimdex-navy-500"
             />
           </div>
         </div>
@@ -197,7 +197,7 @@ export function SubtitleEditor({
             onChange={(e) =>
               handleStyleChange("backgroundColor", e.target.checked ? "#000000" : null)
             }
-            className="rounded border-gray-300 text-indigo-500"
+            className="rounded border-gray-300 text-heimdex-navy-500"
           />
           <label className="text-[10px] text-gray-500">배경색</label>
         </div>
@@ -218,7 +218,7 @@ export function SubtitleEditor({
                 step={0.1}
                 value={subtitle.style.backgroundOpacity}
                 onChange={(e) => handleStyleChange("backgroundOpacity", parseFloat(e.target.value))}
-                className="w-full accent-indigo-500"
+                className="w-full accent-heimdex-navy-500"
               />
             </div>
           </div>
