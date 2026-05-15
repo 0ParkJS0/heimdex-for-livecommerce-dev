@@ -16,22 +16,22 @@ export function EditorLayout({ leftPanel, preview, rightPanel, timeline }: Edito
           Widened from 300px → 360px so V2 transform/effects sections fit
           without horizontal overflow (3-column X/Y/rotation row, stroke
           stepper + color swatch row). */}
-      <div className="overflow-y-auto overflow-x-hidden border-r border-gray-200 bg-white">
+      <div className="overflow-y-auto overflow-x-hidden border-r border-grayscale-100 bg-white">
         {leftPanel}
       </div>
 
       {/* Preview panel — center canvas surface */}
-      <div className="flex items-center justify-center overflow-hidden bg-neutral-100">
+      <div className="flex items-center justify-center overflow-hidden bg-grayscale-10">
         {preview}
       </div>
 
       {/* Right panel — scene list */}
-      <div className="overflow-y-auto border-l border-gray-200 bg-white">
+      <div className="overflow-y-auto border-l border-grayscale-100 bg-white">
         {rightPanel}
       </div>
 
       {/* Timeline panel — bottom, full width */}
-      <div className="col-span-3 overflow-hidden border-t border-gray-200 bg-gray-50">
+      <div className="col-span-3 overflow-hidden border-t border-grayscale-100 bg-grayscale-10">
         {timeline}
       </div>
     </div>
