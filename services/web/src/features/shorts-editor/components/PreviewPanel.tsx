@@ -358,14 +358,14 @@ export function PreviewPanel({
                   aria-label="empty text overlay placeholder"
                   className={cn(
                     "h-16 w-16 rounded bg-red-500",
-                    isSelected && "ring-2 ring-indigo-400 ring-offset-1",
+                    isSelected && "ring-2 ring-heimdex-navy-500 ring-offset-1",
                   )}
                 />
               ) : (
                 <p
                   className={cn(
                     "whitespace-pre-wrap select-none text-center",
-                    isSelected && "rounded ring-2 ring-indigo-400 ring-offset-1",
+                    isSelected && "rounded ring-2 ring-heimdex-navy-500 ring-offset-1",
                   )}
                   style={{
                     fontFamily: resolveFontFamily(sub.style.fontFamily),
@@ -394,7 +394,7 @@ export function PreviewPanel({
                     <div
                       key={corner}
                       className={cn(
-                        "absolute h-3 w-3 rounded-full bg-indigo-500 border-2 border-white",
+                        "absolute h-3 w-3 rounded-full bg-heimdex-navy-500 border-2 border-white",
                         corner === "nw" && "-top-1.5 -left-1.5 cursor-nwse-resize",
                         corner === "ne" && "-top-1.5 -right-1.5 cursor-nesw-resize",
                         corner === "sw" && "-bottom-1.5 -left-1.5 cursor-nesw-resize",
@@ -458,9 +458,9 @@ export function PreviewPanel({
         )}
       >
         {/* Progress bar */}
-        <div className="relative h-1 w-full rounded-full bg-gray-300">
+        <div className="relative h-1 w-full rounded-full bg-grayscale-200">
           <div
-            className="absolute left-0 top-0 h-full rounded-full bg-indigo-500 transition-[width] duration-75"
+            className="absolute left-0 top-0 h-full rounded-full bg-heimdex-navy-500 transition-[width] duration-75"
             style={{ width: `${Math.min(100, progressPct)}%` }}
           />
         </div>
@@ -474,14 +474,14 @@ export function PreviewPanel({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               clips.length > 0
-                ? "bg-gray-900 text-white hover:bg-gray-700"
-                : "cursor-not-allowed bg-gray-200 text-gray-400",
+                ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                : "cursor-not-allowed bg-grayscale-100 text-grayscale-400",
             )}
           >
             {isPlaying ? <PauseIcon /> : <PlayIcon />}
           </button>
 
-          <span className="font-mono text-xs text-gray-600">
+          <span className="font-mono text-xs text-grayscale-500">
             {formatTimelineTimestamp(playheadMs)} / {formatTimelineTimestamp(totalDurationMs)}
           </span>
         </div>
