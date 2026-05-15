@@ -79,11 +79,11 @@ export function InlineCountSelector({
   const suggestion = computeSmartCountSuggestion(rangeMs);
 
   return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-900">
+    <div className="space-y-[12px] font-pretendard">
+      <label className="block text-[14px] font-semibold text-grayscale-800">
         쇼츠 개수
       </label>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-[12px]">
         {PRESETS.map((preset) => {
           const isActive = value === preset;
           return (
@@ -93,10 +93,10 @@ export function InlineCountSelector({
               onClick={() => onChange(preset)}
               disabled={disabled}
               className={cn(
-                "min-w-[48px] rounded-md border px-3 py-2 text-sm font-medium transition",
+                "min-w-[64px] rounded-[10px] bg-white px-[12px] py-[12px] text-[16px] font-semibold tracking-[-0.4px] transition",
                 isActive
-                  ? "border-gray-900 bg-white text-gray-900 ring-2 ring-gray-900"
-                  : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-700",
+                  ? "border-2 border-heimdex-navy-500 text-heimdex-navy-500"
+                  : "border border-grayscale-100 text-grayscale-500 hover:border-heimdex-navy-400 hover:text-heimdex-navy-400",
                 disabled && "cursor-not-allowed opacity-50",
               )}
               data-testid={`inline-count-preset-${preset}`}
@@ -109,11 +109,11 @@ export function InlineCountSelector({
       </div>
       {suggestion ? (
         <p
-          className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600"
+          className="rounded-[8px] bg-neutral-h-50 px-[12px] py-[8px] text-[12px] font-medium tracking-[-0.3px] text-grayscale-500"
           data-testid="inline-count-suggestion"
         >
           {suggestion.rangeLabel} 영상에서 {lengthSeconds}초 쇼츠라면{" "}
-          <span className="font-semibold text-gray-900">
+          <span className="font-semibold text-grayscale-800">
             {suggestion.lo}~{suggestion.hi}개
           </span>
           가 적합합니다.

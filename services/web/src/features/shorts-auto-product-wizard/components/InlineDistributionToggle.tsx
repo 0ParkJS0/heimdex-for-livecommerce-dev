@@ -44,11 +44,11 @@ export function InlineDistributionToggle({
   disabled,
 }: Props) {
   return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-900">
+    <div className="space-y-[12px] font-pretendard">
+      <label className="block text-[14px] font-semibold text-grayscale-800">
         생성 유형
       </label>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-[12px]">
         {OPTIONS.map((opt) => {
           const isActive = value === opt.value;
           return (
@@ -58,10 +58,10 @@ export function InlineDistributionToggle({
               onClick={() => onChange(opt.value)}
               disabled={disabled}
               className={cn(
-                "rounded-md border px-4 py-4 text-center transition",
+                "rounded-[10px] border px-[16px] py-[16px] text-center transition",
                 isActive
-                  ? "border-gray-900 ring-2 ring-gray-900"
-                  : "border-gray-200 hover:border-gray-400",
+                  ? "border-2 border-heimdex-navy-500 bg-white"
+                  : "border border-grayscale-100 bg-white hover:border-heimdex-navy-400",
                 disabled && "cursor-not-allowed opacity-50",
               )}
               data-testid={`inline-distribution-${opt.value}`}
@@ -69,13 +69,13 @@ export function InlineDistributionToggle({
             >
               <span
                 className={cn(
-                  "block text-sm font-semibold",
-                  isActive ? "text-gray-900" : "text-gray-500",
+                  "block text-[16px] font-semibold tracking-[-0.4px]",
+                  isActive ? "text-heimdex-navy-500" : "text-grayscale-500",
                 )}
               >
                 {opt.label}
               </span>
-              <span className="mt-1 block text-xs text-gray-500">
+              <span className="mt-[4px] block text-[12px] font-medium text-grayscale-500">
                 {opt.description}
               </span>
             </button>
