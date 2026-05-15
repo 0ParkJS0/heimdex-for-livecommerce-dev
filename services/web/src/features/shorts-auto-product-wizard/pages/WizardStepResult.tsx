@@ -133,6 +133,7 @@ export function WizardStepResult({ videoId, parentJobId }: Props) {
       {failure && status ? <FailureBanner status={status} /> : null}
 
       {childrenTotal === 0 ? (
+        /* NOTE(phase2-merge): IndexingProgressPanel 마운트 위치. 머지 후 wire */
         <div
           className="flex min-h-[420px] items-center justify-center rounded-card border border-grayscale-100 bg-white"
           data-testid="result-grid-empty"
