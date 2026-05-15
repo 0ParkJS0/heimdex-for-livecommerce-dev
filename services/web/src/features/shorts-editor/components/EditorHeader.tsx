@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import Link from "next/link";
+import { Maximize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RenderStatus } from "../hooks/useCompositionExport";
 import type { RenderJobResponse } from "@/lib/api/shorts-render";
@@ -19,6 +20,7 @@ interface EditorHeaderProps {
   renderError: string | null;
   onRender: () => void;
   onRenderReset: () => void;
+  onToggleFullscreen?: () => void;
 }
 
 function BackArrowIcon() {
@@ -59,6 +61,7 @@ export function EditorHeader({
   renderError,
   onRender,
   onRenderReset,
+  onToggleFullscreen,
 }: EditorHeaderProps) {
   const isWorking = renderStatus === "submitting" || renderStatus === "queued" || renderStatus === "rendering";
   const canRender = clipCount > 0 && !isWorking && renderStatus !== "completed";
@@ -114,6 +117,17 @@ export function EditorHeader({
 
       {/* Right: render controls */}
       <div className="flex items-center gap-2">
+        {onToggleFullscreen && (
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            aria-label="전체보기"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-grayscale-500 transition-colors hover:bg-grayscale-100 hover:text-heimdex-navy-500"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
+        )}
+
         {/* Error message */}
         {renderError && (
           <span className="text-xs text-red-h-500 max-w-48 truncate">{renderError}</span>

@@ -11,6 +11,7 @@ import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } 
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import { EditorLayout } from "./EditorLayout";
 import { EditorHeader } from "./EditorHeader";
+import { FullscreenOverlay } from "./FullscreenOverlay";
 import { PreviewPanel } from "./PreviewPanel";
 import { TimelinePanel } from "./TimelinePanel";
 import { ClipProperties } from "./ClipProperties";
@@ -41,6 +42,7 @@ export function ShortsEditorPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const editor = useEditorState();
   const {
@@ -407,6 +409,7 @@ export function ShortsEditorPage() {
         renderError={renderError}
         onRender={submitComposition}
         onRenderReset={resetRender}
+        onToggleFullscreen={() => setIsFullscreen(true)}
       />
 
       <EditorLayout
@@ -514,6 +517,27 @@ export function ShortsEditorPage() {
           />
         }
       />
+
+      {isFullscreen && (
+        <FullscreenOverlay
+          clips={state.clips}
+          subtitles={state.subtitles}
+          overlays={state.overlays}
+          selectedOverlayId={state.selectedOverlayId}
+          onSelectOverlay={editor.selectOverlay}
+          onUpdateOverlay={editor.updateOverlay}
+          playheadMs={state.playheadMs}
+          isPlaying={state.isPlaying}
+          totalDurationMs={state.totalDurationMs}
+          selectedSubtitleIndex={state.selectedSubtitleIndex}
+          onPlayheadChange={setPlayhead}
+          onPlayingChange={setPlaying}
+          onSelectSubtitle={selectSubtitle}
+          onUpdateSubtitlePosition={handleSubtitlePositionChange}
+          onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+          onClose={() => setIsFullscreen(false)}
+        />
+      )}
     </div>
   );
 }
