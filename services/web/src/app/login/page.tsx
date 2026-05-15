@@ -31,18 +31,21 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center bg-grayscale-10">
       {/* Left navy panel — visible on lg and above */}
       <div
-        className="hidden lg:flex flex-col items-center justify-center bg-heimdex-navy-500 shadow-left-pane shrink-0 overflow-x-auto overflow-y-clip"
+        className="hidden lg:flex flex-col items-center justify-center bg-heimdex-navy-500 shadow-left-pane shrink-0"
         style={{
+          display: "flex",
           width: "856px",
           height: "1024px",
-          maxWidth: "856px",
           minWidth: "564px",
+          maxWidth: "856px",
+          padding: "372px 259px",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: "10px",
+          flexShrink: 0,
           borderTopRightRadius: "40px",
           borderBottomRightRadius: "40px",
-          paddingLeft: "259px",
-          paddingRight: "259px",
-          paddingTop: "372px",
-          paddingBottom: "372px",
         }}
       >
         <LoginLogoWhite />
