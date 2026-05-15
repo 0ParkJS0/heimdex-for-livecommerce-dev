@@ -168,8 +168,6 @@ scripts/seed_output/
 services/api/reports/
 services/api/tests/shorts_auto_product/eval/llm_cache/
 
-# Figma REST API raw cache (~17MB, re-fetchable via .figma-cache/fetch-nodes.sh)
-# 작은 MCP 캐시(*_wizard-criteria.json 등)는 커밋 유지, raw .api.json만 무시
-.figma-cache/*.api.json
-.figma-cache/_all-nodes-raw.json
-.figma-cache/_images-*.json
+# Figma 캐시 통째로 무시 (로컬 전용). fetch-nodes.sh 스크립트만 커밋 유지.
+.figma-cache/*
+!.figma-cache/fetch-nodes.sh
