@@ -464,10 +464,43 @@ axis6 보고
 |---|---|
 | 동영상 목록 | `/videos` |
 | 동영상 상세 / 개요 (Phase 1) | `/videos/[videoId]` |
+| 장면 분석 / 세로 썸네일 (Phase 1 + axis6) | `/videos/[videoId]?view=scenes` (설정에서 세로 모드 토글) |
 | AI 쇼츠 Wizard - 옵션 (Phase 2) | `/export/shorts/auto/wizard/[videoId]/criteria` |
 | AI 쇼츠 Wizard - 상품 선택 (Phase 2) | `/export/shorts/auto/wizard/[videoId]/select-product` |
-| AI 쇼츠 Wizard - 결과 (Phase 3) | `/export/shorts/auto/wizard/[videoId]/result/[parentJobId]` |
+| AI 쇼츠 Wizard - 인덱싱 진행 (Phase 2 + axis7a) | `/export/shorts/auto/wizard/[videoId]/result/[parentJobId]` (children 없을 때) |
+| AI 쇼츠 Wizard - 결과 (Phase 3) | `/export/shorts/auto/wizard/[videoId]/result/[parentJobId]` (children 있을 때) |
 | 내 쇼츠 (Phase 4) | `/shorts` |
+| 쇼츠 편집 (Phase 5) | `/shorts/editor?clip=[renderJobId]` 또는 `/export/shorts/auto/wizard/[videoId]/result/[parentJobId]/edit-clips?clip=[id]` |
+
+### 8.4 빈 DB일 때 mock 데이터 시드
+편집·결과·내쇼츠 페이지를 보려면 DB에 영상/씬/주문 데이터가 필요. 빈 DB일 경우 다음 중 하나:
+
+**A. docker-compose 환경 (권장 — Makefile 타겟)**
+```bash
+cd "/mnt/c/Users/yes21/Desktop/_LV.UP/_LEVEL_UP/PROJECT/[HEIMDEX]/heimdex-for-livecommerce-dev"
+make seed
+# 내부적으로:
+#   docker compose exec -T api alembic upgrade head
+#   docker compose exec -T api python -m app.seed
+```
+
+**B. 호스트에서 직접 실행 (uvicorn으로 API 띄울 때)**
+```bash
+cd services/api
+alembic upgrade head
+python -m app.seed
+```
+
+**시드 산출물** (`services/api/app/seed.py` + `services/api/app/db/seed/fixtures/`):
+- Org / User / Library / Profile / DriveConnection 기본 세트
+- 사람(People) 식별 + face exemplar mock
+- 영상(DriveFile) + Scene + 화자 transcript mock
+- text_templates 기본 셋
+- OpenSearch 임베딩은 `generate_mock_embedding` 으로 mock
+
+**시드 실패 시**:
+- alembic 마이그레이션 충돌 → `docker compose down -v` 로 DB 볼륨 초기화 후 재시도
+- OpenSearch 인덱스 누락 → API 기동 시 자동 생성, 첫 검색 호출까지 대기
 
 ---
 
