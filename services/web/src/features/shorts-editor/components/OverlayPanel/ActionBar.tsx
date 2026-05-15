@@ -35,7 +35,7 @@ export function ActionBar({
       <button
         type="button"
         onClick={onAdd}
-        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
+        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-heimdex-navy-500 px-3 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-heimdex-navy-600"
       >
         <PlusIcon />
         {addLabel}
@@ -47,7 +47,7 @@ export function ActionBar({
           disabled
           title={t.actions.insertImageDisabledTooltip}
           aria-label={t.actions.insertImage}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2.5 text-sm font-medium text-gray-400 cursor-not-allowed"
+          className="flex items-center justify-center gap-1.5 rounded-lg border border-grayscale-200 px-3 py-2.5 text-sm font-medium text-grayscale-400 cursor-not-allowed"
         >
           <ImageIcon />
           {t.actions.insertImage}
@@ -63,7 +63,7 @@ export function ActionBar({
           "flex h-10 w-10 items-center justify-center rounded-lg border transition-colors",
           canDelete
             ? "border-red-300 text-red-500 hover:bg-red-50"
-            : "border-gray-200 text-gray-300 cursor-not-allowed",
+            : "border-grayscale-200 text-grayscale-300 cursor-not-allowed",
         )}
       >
         <TrashIcon />
