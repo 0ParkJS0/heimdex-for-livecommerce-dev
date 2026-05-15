@@ -537,19 +537,34 @@ export function SceneCard({
     ? captionText.slice(0, 100) + "..."
     : captionText;
 
+  const isPortrait = aspectRatio === "9:16";
+  const hashtagChips = (scene.keyword_tags ?? []).slice(0, 3);
+
   return (
     <div
       className={cn(
-        "rounded-xl border bg-white transition-all",
-        isPlaying
-          ? "border-indigo-500 border-l-4 border-l-indigo-500 ring-2 ring-indigo-500/20"
-          : isSelected
-            ? "border-indigo-500 ring-2 ring-indigo-500/20"
-            : "border-gray-200",
+        "rounded-card border bg-white transition-all",
+        isPortrait
+          ? isPlaying
+            ? "border-heimdex-navy-500 border-l-4 border-l-heimdex-navy-500 ring-2 ring-heimdex-navy-500/20"
+            : isSelected
+              ? "border-heimdex-navy-500 ring-2 ring-heimdex-navy-500/20"
+              : "border-grayscale-100"
+          : isPlaying
+            ? "rounded-xl border-indigo-500 border-l-4 border-l-indigo-500 ring-2 ring-indigo-500/20"
+            : isSelected
+              ? "rounded-xl border-indigo-500 ring-2 ring-indigo-500/20"
+              : "rounded-xl border-gray-200",
       )}
     >
       <div className="flex gap-0">
-        <div className={cn("flex-shrink-0", getDetailThumbnailClass(aspectRatio))}>
+        <div
+          className={cn(
+            "flex-shrink-0",
+            getDetailThumbnailClass(aspectRatio),
+            isPortrait && "w-[180px] flex flex-col",
+          )}
+        >
           <button
             type="button"
             onClick={() => onSeek?.(scene.start_ms)}
@@ -572,6 +587,25 @@ export function SceneCard({
               </svg>
             </div>
           </button>
+          {isPortrait && (
+            <div className="flex flex-col gap-2 px-2.5 pt-2.5">
+              {/* NOTE(axis6-relevance-score-tbd): scene-level search relevance score not yet
+                  exposed on VideoScene — chip hidden until backend wires it through. */}
+              {hashtagChips.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {hashtagChips.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex max-w-full items-center truncate rounded-md border border-heimdex-navy-500 px-1.5 py-0.5 text-[11px] leading-none text-heimdex-navy-500"
+                      title={tag}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex-1 min-w-0 p-4">
