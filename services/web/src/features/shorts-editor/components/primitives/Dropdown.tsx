@@ -44,7 +44,7 @@ export function Dropdown<T extends string | number>({
       disabled={disabled}
       aria-label={ariaLabel}
       className={cn(
-        "rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-50",
+        "rounded-lg border border-grayscale-200 bg-white px-3 py-2 text-sm text-grayscale-800 focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500 disabled:cursor-not-allowed disabled:bg-grayscale-100",
         className,
       )}
     >

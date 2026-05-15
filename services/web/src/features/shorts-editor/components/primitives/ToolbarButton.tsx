@@ -36,10 +36,10 @@ export function ToolbarButton({
       aria-pressed={active}
       title={tooltip ?? ariaLabel}
       className={cn(
-        "flex h-8 w-8 items-center justify-center rounded text-gray-700 transition-colors",
+        "flex h-8 w-8 items-center justify-center rounded text-grayscale-500 transition-colors",
         active
-          ? "bg-gray-200 text-gray-900"
-          : "hover:bg-gray-100",
+          ? "bg-grayscale-200 text-grayscale-800"
+          : "hover:bg-grayscale-100",
         disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
         className,
       )}

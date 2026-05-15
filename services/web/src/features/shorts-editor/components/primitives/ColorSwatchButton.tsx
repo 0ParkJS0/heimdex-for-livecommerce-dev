@@ -31,7 +31,7 @@ export function ColorSwatchButton({
   return (
     <label
       className={cn(
-        "relative inline-flex cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white p-0.5",
+        "relative inline-flex cursor-pointer items-center justify-center rounded-lg border border-grayscale-200 bg-white p-0.5",
         size === "sm" ? "h-7 w-7" : "h-9 w-9",
         disabled && "cursor-not-allowed opacity-40",
         className,

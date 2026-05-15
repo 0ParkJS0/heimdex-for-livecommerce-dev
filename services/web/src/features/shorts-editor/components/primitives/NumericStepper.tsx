@@ -37,7 +37,7 @@ export function NumericStepper({
   return (
     <div
       className={cn(
-        "flex items-center rounded-lg border border-gray-200 bg-white",
+        "flex items-center rounded-lg border border-grayscale-200 bg-white",
         disabled && "opacity-60",
         className,
       )}
@@ -47,7 +47,7 @@ export function NumericStepper({
         type="button"
         onClick={() => onChange(clamp(value - step))}
         disabled={disabled || value <= min}
-        className="flex h-8 w-8 items-center justify-center text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300"
+        className="flex h-8 w-8 items-center justify-center text-grayscale-500 transition-colors hover:text-grayscale-800 disabled:cursor-not-allowed disabled:text-grayscale-300"
         aria-label="감소"
       >
         −
@@ -63,16 +63,16 @@ export function NumericStepper({
           onChange(clamp(next));
         }}
         disabled={disabled}
-        className="w-full min-w-0 border-x border-transparent bg-transparent py-1 text-center text-sm text-gray-900 focus:border-indigo-200 focus:outline-none disabled:cursor-not-allowed"
+        className="w-full min-w-0 border-x border-transparent bg-transparent py-1 text-center text-sm text-grayscale-800 focus:border-heimdex-navy-400 focus:outline-none disabled:cursor-not-allowed"
       />
       {unit && (
-        <span className="px-1 text-[10px] text-gray-400 select-none">{unit}</span>
+        <span className="px-1 text-[10px] text-grayscale-400 select-none">{unit}</span>
       )}
       <button
         type="button"
         onClick={() => onChange(clamp(value + step))}
         disabled={disabled || value >= max}
-        className="flex h-8 w-8 items-center justify-center text-gray-500 transition-colors hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300"
+        className="flex h-8 w-8 items-center justify-center text-grayscale-500 transition-colors hover:text-grayscale-800 disabled:cursor-not-allowed disabled:text-grayscale-300"
         aria-label="증가"
       >
         +
