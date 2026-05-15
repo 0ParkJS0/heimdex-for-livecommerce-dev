@@ -372,17 +372,17 @@ export function ShortsEditorPage() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-indigo-500" />
+      <div className="flex min-h-screen items-center justify-center bg-grayscale-10">
+        <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-heimdex-navy-500" />
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50">
-        <p className="text-sm text-red-600">{loadError}</p>
-        <Link href="/export/shorts" className="text-sm text-indigo-600 hover:text-indigo-700">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-grayscale-10">
+        <p className="text-sm text-red-h-500">{loadError}</p>
+        <Link href="/export/shorts" className="text-sm text-heimdex-navy-500 hover:text-heimdex-navy-600">
           <span className="inline-flex items-center gap-1.5">
             <BackArrowIcon />
             쇼츠 목록으로 돌아가기
@@ -394,7 +394,7 @@ export function ShortsEditorPage() {
 
 
   return (
-    <div className="font-pretendard h-screen overflow-hidden bg-gray-100">
+    <div className="font-pretendard h-screen overflow-hidden bg-grayscale-10">
       <EditorHeader
         videoTitle={meta?.video_title ?? null}
         title={title}
