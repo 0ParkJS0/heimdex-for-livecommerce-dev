@@ -112,7 +112,7 @@ export function OverlayPanel({
 
   return (
     <div className="flex h-full flex-col bg-white">
-      <div className="flex items-center gap-4 border-b border-gray-200 px-4 pt-4">
+      <div className="flex items-center gap-4 border-b border-grayscale-200 px-4 pt-4">
         <TabButton active={tab === "text"} onClick={() => setTab("text")}>
           {t.tabs.text}
         </TabButton>
@@ -135,7 +135,7 @@ export function OverlayPanel({
         />
 
         {selectedForTab == null ? (
-          <p className="rounded-lg bg-gray-50 px-3 py-8 text-center text-xs text-gray-400">
+          <p className="rounded-lg bg-grayscale-10 px-3 py-8 text-center text-xs text-grayscale-400">
             {t.empty.panelHint}
           </p>
         ) : selectedForTab.kind === "text" ? (
@@ -197,8 +197,8 @@ function TabButton({
       className={cn(
         "pb-2 text-sm transition-colors",
         active
-          ? "border-b-2 border-indigo-600 font-semibold text-gray-900"
-          : "border-b-2 border-transparent font-medium text-gray-400 hover:text-gray-600",
+          ? "border-b-2 border-heimdex-navy-500 font-semibold text-grayscale-800"
+          : "border-b-2 border-transparent font-medium text-grayscale-400 hover:text-grayscale-800",
       )}
     >
       {children}
@@ -225,7 +225,7 @@ function TextEditingBody({
         placeholder={t.text.contentPlaceholder}
         rows={3}
         maxLength={500}
-        className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        className="w-full resize-none rounded-lg border border-grayscale-200 bg-white px-3 py-2 text-sm text-grayscale-800 placeholder-grayscale-400 focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
       />
 
       <div className="grid grid-cols-[1fr_120px] gap-2">
@@ -248,14 +248,14 @@ function TextEditingBody({
 
       <TextToolbar overlay={overlay} onChange={onUpdate} />
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
       <TransformSection
         overlay={overlay}
         onChange={(transform: TransformProps) => onUpdate({ transform })}
       />
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
       <EffectsSection
         effects={overlay.effects}
@@ -286,14 +286,14 @@ function BackgroundEditingBody({
         onReorder={onReorder}
       />
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
       <TransformSection
         overlay={overlay}
         onChange={(transform: TransformProps) => onUpdate({ transform })}
       />
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
       <EffectsSection
         effects={overlay.effects}
@@ -321,11 +321,11 @@ function NumericFieldWithUnit({
   onChange: (v: number) => void;
 }) {
   return (
-    <div className="flex items-center rounded-lg border border-gray-200 bg-white">
+    <div className="flex items-center rounded-lg border border-grayscale-200 bg-white">
       <button
         type="button"
         onClick={() => onChange(Math.max(min, value - 1))}
-        className="flex h-9 w-7 items-center justify-center text-gray-500 hover:text-gray-900"
+        className="flex h-9 w-7 items-center justify-center text-grayscale-500 hover:text-grayscale-800"
       >
         −
       </button>
@@ -338,13 +338,13 @@ function NumericFieldWithUnit({
           if (!Number.isFinite(raw)) return;
           onChange(Math.min(max, Math.max(min, raw)));
         }}
-        className="w-full min-w-0 border-x border-transparent bg-transparent py-1 text-center text-sm text-gray-900 focus:outline-none"
+        className="w-full min-w-0 border-x border-transparent bg-transparent py-1 text-center text-sm text-grayscale-800 focus:outline-none"
       />
-      <span className="px-1 text-[10px] text-gray-400">{unit}</span>
+      <span className="px-1 text-[10px] text-grayscale-400">{unit}</span>
       <button
         type="button"
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="flex h-9 w-7 items-center justify-center text-gray-500 hover:text-gray-900"
+        className="flex h-9 w-7 items-center justify-center text-grayscale-500 hover:text-grayscale-800"
       >
         +
       </button>
@@ -363,7 +363,7 @@ function OverlaySelectorRow({
     (a, b) => b.layerIndex - a.layerIndex,
   );
   return (
-    <div className="border-t border-gray-200 p-2">
+    <div className="border-t border-grayscale-200 p-2">
       <div className="flex flex-wrap gap-1">
         {sorted.map((o) => (
           <button
@@ -373,8 +373,8 @@ function OverlaySelectorRow({
             className={cn(
               "rounded border px-2 py-1 text-[10px]",
               state.selectedOverlayId === o.id
-                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                : "border-gray-200 text-gray-600 hover:bg-gray-50",
+                ? "border-heimdex-navy-400 bg-grayscale-10 text-heimdex-navy-500"
+                : "border-grayscale-200 text-grayscale-500 hover:bg-grayscale-10",
             )}
           >
             {o.kind === "text"
