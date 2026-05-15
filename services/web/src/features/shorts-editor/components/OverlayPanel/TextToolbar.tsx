@@ -73,7 +73,7 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
         <UnderlineIcon />
       </ToolbarButton>
 
-      <span className="mx-1 h-5 w-px bg-gray-200" />
+      <span className="mx-1 h-5 w-px bg-grayscale-200" />
 
       {/* Alignment cycle: hidden details — clicking advances left → center → right */}
       <ToolbarButton
@@ -90,9 +90,9 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
       >
         {alignIcon}
       </ToolbarButton>
-      <ChevronDownIcon className="h-3 w-3 text-gray-400" />
+      <ChevronDownIcon className="h-3 w-3 text-grayscale-400" />
 
-      <span className="mx-1 h-5 w-px bg-gray-200" />
+      <span className="mx-1 h-5 w-px bg-grayscale-200" />
 
       {/* Line spacing — dropdown */}
       <ToolbarButton ariaLabel={t.text.lineSpacing}>
@@ -109,7 +109,7 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
         className="!px-1.5 !py-1 !text-xs"
       />
 
-      <span className="mx-1 h-5 w-px bg-gray-200" />
+      <span className="mx-1 h-5 w-px bg-grayscale-200" />
 
       {/* Font color — A icon with a thin red-underline hint, native picker */}
       <div className="relative">
