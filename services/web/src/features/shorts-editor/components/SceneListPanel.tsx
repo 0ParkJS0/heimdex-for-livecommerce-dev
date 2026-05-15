@@ -81,7 +81,7 @@ export function SceneListPanel({
                 type="button"
                 onClick={onExport}
                 disabled={activeCount === 0}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-grayscale-200 bg-white px-3 py-1.5 text-xs font-semibold text-grayscale-800 transition-colors hover:bg-grayscale-10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 내보내기
               </button>
@@ -91,7 +91,7 @@ export function SceneListPanel({
                 type="button"
                 onClick={() => selectedClipIndex != null && onPreview(selectedClipIndex)}
                 disabled={selectedClipIndex == null}
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg bg-heimdex-navy-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-heimdex-navy-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 미리보기
               </button>
@@ -120,10 +120,10 @@ export function SceneListPanel({
                 if (e.key === "Enter" && isActive && clipIdx != null) onSelectClip(clipIdx);
               }}
               className={cn(
-                "w-full cursor-pointer border-b border-gray-100 p-3 text-left transition-colors hover:bg-gray-50",
-                isActive && !isSelected && "border-l-4 border-l-indigo-300 bg-indigo-50/30",
+                "w-full cursor-pointer border-b border-grayscale-100 p-3 text-left transition-colors hover:bg-grayscale-10",
+                isActive && !isSelected && "border-l-4 border-l-heimdex-navy-400 bg-grayscale-10",
                 isSelected &&
-                  "border-l-4 border-l-blue-500 bg-blue-50/60 ring-1 ring-inset ring-blue-300",
+                  "border-l-4 border-l-heimdex-navy-500 bg-grayscale-10 ring-1 ring-inset ring-heimdex-navy-400",
               )}
             >
               <div className="flex items-start gap-3">
@@ -139,8 +139,8 @@ export function SceneListPanel({
                   className={cn(
                     "mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 transition-colors",
                     isActive
-                      ? "border-blue-500 bg-blue-500 hover:border-blue-600 hover:bg-blue-600"
-                      : "border-gray-300 bg-white hover:border-blue-400",
+                      ? "border-heimdex-navy-500 bg-heimdex-navy-500 hover:border-heimdex-navy-600 hover:bg-heimdex-navy-600"
+                      : "border-grayscale-300 bg-white hover:border-heimdex-navy-400",
                   )}
                 >
                   {isActive && (
