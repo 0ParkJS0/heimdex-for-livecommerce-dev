@@ -66,7 +66,7 @@ function TimestampInput({ playheadMs, onSeek }: { playheadMs: number; onSeek: (m
           if (e.key === "Escape") setEditing(false);
         }}
         autoFocus
-        className="w-16 rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-center text-[10px] font-mono text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+        className="w-16 rounded border border-heimdex-navy-400 bg-white px-1.5 py-0.5 text-center text-[10px] font-mono text-grayscale-800 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
       />
     );
   }
@@ -78,7 +78,7 @@ function TimestampInput({ playheadMs, onSeek }: { playheadMs: number; onSeek: (m
         setInputValue(displayValue);
         setEditing(true);
       }}
-      className="w-16 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-center text-[10px] font-mono text-gray-600 hover:border-indigo-300 hover:text-gray-800"
+      className="w-16 rounded border border-grayscale-200 bg-white px-1.5 py-0.5 text-center text-[10px] font-mono text-grayscale-500 hover:border-heimdex-navy-400 hover:text-grayscale-800"
     >
       {displayValue}
     </button>
