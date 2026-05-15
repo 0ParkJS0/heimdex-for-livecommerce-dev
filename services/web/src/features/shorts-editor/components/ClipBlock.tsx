@@ -9,7 +9,7 @@ import { msToPixels, getClipDuration, formatTimelineTimestamp } from "../lib/tim
 import { useClipTrim } from "../hooks/useClipTrim";
 
 // Single uniform dark surface; per-clip identity comes from the thumbnail.
-const CLIP_BLOCK_BG = "bg-gray-800";
+const CLIP_BLOCK_BG = "bg-grayscale-800";
 
 interface ClipBlockProps {
   clip: EditorClip;

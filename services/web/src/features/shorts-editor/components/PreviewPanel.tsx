@@ -445,7 +445,7 @@ export function PreviewPanel({
 
         {/* No clips placeholder */}
         {clips.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+          <div className="absolute inset-0 flex items-center justify-center text-grayscale-500">
             <span className="text-xs">장면을 추가하세요</span>
           </div>
         )}
