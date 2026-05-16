@@ -61,6 +61,20 @@ _DEFAULT_MAX_OUTPUT_TOKENS = 200
 # at a multi-MB original frame.
 _MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
+# Fallback for the contracts no-image template until the contracts
+# release lands. CI/prod run against the PyPI-published contracts,
+# which predates AliasGenerationPrompt.USER_TEMPLATE_NO_IMAGE; the
+# getattr in _build_messages_text_only prefers the contracts copy
+# once released. TODO: remove after the contracts release that
+# ships USER_TEMPLATE_NO_IMAGE.
+_FALLBACK_USER_TEMPLATE_NO_IMAGE = (
+    "Generate spoken-form aliases for the following product. "
+    "No reference image is available — infer from the label "
+    "text alone.\n"
+    "\n"
+    "Product label (from vision LLM reading the packaging): {label}"
+)
+
 
 # JSON schema for OpenAI's structured-output mode. Hand-rolled (not
 # auto-derived from AliasGenerationResponse) because OpenAI's strict
@@ -271,10 +285,18 @@ class AliasGenerator:
     def _build_messages_text_only(
         self, *, label: str,
     ) -> list[dict[str, Any]]:
-        """No-image variant — label only, no image_url content part."""
-        user_text = AliasGenerationPrompt.USER_TEMPLATE_NO_IMAGE.format(
-            label=label,
+        """No-image variant — label only, no image_url content part.
+
+        getattr fallback: CI/prod run against the PyPI contracts,
+        which may predate USER_TEMPLATE_NO_IMAGE. Once the contracts
+        release lands the attribute exists and is preferred.
+        """
+        template = getattr(
+            AliasGenerationPrompt,
+            "USER_TEMPLATE_NO_IMAGE",
+            _FALLBACK_USER_TEMPLATE_NO_IMAGE,
         )
+        user_text = template.format(label=label)
         return [
             {"role": "system", "content": AliasGenerationPrompt.SYSTEM},
             {"role": "user", "content": user_text},
