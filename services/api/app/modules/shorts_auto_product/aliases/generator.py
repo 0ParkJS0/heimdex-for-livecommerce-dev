@@ -144,19 +144,27 @@ class AliasGenerator:
     async def generate(
         self,
         *,
-        canonical_crop_s3_key: str,
+        canonical_crop_s3_key: str | None,
         llm_label: str,
     ) -> AliasGenerationResult:
         """Generate aliases for one catalog entry.
 
-        Raises :class:`AliasGenerationTerminal` if the S3 image is
-        missing / malformed, or if the LLM output cannot be coerced
-        into :class:`AliasGenerationResponse`. Raises
+        When ``canonical_crop_s3_key`` is falsy, runs in text-only
+        mode (no S3 fetch, label-only prompt). Raises
+        :class:`AliasGenerationTerminal` if the S3 image (when
+        present) is missing/malformed, or if the LLM output cannot
+        be coerced into :class:`AliasGenerationResponse`. Raises
         :class:`AliasGenerationRetryable` for transient OpenAI errors.
         """
-        image_bytes = self._download_crop(canonical_crop_s3_key)
-        data_url = _to_data_url(image_bytes)
-        messages = self._build_messages(data_url=data_url, label=llm_label)
+
+        if canonical_crop_s3_key:
+            image_bytes = self._download_crop(canonical_crop_s3_key)
+            data_url = _to_data_url(image_bytes)
+            messages = self._build_messages(
+                data_url=data_url, label=llm_label,
+            )
+        else:
+            messages = self._build_messages_text_only(label=llm_label)
 
         start = time.monotonic()
         try:
@@ -259,6 +267,17 @@ class AliasGenerator:
                     },
                 ],
             },
+        ]
+    def _build_messages_text_only(
+        self, *, label: str,
+    ) -> list[dict[str, Any]]:
+        """No-image variant — label only, no image_url content part."""
+        user_text = AliasGenerationPrompt.USER_TEMPLATE_NO_IMAGE.format(
+            label=label,
+        )
+        return [
+            {"role": "system", "content": AliasGenerationPrompt.SYSTEM},
+            {"role": "user", "content": user_text},
         ]
 
 
