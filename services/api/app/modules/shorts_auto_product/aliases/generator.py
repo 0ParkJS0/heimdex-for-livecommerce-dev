@@ -61,6 +61,20 @@ _DEFAULT_MAX_OUTPUT_TOKENS = 200
 # at a multi-MB original frame.
 _MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
+# Fallback for the contracts no-image template until the contracts
+# release lands. CI/prod run against the PyPI-published contracts,
+# which predates AliasGenerationPrompt.USER_TEMPLATE_NO_IMAGE; the
+# getattr in _build_messages_text_only prefers the contracts copy
+# once released. TODO: remove after the contracts release that
+# ships USER_TEMPLATE_NO_IMAGE.
+_FALLBACK_USER_TEMPLATE_NO_IMAGE = (
+    "Generate spoken-form aliases for the following product. "
+    "No reference image is available — infer from the label "
+    "text alone.\n"
+    "\n"
+    "Product label (from vision LLM reading the packaging): {label}"
+)
+
 
 # JSON schema for OpenAI's structured-output mode. Hand-rolled (not
 # auto-derived from AliasGenerationResponse) because OpenAI's strict
@@ -144,19 +158,27 @@ class AliasGenerator:
     async def generate(
         self,
         *,
-        canonical_crop_s3_key: str,
+        canonical_crop_s3_key: str | None,
         llm_label: str,
     ) -> AliasGenerationResult:
         """Generate aliases for one catalog entry.
 
-        Raises :class:`AliasGenerationTerminal` if the S3 image is
-        missing / malformed, or if the LLM output cannot be coerced
-        into :class:`AliasGenerationResponse`. Raises
+        When ``canonical_crop_s3_key`` is falsy, runs in text-only
+        mode (no S3 fetch, label-only prompt). Raises
+        :class:`AliasGenerationTerminal` if the S3 image (when
+        present) is missing/malformed, or if the LLM output cannot
+        be coerced into :class:`AliasGenerationResponse`. Raises
         :class:`AliasGenerationRetryable` for transient OpenAI errors.
         """
-        image_bytes = self._download_crop(canonical_crop_s3_key)
-        data_url = _to_data_url(image_bytes)
-        messages = self._build_messages(data_url=data_url, label=llm_label)
+
+        if canonical_crop_s3_key:
+            image_bytes = self._download_crop(canonical_crop_s3_key)
+            data_url = _to_data_url(image_bytes)
+            messages = self._build_messages(
+                data_url=data_url, label=llm_label,
+            )
+        else:
+            messages = self._build_messages_text_only(label=llm_label)
 
         start = time.monotonic()
         try:
@@ -259,6 +281,25 @@ class AliasGenerator:
                     },
                 ],
             },
+        ]
+    def _build_messages_text_only(
+        self, *, label: str,
+    ) -> list[dict[str, Any]]:
+        """No-image variant — label only, no image_url content part.
+
+        getattr fallback: CI/prod run against the PyPI contracts,
+        which may predate USER_TEMPLATE_NO_IMAGE. Once the contracts
+        release lands the attribute exists and is preferred.
+        """
+        template = getattr(
+            AliasGenerationPrompt,
+            "USER_TEMPLATE_NO_IMAGE",
+            _FALLBACK_USER_TEMPLATE_NO_IMAGE,
+        )
+        user_text = template.format(label=label)
+        return [
+            {"role": "system", "content": AliasGenerationPrompt.SYSTEM},
+            {"role": "user", "content": user_text},
         ]
 
 
