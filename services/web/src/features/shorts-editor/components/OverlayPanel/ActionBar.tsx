@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ColorPalettePopover } from "../primitives/ColorPalettePopover";
+import { ColorPalettePortal } from "../primitives/ColorPalettePortal";
 import { ImageIcon, PlusIcon } from "../primitives/icons";
 import { t } from "../../lib/i18n/strings";
 import type { EditorOverlayKind } from "../../lib/overlay-types";
@@ -36,6 +37,7 @@ export function ActionBar({
 }: ActionBarProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingFill, setPendingFill] = useState(DEFAULT_BG_FILL);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const handleAddClick = () => {
     if (kind === "text") {
@@ -49,6 +51,7 @@ export function ActionBar({
     <div className="flex items-stretch gap-2">
       <div className="relative flex flex-1">
         <button
+          ref={triggerRef}
           type="button"
           onClick={handleAddClick}
           aria-haspopup={kind === "background" ? "dialog" : undefined}
@@ -59,9 +62,10 @@ export function ActionBar({
           {kind === "text" ? t.actions.addText : t.actions.addBackground}
         </button>
         {kind === "background" && pickerOpen && (
-          // 우측 wrapper 안쪽으로 펼쳐지도록 right-0 기준 — wrapper 가 653×841
-          // 고정폭이 되면서 좌측 기준이면 팔레트가 우측을 넘어 잘렸다.
-          <div className="absolute right-0 top-full z-50 mt-2">
+          // Portalled so the popover escapes the right-wrapper's
+          // overflow-y-auto scroll surface. Positioning is anchored to
+          // the trigger button via ColorPalettePortal.
+          <ColorPalettePortal anchorRef={triggerRef} onClose={() => setPickerOpen(false)}>
             <ColorPalettePopover
               color={pendingFill}
               onChange={(next) => {
@@ -73,7 +77,7 @@ export function ActionBar({
               onClose={() => setPickerOpen(false)}
               showOpacity={false}
             />
-          </div>
+          </ColorPalettePortal>
         )}
       </div>
 

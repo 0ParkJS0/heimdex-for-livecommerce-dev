@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -46,20 +46,16 @@ export function ColorPalettePopover({
   onClose,
   showOpacity = true,
 }: ColorPalettePopoverProps) {
-  const ref = useRef<HTMLDivElement>(null);
   const [localOpacity, setLocalOpacity] = useState(opacity);
 
   useEffect(() => setLocalOpacity(opacity), [opacity]);
 
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [onClose]);
+  // Click-outside / scroll tracking is handled by the wrapping
+  // ColorPalettePortal — the popover itself stays presentational so the
+  // same component can be rendered through the portal (preferred) or
+  // anchored inline (legacy callers) without double-binding the document
+  // mousedown listener (which caused an open/close race on the swatch
+  // trigger).
 
   const handleOpacity = useCallback(
     (value: number) => {
@@ -73,7 +69,6 @@ export function ColorPalettePopover({
 
   return (
     <div
-      ref={ref}
       // figma 1602:41332 — 260×p-[20px] white card, gap-[16px] between sections.
       className="flex w-[260px] flex-col gap-[16px] rounded-[20px] bg-white p-[20px] shadow-[2px_2px_20px_0px_rgba(0,0,0,0.25)]"
     >
