@@ -1000,6 +1000,7 @@ function ScenesPanel({
         </div>
       </form>
 
+
       <div className="mt-6 flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h3 className="text-lg font-bold text-gray-900">결과</h3>
