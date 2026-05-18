@@ -494,7 +494,27 @@ export function generateSubtitlesFromTranscript(
   }
 
   if (turnsWithTs.length > 0) {
-    // Timestamp-based: chunk each turn, distribute chunks within the turn's time slot
+    // Timestamp-based: chunk each turn, distribute chunks within the
+    // turn's time slot. 2026-05-18 — three accuracy improvements over
+    // the previous even-split:
+    //
+    //   1. ``slotDuration`` no longer caps at 9s (was
+    //      ``DEFAULT_SUBTITLE_DURATION_MS * 3``). A long monologue used
+    //      to leave the back of the turn silent because chunks ran out
+    //      after 9s; now the chunks fill all the way to the next
+    //      turn's timestamp (or clip end).
+    //   2. Per-chunk duration is weighted by character count rather
+    //      than split evenly. Korean speech runs ≈ 7 chars/sec, so
+    //      sentence-length variance maps to time-length variance —
+    //      short clauses get short subtitles and long sentences get
+    //      proportionally longer ones. Lower bound 800ms keeps very
+    //      short chunks readable; upper bound 4000ms prevents one
+    //      sentence dominating a long turn.
+    //   3. Per-chunk ceiling (PER_CHUNK_MAX_MS) caps the longest
+    //      individual subtitle at 4s so a 30s-turn monologue still
+    //      reads in digestible bites, even after the 9s cap is gone.
+    const PER_CHUNK_MIN_MS = 800;
+    const PER_CHUNK_MAX_MS = 4000;
     for (let i = 0; i < turnsWithTs.length; i++) {
       const { turn, ms: offsetMs } = turnsWithTs[i];
       const relativeMs = interpretMs(offsetMs);
@@ -503,15 +523,24 @@ export function generateSubtitlesFromTranscript(
       const nextRelative = i + 1 < turnsWithTs.length
         ? interpretMs(turnsWithTs[i + 1].ms)
         : clipDuration;
-      const slotDuration = Math.min(nextRelative - relativeMs, DEFAULT_SUBTITLE_DURATION_MS * 3);
+      const slotDuration = Math.max(0, nextRelative - relativeMs);
 
       const chunks = chunkSubtitleText(turn.text);
-      const chunkDuration = Math.max(800, Math.floor(slotDuration / chunks.length));
+      if (chunks.length === 0) continue;
+      const totalChars = chunks.reduce((sum, c) => sum + c.length, 0) || 1;
 
+      let cursor = relativeMs;
       for (let j = 0; j < chunks.length; j++) {
-        const startMs = relativeMs + j * chunkDuration;
-        if (startMs >= clipDuration) break;
-        const endMs = Math.min(startMs + chunkDuration, clipDuration);
+        if (cursor >= clipDuration) break;
+        // Weighted slice of the turn's time slot.
+        const share = chunks[j].length / totalChars;
+        const ideal = Math.floor(slotDuration * share);
+        const duration = Math.min(
+          PER_CHUNK_MAX_MS,
+          Math.max(PER_CHUNK_MIN_MS, ideal),
+        );
+        const startMs = cursor;
+        const endMs = Math.min(startMs + duration, clipDuration);
 
         subtitles.push({
           id: generateSubtitleId(),
@@ -520,6 +549,7 @@ export function generateSubtitlesFromTranscript(
           endMs: clip.timelineStartMs + endMs,
           style: { ...style },
         });
+        cursor = endMs;
       }
     }
   }
