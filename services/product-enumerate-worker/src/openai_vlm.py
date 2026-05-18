@@ -325,7 +325,12 @@ class OpenAIVlmClient:
                 if err is not None:
                     failed += 1
                     logger.warning(
-                        "label_crop_failed_falling_back_to_owl_query",
+                        "label_crop_failed_falling_back_to_owl_query "
+                        "scene=%s frame=%s owl_query=%s err=%s",
+                        scene_id,
+                        frame_idx,
+                        query,
+                        err,
                         extra={
                             "scene_id": scene_id,
                             "frame_idx": frame_idx,
