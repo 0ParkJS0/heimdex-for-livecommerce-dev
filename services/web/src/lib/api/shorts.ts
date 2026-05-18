@@ -63,3 +63,34 @@ export async function generateShortsPlan(
     getToken,
   );
 }
+
+// ----------------------------------------------------------------------
+// POST /api/shorts — create a SavedShort row that surfaces in
+// /export/shorts. Backend requires non-empty scene_ids; callers typically
+// derive them from a CompositionResponse via /api/shorts/{id}/composition.
+// ----------------------------------------------------------------------
+
+export interface SavedShortCreateBody {
+  video_id: string;
+  scene_ids: string[];
+  title?: string | null;
+  start_ms?: number | null;
+  end_ms?: number | null;
+}
+
+export interface SavedShortResponse {
+  id: string;
+  video_id: string;
+  scene_ids: string[];
+  title: string | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  created_at: string;
+}
+
+export async function createSavedShort(
+  body: SavedShortCreateBody,
+  getToken?: TokenGetter,
+): Promise<SavedShortResponse> {
+  return apiPost<SavedShortResponse>("/api/shorts", body, getToken);
+}

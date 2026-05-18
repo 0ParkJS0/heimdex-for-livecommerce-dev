@@ -170,6 +170,34 @@ export async function cancelScanOrder(
 }
 
 // ----------------------------------------------------------------------
+// POST /api/shorts/auto/jobs/{job_id}/cancel
+//
+// Per-child cancel — cooperatively marks a single scan/clip job as
+// ``cancelled``. The worker drops out at its next heartbeat. Already-
+// terminal jobs return 404 and we treat that as success.
+// ----------------------------------------------------------------------
+
+export async function cancelAutoShortJob(
+  jobId: string,
+  tokenGetter: TokenGetter,
+): Promise<void> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/shorts/auto/jobs/${encodeURIComponent(jobId)}/cancel`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: await authHeader(tokenGetter),
+    },
+  );
+  if (res.status === 404) {
+    return;
+  }
+  if (!res.ok) {
+    throw new Error(`cancelAutoShortJob failed: ${await detailMessage(res)}`);
+  }
+}
+
+// ----------------------------------------------------------------------
 // POST /api/shorts/auto/products/{video_id}/scan
 //
 // V1 enumeration trigger — wizard's product-select step calls this on

@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo } from "react";
-import { msToPixels } from "./timeline-math";
+import { useCallback, useMemo } from "react";
+import { msToPixels, pixelsToMs } from "./timeline-math";
 import type { TimelineMark } from "./types";
 
 interface TimelineRulerProps {
   totalDurationMs: number;
   zoom: number;
+  // When supplied, clicking the ruler seeks the playhead to that
+  // timecode. Mirrors how PlayheadCursor already calls onSeek during
+  // drag — so the same handler also drives the preview/audio sync.
+  onSeek?: (ms: number) => void;
 }
 
 // figma: 1669:49089 — "0s ㆍㆍㆍㆍ 1s ㆍㆍㆍㆍ 2s ㆍ··" pattern. Every
@@ -30,8 +34,23 @@ function formatRulerLabel(ms: number): string {
 // label cadence (1s per major mark) stays constant at zoom ≥ 100.
 const RULER_MIN_EXTENT_MS = 12_000;
 
-export function TimelineRuler({ totalDurationMs, zoom }: TimelineRulerProps) {
+export function TimelineRuler({ totalDurationMs, zoom, onSeek }: TimelineRulerProps) {
   const endMs = Math.max(totalDurationMs + 2000, RULER_MIN_EXTENT_MS);
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onSeek) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ms = Math.max(0, Math.round(pixelsToMs(x, zoom)));
+      // Clamp to the actual content extent so the playhead never lands
+      // past the last clip — the +2000ms padding visible on the ruler
+      // exists only for label legibility.
+      const clampedMs = totalDurationMs > 0 ? Math.min(ms, totalDurationMs) : ms;
+      onSeek(clampedMs);
+    },
+    [onSeek, totalDurationMs, zoom],
+  );
 
   const marks = useMemo(() => {
     let intervalMs: number;
@@ -62,8 +81,11 @@ export function TimelineRuler({ totalDurationMs, zoom }: TimelineRulerProps) {
 
   return (
     <div
-      className="relative h-6 select-none border-b border-grayscale-100 bg-white"
+      className={`relative h-6 select-none border-b border-grayscale-100 bg-white ${onSeek ? "cursor-pointer" : ""}`}
       style={{ width: totalWidth }}
+      onClick={onSeek ? handleClick : undefined}
+      role={onSeek ? "slider" : undefined}
+      aria-label={onSeek ? "타임라인 위치 이동" : undefined}
     >
       {marks.map((mark, idx) => {
         const next = marks[idx + 1];
