@@ -318,7 +318,7 @@ export function InlineWizardProductPanel({
           <h2 className="text-[18px] font-semibold tracking-[-0.45px] text-grayscale-800">
             상품 선택{" "}
             <span className="ml-[4px] text-[14px] font-medium text-grayscale-500">
-              {entries.length}개 중 {selectedCount}/{cap}개 선택
+              {entries.length}개 중 {selectedCount}개 선택
             </span>
           </h2>
           <div className="flex items-center gap-[12px]">
