@@ -189,10 +189,26 @@ function BackgroundOverlayBox({
     overlay.layerIndex,
   );
 
+  // When imageUrl is set the overlay carries a user-picked picture; we
+  // paint it via background-image (cover) over the underlying fillColor
+  // so transparent fills produce a clean image overlay and solid fills
+  // still tint underneath if the operator picked a colour.
   const boxStyle: CSSProperties = {
     width: `${overlay.transform.widthPx ?? 100}px`,
     height: `${overlay.transform.heightPx ?? 60}px`,
     backgroundColor: overlay.fillColor,
+    ...(overlay.imageUrl
+      ? {
+          backgroundImage: `url(${overlay.imageUrl})`,
+          // "contain" keeps the picture's natural aspect ratio inside
+          // the overlay box (2026-05-18 review). Use "cover" instead
+          // when the box has been explicitly sized to the canvas, e.g.
+          // for full-frame stills.
+          backgroundSize: "contain",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }
+      : {}),
     ...(overlay.effects.stroke
       ? {
           outline: `${overlay.effects.stroke.widthPx}px solid ${overlay.effects.stroke.color}`,

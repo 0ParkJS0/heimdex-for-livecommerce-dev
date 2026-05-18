@@ -46,3 +46,9 @@ export const notoSansKR = localFont({
   display: "swap",
   preload: false,
 });
+
+// S-Core Dream / NanumSquare / SUIT / KoPubWorldDotum: declared as
+// explicit @font-face blocks in app/globals.css (sources pointing at
+// /fonts/<NAME>/*.otf under public/). Not routed through next/font so
+// the runtime path is plain static asset loading — easier to verify
+// in the network panel and immune to build-time hashing edge cases.

@@ -124,6 +124,16 @@ services:
       - IMAGE_CAPTION_DAILY_BUDGET_USD=${IMAGE_CAPTION_DAILY_BUDGET_USD:-50.0}
       - IMAGE_CAPTION_ESTIMATED_COST_PER_CALL_USD=${IMAGE_CAPTION_ESTIMATED_COST_PER_CALL_USD:-0.012}
       - IMAGE_CAPTION_PROMPT_VERSION=${IMAGE_CAPTION_PROMPT_VERSION:-2026-04-13-v1}
+      # Per-short Korean summary (POST /api/shorts/render/{id}/summary).
+      # Drives the bottom-right caption on every auto-shorts result card;
+      # when disabled the card sticks on "요약 생성 중…" forever. Defaults
+      # to true so a fresh deploy lights up the summaries — flip via
+      # `export SHORTS_RENDER_SUMMARY_ENABLED=false` on the host if the
+      # OpenAI bill needs a brake.
+      - SHORTS_RENDER_SUMMARY_ENABLED=${SHORTS_RENDER_SUMMARY_ENABLED:-true}
+      - SHORTS_RENDER_SUMMARY_LLM_MODEL=${SHORTS_RENDER_SUMMARY_LLM_MODEL:-gpt-4o-mini}
+      - SHORTS_RENDER_SUMMARY_LLM_TIMEOUT_S=${SHORTS_RENDER_SUMMARY_LLM_TIMEOUT_S:-8.0}
+      - SHORTS_RENDER_SUMMARY_PROMPT_VERSION=${SHORTS_RENDER_SUMMARY_PROMPT_VERSION:-v1}
       # Auto-shorts product mode v2 (wizard) — pass-through to api so .env
       # toggles propagate. Without this block the api silently uses
       # config.py defaults (every flag false) regardless of host .env state.
@@ -151,6 +161,16 @@ services:
       - AUTO_SHORTS_PRODUCT_V2_STT_ENUM_PROMPT_VERSION=${AUTO_SHORTS_PRODUCT_V2_STT_ENUM_PROMPT_VERSION:-v1.0}
       - AUTO_SHORTS_PRODUCT_V2_STT_ENUM_MAX_TRANSCRIPT_TOKENS=${AUTO_SHORTS_PRODUCT_V2_STT_ENUM_MAX_TRANSCRIPT_TOKENS:-80000}
       - AUTO_SHORTS_PRODUCT_V2_STT_ENUM_TIMEOUT_S=${AUTO_SHORTS_PRODUCT_V2_STT_ENUM_TIMEOUT_S:-90}
+      # Auto-shorts post-enumeration catalog consolidation
+      # (PR #182, services/api/app/modules/shorts_auto_product/consolidate/).
+      # Same allowlist rule as the whisper / storyboard blocks below —
+      # restart does NOT reload .env without these lines. Memory:
+      # feedback_compose_env_passthrough_required.md.
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_ENABLED=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_ENABLED:-false}
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_MODEL=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_MODEL:-gpt-4o}
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_TIMEOUT_S=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_TIMEOUT_S:-120}
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_GRACE_S=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_GRACE_S:-105}
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION:-v1.0}
       # Auto-shorts post-render Whisper subtitle refinement
       # (.claude/plans/auto-shorts-whisper-subtitles-2026-05-06.md).
       # Master flag default false; set to true on staging to enable
@@ -204,6 +224,8 @@ services:
       # ``config.py::auto_shorts_product_v2_live_only_enabled``.
       - AUTO_SHORTS_PRODUCT_V2_LIVE_ONLY_ENABLED=${AUTO_SHORTS_PRODUCT_V2_LIVE_ONLY_ENABLED:-false}
       - AUTO_SHORTS_PRODUCT_V2_MENTION_DOMINANCE_THRESHOLD=${AUTO_SHORTS_PRODUCT_V2_MENTION_DOMINANCE_THRESHOLD:-0.0}
+      - AUTO_SHORTS_PRODUCT_V2_STT_MIN_MENTION_SCENES=${AUTO_SHORTS_PRODUCT_V2_STT_MIN_MENTION_SCENES:-0}
+      - AUTO_SHORTS_PRODUCT_V2_STT_MIN_MENTION_SCORE=${AUTO_SHORTS_PRODUCT_V2_STT_MIN_MENTION_SCORE:-0.0}
       - AUTO_SHORTS_PRODUCT_V2_CHUNK_CATALOG_MATCH_THRESHOLD=${AUTO_SHORTS_PRODUCT_V2_CHUNK_CATALOG_MATCH_THRESHOLD:-0.0}
       - AUTO_SHORTS_PRODUCT_V2_ALIAS_AUTO_HOOK_ENABLED=${AUTO_SHORTS_PRODUCT_V2_ALIAS_AUTO_HOOK_ENABLED:-false}
       - AUTO_SHORTS_PRODUCT_V2_ALIAS_DAILY_BUDGET_USD=${AUTO_SHORTS_PRODUCT_V2_ALIAS_DAILY_BUDGET_USD:-5.0}

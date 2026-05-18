@@ -1,6 +1,10 @@
 "use client";
 
-import { NumericStepper } from "../primitives/NumericStepper";
+// figma: 1602:41198 (배경 섹션) / 1607:65302 (텍스트·템플릿 패널)
+// 변형 섹션 — 위치 X/Y + 회전°. 배경 패널에선 크기 W/H 추가.
+// X/Y w=97 h=40, 회전 w=53 h=40, gap=8. radius·padding 은 NumericStepper primitive 위임.
+
+import { ValueBox, ValueBoxXY, ValueBoxWH } from "../primitives/ValueBox";
 import { t } from "../../lib/i18n/strings";
 import type { EditorOverlay, TransformProps } from "../../lib/overlay-types";
 
@@ -25,80 +29,67 @@ export function TransformSection({ overlay, onChange }: TransformSectionProps) {
   const yPct = Math.round(tf.y * 100);
   const rotInt = Math.round(tf.rotationDeg);
 
+  // figma 2026-05-18 redesign — split the row under the 변형 header into two
+  // sub-labelled columns: position (X/Y) and rotation (°). Background
+  // overlays add an extra size (W/H) row below. The earlier "위치/회전"
+  // single-row layout with three steppers did not match the goal capture.
   return (
-    <section className="space-y-3">
-      <header className="text-xs font-semibold text-gray-700">
+    <section className="space-y-2">
+      <header className="text-xs font-semibold text-grayscale-800">
         {t.transform.sectionLabel}
       </header>
 
-      {/* Background-only: explicit W/H */}
+      {/* Position + rotation are display-first: operators drag the
+          overlay in the preview to move it, and the boxes mirror the
+          resulting transform.x / transform.y / transform.rotationDeg
+          values. Typing in either box still updates the overlay, but
+          we drop the +/- stepper chrome per 2026-05-18 figma. */}
+      {/* 회전 column slimmed to a fixed 60px (right-aligned) so the 위치
+          column can spread X/Y values without clipping. Operators rarely
+          type free-form degrees here — the box mirrors the preview drag
+          rotation, so a narrow display column is enough. */}
+      <div className="grid grid-cols-[1fr_60px] gap-2">
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium text-grayscale-500">위치</span>
+          <ValueBoxXY
+            x={xPct}
+            y={yPct}
+            min={0}
+            max={100}
+            onChangeX={(v) => updateTransform({ x: v / 100 })}
+            onChangeY={(v) => updateTransform({ y: v / 100 })}
+            ariaLabel="overlay position"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium text-grayscale-500">회전</span>
+          <ValueBox
+            value={rotInt}
+            min={-360}
+            max={360}
+            onChange={(v) => updateTransform({ rotationDeg: v })}
+            suffix="°"
+            ariaLabel="overlay rotation"
+            className="px-1"
+          />
+        </div>
+      </div>
+
+      {/* Background-only: explicit W/H underneath 위치/회전 */}
       {overlay.kind === "background" && (
-        <Row label={t.transform.size}>
-          <NumericStepper
-            value={tf.widthPx ?? 0}
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-medium text-grayscale-500">{t.transform.size}</span>
+          <ValueBoxWH
+            width={tf.widthPx ?? 0}
+            height={tf.heightPx ?? 0}
             min={1}
             max={10000}
-            onChange={(v) => updateTransform({ widthPx: v })}
-            unit={t.transform.width}
-            ariaLabel={`${t.transform.size} width`}
-            className="flex-1"
+            onChangeWidth={(v) => updateTransform({ widthPx: v })}
+            onChangeHeight={(v) => updateTransform({ heightPx: v })}
+            ariaLabel={t.transform.size}
           />
-          <NumericStepper
-            value={tf.heightPx ?? 0}
-            min={1}
-            max={10000}
-            onChange={(v) => updateTransform({ heightPx: v })}
-            unit={t.transform.height}
-            ariaLabel={`${t.transform.size} height`}
-            className="flex-1"
-          />
-        </Row>
+        </div>
       )}
-
-      <Row label={t.transform.positionRotation}>
-        <NumericStepper
-          value={xPct}
-          min={0}
-          max={100}
-          onChange={(v) => updateTransform({ x: v / 100 })}
-          unit="X"
-          ariaLabel="X position"
-          className="flex-1"
-        />
-        <NumericStepper
-          value={yPct}
-          min={0}
-          max={100}
-          onChange={(v) => updateTransform({ y: v / 100 })}
-          unit="Y"
-          ariaLabel="Y position"
-          className="flex-1"
-        />
-        <NumericStepper
-          value={rotInt}
-          min={-360}
-          max={360}
-          onChange={(v) => updateTransform({ rotationDeg: v })}
-          unit="°"
-          ariaLabel="rotation"
-          className="flex-1"
-        />
-      </Row>
     </section>
-  );
-}
-
-function Row({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-      <span className="text-xs text-gray-500">{label}</span>
-      <div className="flex items-stretch gap-2">{children}</div>
-    </div>
   );
 }

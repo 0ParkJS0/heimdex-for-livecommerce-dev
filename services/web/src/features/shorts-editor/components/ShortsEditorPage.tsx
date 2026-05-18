@@ -1,25 +1,38 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { getVideoScenes } from "@/lib/api/videos";
 import { getShortComposition } from "@/lib/api/shorts-render";
 import type { VideoScenesResponse } from "@/lib/types";
+import {
+  useTopHeaderActions,
+  useTopHeaderBack,
+  useTopHeaderLeftActions,
+} from "@/components/layout/TopHeaderActionsContext";
+import { cn } from "@/lib/utils";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
+import { recomputeTimeline } from "../lib/timeline-math";
 import { useCompositionExport } from "../hooks/useCompositionExport";
+import type { RenderStatus } from "../hooks/useCompositionExport";
+import { usePresets } from "../hooks/usePresets";
 import { EditorLayout } from "./EditorLayout";
-import { EditorHeader } from "./EditorHeader";
+import { FullscreenOverlay } from "./FullscreenOverlay";
 import { PreviewPanel } from "./PreviewPanel";
 import { TimelinePanel } from "./TimelinePanel";
-import { ClipProperties } from "./ClipProperties";
 import { TextOverlayPanel } from "./TextOverlayPanel";
 import { OverlayPanel } from "./OverlayPanel";
+import { SubtitleListNav } from "./SubtitleEditor";
+import { TemplateSaveDialog } from "./TemplateSaveDialog";
+import { TemplateSaveMenu } from "./TemplateSaveMenu";
 import { isShortsEditorV2Enabled } from "@/lib/feature-flags";
 import type { EditorSubtitle } from "../lib/types";
-import type { EditorTextOverlay } from "../lib/overlay-types";
-import { SceneListPanel } from "./SceneListPanel";
+import type { EditorOverlay, EditorTextOverlay, PresetKind } from "../lib/overlay-types";
+import { RightPanel } from "./RightPanel";
+import { BackgroundPanel } from "./BackgroundPanel";
+import { TemplatePanel } from "./TemplatePanel";
 
 function BackArrowIcon() {
   return (
@@ -29,8 +42,27 @@ function BackArrowIcon() {
   );
 }
 
+function DownloadIcon() {
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+    </svg>
+  );
+}
+
+const RENDER_STATUS_LABELS: Record<RenderStatus, string> = {
+  idle: "내보내기",
+  submitting: "제출 중...",
+  queued: "대기 중...",
+  rendering: "렌더링 중...",
+  completed: "완료",
+  failed: "실패",
+  rate_limited: "요청 제한",
+};
+
 export function ShortsEditorPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { getAccessToken } = useAuth();
 
   const videoId = searchParams.get("videoId") ?? "";
@@ -41,6 +73,14 @@ export function ShortsEditorPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  // playback rate lifted to page so timeline toggle + preview <video>
+  // stay in sync. Only 1.0 and 1.5 are exposed via the toolbar toggle.
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  // figma: 1670:185907 — 마스터 볼륨 (하단 컨트롤 슬라이더와 동기화)
+  const [masterVolume, setMasterVolume] = useState(1.0);
 
   const editor = useEditorState();
   const {
@@ -212,7 +252,175 @@ export function ShortsEditorPage() {
     [v2Enabled, editor, v2TextOverlays],
   );
 
-  // Load from scene IDs (entry from ShortsCreatePage or ShortsPlanPanel)
+  // GNB "템플릿 저장" entry — opens the same TemplateSaveDialog that the
+  // PresetSection uses, but driven from the global header. Save targets the
+  // currently selected overlay; menu is disabled when no overlay is selected
+  // or v2 is off (presets are V2-only).
+  const selectedOverlay = useMemo<EditorOverlay | null>(() => {
+    if (!v2Enabled || state.selectedOverlayId == null) return null;
+    return state.overlays.find((o) => o.id === state.selectedOverlayId) ?? null;
+  }, [v2Enabled, state.selectedOverlayId, state.overlays]);
+
+  const presetKind: PresetKind =
+    selectedOverlay?.kind === "background" ? "background" : "text";
+
+  const presetsApi = usePresets({
+    kind: presetKind,
+    getToken: getAccessToken,
+    enabled: v2Enabled,
+  });
+
+  const handleTemplateSave = useCallback(
+    async (name: string, isShared: boolean) => {
+      if (!selectedOverlay) {
+        setTemplateDialogOpen(false);
+        return;
+      }
+      await presetsApi.save(name, selectedOverlay, isShared);
+      setTemplateDialogOpen(false);
+    },
+    [selectedOverlay, presetsApi],
+  );
+
+  // figma: 1602:37719 — editor GNB merges into the global TopHeader.
+  // Back lives in the dedicated back slot, title/scene-count in the left
+  // actions slot, render controls in the right actions slot.
+  const handleHeaderBack = useCallback(() => {
+    if (state.isDirty && !window.confirm("저장하지 않은 변경사항이 있습니다. 나가시겠습니까?")) {
+      return;
+    }
+    router.push("/export/shorts");
+  }, [router, state.isDirty]);
+
+  const headerBackSlot = useMemo(
+    () => ({ label: "뒤로가기", onClick: handleHeaderBack }),
+    [handleHeaderBack],
+  );
+  useTopHeaderBack(headerBackSlot);
+
+  const headerLeftSlot = useMemo(() => {
+    if (isLoading || loadError) return null;
+    // figma: 1669:48308 — title input + "N개 장면" pair, gap=10. The input
+    // hugs its content so the "N개 장면" label sits ~10px to the right of
+    // the last character with no extra dead space. ``size`` is set to the
+    // visible character count (no +1 buffer) and we drop the lower bound
+    // via inline width so short titles like "쇼츠1" don't reserve a
+    // 60px-wide column. Long titles can grow to the safe ~640px cap.
+    const placeholder = meta?.video_title ?? "제목 없음";
+    const measureSource = title || placeholder;
+    const sizeChars = Math.max(2, Math.min(measureSource.length, 60));
+    return (
+      <div className="flex items-center gap-[10px]">
+        <input
+          type="text"
+          size={sizeChars}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={placeholder}
+          aria-label="영상 제목"
+          className="rounded-md border border-transparent px-1 text-[18px] font-semibold leading-[1.4] tracking-[-0.45px] text-black placeholder-grayscale-300 hover:border-grayscale-100 focus:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
+          style={{ maxWidth: "640px" }}
+        />
+        <span className="whitespace-nowrap text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-neutral-h-500">
+          {state.clips.length}개 장면
+        </span>
+      </div>
+    );
+  }, [isLoading, loadError, title, meta?.video_title, state.clips.length, state.isDirty]);
+  useTopHeaderLeftActions(headerLeftSlot);
+
+  const isRenderWorking =
+    renderStatus === "submitting" || renderStatus === "queued" || renderStatus === "rendering";
+  const canRender =
+    state.clips.length > 0 && !isRenderWorking && renderStatus !== "completed";
+
+  const handleRenderDownload = useCallback(() => {
+    if (!renderJob?.download_url) return;
+    const a = document.createElement("a");
+    a.href = renderJob.download_url;
+    a.download = `short_${renderJob.id}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, [renderJob]);
+
+  const headerRightSlot = useMemo(() => {
+    if (isLoading || loadError) return null;
+    // figma: 1602:37719 — right side buttons h=32 px=10 py=6 r=8 fs=12.
+    return (
+      <div className="flex items-center gap-2">
+        {renderError && (
+          <span className="max-w-48 truncate text-xs text-red-h-500">{renderError}</span>
+        )}
+        <TemplateSaveMenu
+          onClick={() => setTemplateDialogOpen(true)}
+          disabled={!v2Enabled || selectedOverlay == null}
+        />
+        {renderStatus === "completed" && renderJob && (
+          <>
+            <button
+              type="button"
+              onClick={handleRenderDownload}
+              className="inline-flex h-8 items-center gap-1.5 rounded-[8px] bg-heimdex-navy-500 px-[10px] py-[6px] text-[12px] font-semibold text-white transition-colors hover:bg-heimdex-navy-600"
+            >
+              <DownloadIcon />
+              다운로드
+            </button>
+            <button
+              type="button"
+              onClick={resetRender}
+              className="h-8 rounded-[8px] border border-neutral-h-500 bg-white px-[10px] py-[6px] text-[12px] font-semibold text-neutral-h-500 transition-colors hover:bg-grayscale-10"
+            >
+              다시 렌더링
+            </button>
+          </>
+        )}
+        {renderStatus === "failed" && (
+          <button
+            type="button"
+            onClick={resetRender}
+            className="h-8 rounded-[8px] border border-neutral-h-500 bg-white px-[10px] py-[6px] text-[12px] font-semibold text-neutral-h-500 transition-colors hover:bg-grayscale-10"
+          >
+            재시도
+          </button>
+        )}
+        {renderStatus !== "completed" && (
+          <button
+            type="button"
+            onClick={submitComposition}
+            disabled={!canRender}
+            className={cn(
+              "inline-flex h-8 items-center gap-2 rounded-[8px] px-[10px] py-[6px] text-[12px] font-semibold leading-none transition-colors",
+              canRender
+                ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                : "cursor-not-allowed bg-neutral-h-100 text-neutral-h-300",
+            )}
+          >
+            {isRenderWorking && (
+              <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            )}
+            {RENDER_STATUS_LABELS[renderStatus]}
+          </button>
+        )}
+      </div>
+    );
+  }, [
+    isLoading,
+    loadError,
+    renderError,
+    v2Enabled,
+    selectedOverlay,
+    renderStatus,
+    renderJob,
+    handleRenderDownload,
+    resetRender,
+    submitComposition,
+    canRender,
+    isRenderWorking,
+  ]);
+  useTopHeaderActions(headerRightSlot);
+
+  // Load from scene IDs (entry from ShortsPlanPanel or saved-shorts list)
   useEffect(() => {
     if (!videoId || shortId) return;
 
@@ -234,7 +442,16 @@ export function ShortsEditorPage() {
           : res.scenes;
 
         const sourceType = res.source_type ?? "gdrive";
-        const clips = scenes.map((scene) => createClipFromScene(scene, videoId, sourceType));
+        // createClipFromScene returns clips with timelineStartMs=0; the
+        // reducer normally lays them out via recomputeTimeline on
+        // INIT_FROM_SCENES, but the original array we hold here stays
+        // unmodified. Run the same layout locally so the per-clip
+        // ``clip.timelineStartMs`` we feed into the subtitle generator
+        // matches what the reducer applies — otherwise every scene's
+        // subtitles stack at timeline 0 and never appear on later clips.
+        const clips = recomputeTimeline(
+          scenes.map((scene) => createClipFromScene(scene, videoId, sourceType)),
+        );
         initFromScenes(videoId, sourceType, clips);
 
         // Auto-generate subtitles when entering with a curated scene set
@@ -244,14 +461,36 @@ export function ShortsEditorPage() {
         // generator returns [] for scenes without speaker_transcript,
         // so this is safe across the whole flow — operators always
         // see an editable subtitle list rather than an empty panel.
+        //
+        // V2 timeline reads from state.overlays, not state.subtitles
+        // (see ShortsEditorPage timelineSubtitles memo + feature-flag
+        // default-on). Subtitles inserted via addSubtitle never reach
+        // the V2 timeline / left-panel list. Route through addTextOverlay
+        // so the generated lines render as text overlays on both surfaces.
         if (sceneIdsParam && scenes.length > 0) {
+          const v2Active = isShortsEditorV2Enabled();
           for (let i = 0; i < scenes.length; i++) {
-            const subs = generateSubtitlesFromTranscript(
-              scenes[i].speaker_transcript,
-              clips[i],
-            );
+            // Prefer the speaker-tagged transcript when present (carries
+            // diarisation + timestamps) and fall back to ``transcript_raw``
+            // so older indexing runs without diarisation still produce
+            // usable subtitle lines. The generator's synthetic-turn
+            // fallback handles plain text either way.
+            const speaker = scenes[i].speaker_transcript;
+            const sourceText =
+              speaker && speaker.trim().length > 0
+                ? speaker
+                : scenes[i].transcript_raw;
+            const subs = generateSubtitlesFromTranscript(sourceText, clips[i]);
             for (const sub of subs) {
-              editor.addSubtitle(sub);
+              if (v2Active) {
+                editor.addTextOverlay({
+                  text: sub.text,
+                  startMs: sub.startMs,
+                  endMs: sub.endMs,
+                });
+              } else {
+                editor.addSubtitle(sub);
+              }
             }
           }
         }
@@ -327,6 +566,46 @@ export function ShortsEditorPage() {
           if (!cancelled) {
             setMeta(scenesRes);
             if (!comp.title) setTitle(scenesRes.video_title ?? "");
+
+            // Auto-generate subtitles from each clip's source scene when
+            // the saved composition didn't carry any. Mirrors the scene-
+            // ids entry path so users landing from /export/shorts see
+            // editable subtitles instead of an empty panel. We skip
+            // generation when the composition already has subtitles
+            // (op-saved overrides should win).
+            const hasSavedSubtitles =
+              (comp.subtitles?.length ?? 0) > 0;
+            if (!hasSavedSubtitles) {
+              const v2Active = isShortsEditorV2Enabled();
+              for (let i = 0; i < clips.length; i++) {
+                const sceneId = clips[i].sceneId;
+                const scene = scenesRes.scenes.find(
+                  (s) => s.scene_id === sceneId,
+                );
+                if (!scene) continue;
+                const speaker = scene.speaker_transcript;
+                const sourceText =
+                  speaker && speaker.trim().length > 0
+                    ? speaker
+                    : scene.transcript_raw;
+                if (!sourceText) continue;
+                const subs = generateSubtitlesFromTranscript(
+                  sourceText,
+                  clips[i],
+                );
+                for (const sub of subs) {
+                  if (v2Active) {
+                    editor.addTextOverlay({
+                      text: sub.text,
+                      startMs: sub.startMs,
+                      endMs: sub.endMs,
+                    });
+                  } else {
+                    editor.addSubtitle(sub);
+                  }
+                }
+              }
+            }
           }
         }
       } catch (err) {
@@ -372,17 +651,17 @@ export function ShortsEditorPage() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-indigo-500" />
+      <div className="flex min-h-screen items-center justify-center bg-grayscale-10">
+        <div className="h-10 w-10 animate-spin rounded-full border-b-2 border-heimdex-navy-500" />
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-gray-50">
-        <p className="text-sm text-red-600">{loadError}</p>
-        <Link href="/export/shorts" className="text-sm text-indigo-600 hover:text-indigo-700">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-grayscale-10">
+        <p className="text-sm text-red-h-500">{loadError}</p>
+        <Link href="/export/shorts" className="text-sm text-heimdex-navy-500 hover:text-heimdex-navy-600">
           <span className="inline-flex items-center gap-1.5">
             <BackArrowIcon />
             쇼츠 목록으로 돌아가기
@@ -394,54 +673,25 @@ export function ShortsEditorPage() {
 
 
   return (
-    <div className="font-pretendard h-screen overflow-hidden bg-gray-100">
-      <EditorHeader
-        videoTitle={meta?.video_title ?? null}
-        title={title}
-        onTitleChange={setTitle}
-        clipCount={state.clips.length}
-        totalDurationMs={state.totalDurationMs}
-        isDirty={state.isDirty}
-        renderStatus={renderStatus}
-        renderJob={renderJob}
-        renderError={renderError}
-        onRender={submitComposition}
-        onRenderReset={resetRender}
-      />
-
+    <div className="font-pretendard h-full overflow-hidden bg-grayscale-10">
       <EditorLayout
         leftPanel={
-          state.selectedClipIndex != null && state.selectedClipIndex < state.clips.length ? (
-            <ClipProperties
-              clip={state.clips[state.selectedClipIndex]}
-              index={state.selectedClipIndex}
-              onTrim={editor.trimClip}
-              onVolumeChange={editor.setClipVolume}
-              onRemove={editor.removeClip}
+          // figma: 1602:37844 (left subtitle panel) — wrapper hosts only the
+          // subtitle nav (search + timeline-ordered list). Text/background
+          // overlay editing lives in the right wrapper (figma 1602:40004).
+          <div className="flex h-full min-h-0 flex-col">
+            {/* figma: 1670:186255 (자막 좌측 패널) — timeline-ordered subtitle nav.
+                좌측 wrapper 는 검색 + 자막 리스트만 노출한다. 타임라인의 클립을
+                선택해도 여기서 클립 속성을 띄우지 않는다 — 자막 외 편집 UI 는
+                전부 우측 wrapper (figma 1602:40004) 로 격리되어야 한다. */}
+            {/* figma: 1670:186095 — row click seeks playhead to subtitle.startMs */}
+            <SubtitleListNav
+              subtitles={timelineSubtitles}
+              selectedSubtitleIndex={timelineSelectedSubtitleIndex}
+              onSelectSubtitle={handleTimelineSelectSubtitle}
+              onSeek={setPlayhead}
             />
-          ) : v2Enabled ? (
-            <OverlayPanel
-              state={state}
-              onAddTextOverlay={editor.addTextOverlayAtPlayhead}
-              onAddBackgroundOverlay={editor.addBackgroundOverlayAtPlayhead}
-              onUpdateOverlay={editor.updateOverlay}
-              onRemoveOverlay={editor.removeOverlay}
-              onSelectOverlay={editor.selectOverlay}
-              onReorderOverlay={editor.reorderOverlay}
-            />
-          ) : (
-            <TextOverlayPanel
-              subtitle={
-                state.selectedSubtitleIndex != null && state.selectedSubtitleIndex < state.subtitles.length
-                  ? state.subtitles[state.selectedSubtitleIndex]
-                  : null
-              }
-              subtitleIndex={state.selectedSubtitleIndex}
-              onAddOverlay={editor.addOverlayAtPlayhead}
-              onUpdateSubtitle={editor.updateSubtitle}
-              onRemoveSubtitle={editor.removeSubtitle}
-            />
-          )
+          </div>
         }
         preview={
           <PreviewPanel
@@ -451,6 +701,8 @@ export function ShortsEditorPage() {
             selectedOverlayId={state.selectedOverlayId}
             onSelectOverlay={editor.selectOverlay}
             onUpdateOverlay={editor.updateOverlay}
+            onRemoveOverlay={editor.removeOverlay}
+            onRemoveSubtitle={editor.removeSubtitle}
             playheadMs={state.playheadMs}
             isPlaying={state.isPlaying}
             totalDurationMs={state.totalDurationMs}
@@ -460,35 +712,74 @@ export function ShortsEditorPage() {
             onSelectSubtitle={selectSubtitle}
             onUpdateSubtitlePosition={handleSubtitlePositionChange}
             onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+            playbackRate={playbackRate}
           />
         }
         rightPanel={
-          <SceneListPanel
-            videoId={state.videoId}
-            scenes={meta?.scenes ?? []}
-            clips={state.clips}
-            selectedClipIndex={state.selectedClipIndex}
-            onToggleScene={(scene) => {
-              const existingIdx = state.clips.findIndex((c) => c.sceneId === scene.scene_id);
-              if (existingIdx >= 0) {
-                editor.removeClip(existingIdx);
-              } else {
-                const clip = createClipFromScene(scene, state.videoId, state.sourceType);
-                editor.addClip(clip);
-                const subs = generateSubtitlesFromTranscript(scene.speaker_transcript, clip);
-                for (const sub of subs) {
-                  editor.addSubtitle(sub);
-                }
-              }
-            }}
-            onSelectClip={editor.selectClip}
-            onPreview={(clipIndex) => {
-              editor.selectClip(clipIndex);
-              const clip = state.clips[clipIndex];
-              if (clip) setPlayhead(clip.timelineStartMs);
-            }}
-            onExport={submitComposition}
-          />
+          // figma: 1607:65302 right column (텍스트/배경/템플릿 3탭)
+          // 배경 탭 = figma 1602:41198 BackgroundPanel.
+          // 템플릿 탭 = figma 1602:41198 TemplatePanel (presetsApi 와이어).
+          (() => {
+            const backgroundTab = (
+              <BackgroundPanel
+                state={state}
+                onAddSolidBackground={editor.addBackgroundOverlayAtPlayhead}
+                onAddImageBackground={editor.addImageBackgroundOverlayAtPlayhead}
+                onUpdateOverlay={editor.updateOverlay}
+                onReorderOverlay={editor.reorderOverlay}
+              />
+            );
+            const templateTab = (
+              <TemplatePanel
+                presets={presetsApi.presets}
+                isLoading={presetsApi.isLoading}
+                error={presetsApi.error}
+                selectedId={selectedTemplateId}
+                onSelect={setSelectedTemplateId}
+                onApply={(preset) => {
+                  if (!selectedOverlay) return;
+                  const merged = presetsApi.applyTo(selectedOverlay, preset);
+                  editor.updateOverlay(selectedOverlay.id, merged);
+                }}
+                onOpenSaveDialog={() => setTemplateDialogOpen(true)}
+                onDelete={(preset) => void presetsApi.remove(preset.id)}
+              />
+            );
+            return v2Enabled ? (
+              <RightPanel
+                backgroundTab={backgroundTab}
+                templateTab={templateTab}
+              >
+                <OverlayPanel
+                  state={state}
+                  onAddTextOverlay={editor.addTextOverlayAtPlayhead}
+                  onAddBackgroundOverlay={editor.addBackgroundOverlayAtPlayhead}
+                  onAddImageBackgroundOverlay={editor.addImageBackgroundOverlayAtPlayhead}
+                  onUpdateOverlay={editor.updateOverlay}
+                  onRemoveOverlay={editor.removeOverlay}
+                  onSelectOverlay={editor.selectOverlay}
+                  onReorderOverlay={editor.reorderOverlay}
+                />
+              </RightPanel>
+            ) : (
+              <RightPanel
+                backgroundTab={backgroundTab}
+                templateTab={templateTab}
+              >
+                <TextOverlayPanel
+                  subtitle={
+                    state.selectedSubtitleIndex != null && state.selectedSubtitleIndex < state.subtitles.length
+                      ? state.subtitles[state.selectedSubtitleIndex]
+                      : null
+                  }
+                  subtitleIndex={state.selectedSubtitleIndex}
+                  onAddOverlay={editor.addOverlayAtPlayhead}
+                  onUpdateSubtitle={editor.updateSubtitle}
+                  onRemoveSubtitle={editor.removeSubtitle}
+                />
+              </RightPanel>
+            );
+          })()
         }
         timeline={
           <TimelinePanel
@@ -511,8 +802,43 @@ export function ShortsEditorPage() {
             onTogglePlay={() => setPlaying(!state.isPlaying)}
             onSeek={setPlayhead}
             onZoomChange={editor.setZoom}
+            playbackRate={playbackRate}
+            onPlaybackRateChange={setPlaybackRate}
+            volume={masterVolume}
+            onVolumeChange={setMasterVolume}
+            onToggleFullscreen={() => setIsFullscreen(true)}
           />
         }
+      />
+
+      {isFullscreen && (
+        <FullscreenOverlay
+          clips={state.clips}
+          subtitles={state.subtitles}
+          overlays={state.overlays}
+          selectedOverlayId={state.selectedOverlayId}
+          onSelectOverlay={editor.selectOverlay}
+          onUpdateOverlay={editor.updateOverlay}
+          onRemoveOverlay={editor.removeOverlay}
+          onRemoveSubtitle={editor.removeSubtitle}
+          playheadMs={state.playheadMs}
+          isPlaying={state.isPlaying}
+          totalDurationMs={state.totalDurationMs}
+          selectedSubtitleIndex={state.selectedSubtitleIndex}
+          onPlayheadChange={setPlayhead}
+          onPlayingChange={setPlaying}
+          onSelectSubtitle={selectSubtitle}
+          onUpdateSubtitlePosition={handleSubtitlePositionChange}
+          onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+          onClose={() => setIsFullscreen(false)}
+          filename={title || meta?.video_title || undefined}
+        />
+      )}
+
+      <TemplateSaveDialog
+        open={templateDialogOpen}
+        onClose={() => setTemplateDialogOpen(false)}
+        onSave={handleTemplateSave}
       />
     </div>
   );

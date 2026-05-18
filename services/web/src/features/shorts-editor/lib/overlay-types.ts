@@ -51,7 +51,7 @@ export interface EditorTextOverlay {
 
   text: string;
 
-  fontFamily: "Pretendard" | "Noto Sans KR";
+  fontFamily: string;
   fontSizePx: number; // [8, 200]
   fontWeight: number; // [100, 900]
   italic: boolean;
@@ -81,6 +81,18 @@ export interface EditorBackgroundOverlay {
   effects: EffectsProps;
 
   fillColor: string;
+  /**
+   * Optional image source painted on top of the fillColor. Set when the
+   * operator uses "이미지 삽입" in the background tab — accepts data URLs
+   * (frontend-only flow, persisted in client state) and HTTP(S) URLs
+   * (future: presigned uploads from the backend). When ``null`` the
+   * overlay renders as a solid color rectangle.
+   *
+   * Wire serialisation depends on backend support — until the contracts
+   * field lands the builder strips this on submit so renders still go
+   * through unchanged.
+   */
+  imageUrl: string | null;
 }
 
 export type EditorOverlay = EditorTextOverlay | EditorBackgroundOverlay;
@@ -126,7 +138,7 @@ export interface WireTextOverlay {
   transform: WireTransform;
   effects: WireEffects;
   text: string;
-  font_family: "Pretendard" | "Noto Sans KR";
+  font_family: string;
   font_size_px: number;
   font_weight: number;
   italic: boolean;

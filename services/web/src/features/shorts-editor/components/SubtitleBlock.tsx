@@ -1,5 +1,7 @@
 "use client";
 
+// figma: 1713:271669  (cache: .figma-cache/1713-271669_phase5_editor-1.api.json)
+// node-name: Subtitle Block · spec: Block 자막 미리보기 fs=10 fw=500 → text-[10px] font-medium
 import { useCallback, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type { EditorSubtitle } from "../lib/types";
@@ -12,6 +14,10 @@ interface SubtitleBlockProps {
   isSelected: boolean;
   onSelect: () => void;
   onUpdate: (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) => void;
+  // Click-snap: when the user clicks a subtitle block we move the
+  // playhead to its start so the preview jumps to the matching frame
+  // (2026-05-18 review — the playhead was previously lagging behind).
+  onSeek?: (ms: number) => void;
 }
 
 export function SubtitleBlock({
@@ -21,9 +27,16 @@ export function SubtitleBlock({
   isSelected,
   onSelect,
   onUpdate,
+  onSeek,
 }: SubtitleBlockProps) {
   const leftPx = msToPixels(subtitle.startMs, zoom);
-  const widthPx = msToPixels(subtitle.endMs - subtitle.startMs, zoom);
+  // Subtract a 2px gutter from the rendered width so back-to-back
+  // subtitle blocks at minimum zoom show a 2px gap between them — the
+  // 2026-05-18 review surfaced that adjacent blocks were merging into a
+  // single solid bar when the timeline was compressed. The minimum
+  // visual width is still 8px so very short subtitles stay clickable.
+  const rawWidthPx = msToPixels(subtitle.endMs - subtitle.startMs, zoom);
+  const widthPx = Math.max(rawWidthPx - 2, 8);
   const draggingRef = useRef<"move" | "start" | "end" | null>(null);
   const startXRef = useRef(0);
   const startValuesRef = useRef({ startMs: 0, endMs: 0 });
@@ -85,35 +98,44 @@ export function SubtitleBlock({
   return (
     <div
       className={cn(
-        "group absolute bottom-1 top-1 flex items-center overflow-hidden rounded border",
+        // 2026-05-18 — selected state was simplified to a fill-only
+        // change. The previous outline ring + visible side resize bars
+        // read as a heavy "edit handle" UI, but the operator only
+        // wanted feedback that the row is active. Drag/resize is still
+        // wired through the (now-invisible) 6px-wide edge zones below.
+        "group absolute bottom-1 top-1 flex items-center overflow-hidden rounded-[10px]",
         isSelected
-          ? "z-10 border-gray-700 bg-white ring-1 ring-gray-700"
-          : "border-gray-300 bg-white hover:border-gray-500",
+          ? "z-10 bg-heimdex-navy-500"
+          : "bg-heimdex-navy-300 hover:brightness-110",
       )}
-      style={{ left: leftPx, width: Math.max(widthPx, 8) }}
-      onClick={(e) => { e.stopPropagation(); onSelect(); }}
+      style={{ left: leftPx, width: widthPx }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+        onSeek?.(subtitle.startMs);
+      }}
     >
-      {/* Left resize handle */}
+      {/* Invisible left resize zone — drag still works, no visible bar. */}
       <div
-        className="absolute bottom-0 left-0 top-0 z-20 w-1.5 cursor-col-resize bg-gray-400 opacity-0 group-hover:opacity-100"
+        className="absolute bottom-0 left-0 top-0 z-20 w-1.5 cursor-col-resize"
         onPointerDown={handlePointerDown("start")}
       />
 
       {/* Draggable body */}
       <div
-        className="flex-1 min-w-0 px-1.5 cursor-grab active:cursor-grabbing select-none"
+        className="flex-1 min-w-0 cursor-grab select-none px-[10px] py-[12px] active:cursor-grabbing"
         onPointerDown={handlePointerDown("move")}
       >
         {widthPx > 30 && (
-          <p className="truncate text-[9px] font-medium text-gray-700">
+          <p className="truncate text-[14px] font-semibold leading-[1.4] tracking-[-0.35px] text-white">
             {subtitle.text || "자막"}
           </p>
         )}
       </div>
 
-      {/* Right resize handle */}
+      {/* Invisible right resize zone — drag still works, no visible bar. */}
       <div
-        className="absolute bottom-0 right-0 top-0 z-20 w-1.5 cursor-col-resize bg-gray-400 opacity-0 group-hover:opacity-100"
+        className="absolute bottom-0 right-0 top-0 z-20 w-1.5 cursor-col-resize"
         onPointerDown={handlePointerDown("end")}
       />
     </div>

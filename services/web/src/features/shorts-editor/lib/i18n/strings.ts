@@ -56,8 +56,10 @@ export const t = {
     stroke: "윤곽선",
     shadow: "그림자",
     shadowPositionColor: "위치/색상",
+    position: "위치",
     blur: "블러",
     spread: "확산",
+    width: "굵기",
   },
   preset: {
     sectionLabel: "프리셋",
@@ -68,6 +70,10 @@ export const t = {
     deletePresetTooltip: "프리셋 삭제",
     emptyState: "저장된 프리셋이 없습니다.",
     loadingState: "프리셋 불러오는 중…",
+    dialogTitle: "현재 스타일 저장",
+    dialogConfirm: "저장",
+    dialogCancel: "취소",
+    applyButton: "적용하기",
   },
   empty: {
     panelHint: "타임라인에서 항목을 선택하거나 위 버튼을 눌러 추가하세요.",

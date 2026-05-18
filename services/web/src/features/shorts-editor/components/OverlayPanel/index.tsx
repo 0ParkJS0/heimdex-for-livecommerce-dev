@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Dropdown } from "../primitives/Dropdown";
 import { ActionBar } from "./ActionBar";
 import { BackgroundToolbar } from "./BackgroundToolbar";
-import { EffectsSection } from "./EffectsSection";
-import { PresetSection } from "./PresetSection";
+import { EffectsSection, StrokeBlock } from "./EffectsSection";
 import { TextToolbar } from "./TextToolbar";
 import { TransformSection } from "./TransformSection";
 import { useOverlaySelection } from "../../hooks/useOverlaySelection";
 import { usePresets } from "../../hooks/usePresets";
 import { t } from "../../lib/i18n/strings";
+import {
+  createDefaultBackgroundOverlay,
+  createDefaultTextOverlay,
+} from "../../lib/overlay-defaults";
 import { runOneTimePresetMigration } from "../../lib/preset-migration";
 import type {
   EditorBackgroundOverlay,
@@ -22,19 +25,21 @@ import type {
   EditorTextOverlay,
   EffectsProps,
   TransformProps,
-  WirePreset,
 } from "../../lib/overlay-types";
 import type { EditorState } from "../../lib/types";
 
-const FONT_OPTIONS = [
-  { value: "Pretendard", label: "Pretendard" },
-  { value: "Noto Sans KR", label: "Noto Sans KR" },
-] as const;
+import { FONT_OPTIONS } from "../../constants";
 
 interface OverlayPanelProps {
   state: EditorState;
   onAddTextOverlay: () => void;
-  onAddBackgroundOverlay: () => void;
+  // figma 1602:40004 (배경 섹션) — 단색 배경 추가 버튼은 색상 팔레트
+  // 팝업을 띄우고, 선택한 색이 신규 background overlay 의 fillColor 로
+  // 주입된다. 인자가 없으면 기본 색이 적용된다.
+  onAddBackgroundOverlay: (fillColor?: string) => void;
+  // "Insert image" — seeds a new background overlay with the data URL
+  // the file picker returned, painted on top of a transparent fill.
+  onAddImageBackgroundOverlay: (imageUrl: string) => void;
   onUpdateOverlay: (id: string, updates: Partial<EditorOverlay>) => void;
   onRemoveOverlay: (id: string) => void;
   onSelectOverlay: (id: string | null) => void;
@@ -61,6 +66,7 @@ export function OverlayPanel({
   state,
   onAddTextOverlay,
   onAddBackgroundOverlay,
+  onAddImageBackgroundOverlay,
   onUpdateOverlay,
   onRemoveOverlay,
   onSelectOverlay,
@@ -78,10 +84,27 @@ export function OverlayPanel({
     }
   }, [selected, tab]);
 
-  // Selected overlay only counts when its kind matches the current tab —
-  // otherwise the empty state for the current tab takes over.
+  // Selected overlay only counts when its kind matches the current tab.
+  // When no overlay is selected we still render the full control surface
+  // (figma 1663:45752 expects controls present at all times) — the
+  // editor body just binds to a stable default overlay so the inputs
+  // show sensible default values and onUpdate is a no-op until the user
+  // explicitly adds an overlay via the "+ 텍스트 추가" / "+ 단색 배경
+  // 추가" button or selects an existing one in the timeline / preview.
   const selectedForTab =
     selected && selected.kind === tab ? selected : null;
+
+  // Stable defaults so the controls render with stable identities. startMs
+  // = 0 is meaningless here because the overlay never enters state — these
+  // objects only feed the editor body's value props.
+  const defaultTextOverlay = useMemo(
+    () => createDefaultTextOverlay({ startMs: 0 }),
+    [],
+  );
+  const defaultBgOverlay = useMemo(
+    () => createDefaultBackgroundOverlay({ startMs: 0 }),
+    [],
+  );
 
   const presetsApi = usePresets({
     kind: tab,
@@ -111,98 +134,59 @@ export function OverlayPanel({
   }, [getAccessToken]);
 
   return (
-    <div className="flex h-full flex-col bg-white">
-      <div className="flex items-center gap-4 border-b border-gray-200 px-4 pt-4">
-        <TabButton active={tab === "text"} onClick={() => setTab("text")}>
-          {t.tabs.text}
-        </TabButton>
-        <TabButton
-          active={tab === "background"}
-          onClick={() => setTab("background")}
-        >
-          {t.tabs.background}
-        </TabButton>
-      </div>
-
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+    <div className="flex h-full flex-col">
+      {/* RightPanel hosts the outer 텍스트/배경/템플릿 tab strip, so the
+          panel-internal tab bar is intentionally omitted here to avoid
+          rendering a duplicate row inside the same surface. */}
+      <div className="flex-1 space-y-4 overflow-y-auto">
         <ActionBar
           kind={tab}
-          onAdd={tab === "text" ? onAddTextOverlay : onAddBackgroundOverlay}
-          onDelete={() => {
-            if (selectedForTab) onRemoveOverlay(selectedForTab.id);
-          }}
-          canDelete={selectedForTab != null}
+          onAddText={onAddTextOverlay}
+          onAddBackground={onAddBackgroundOverlay}
+          onAddImage={onAddImageBackgroundOverlay}
         />
 
-        {selectedForTab == null ? (
-          <p className="rounded-lg bg-gray-50 px-3 py-8 text-center text-xs text-gray-400">
-            {t.empty.panelHint}
-          </p>
-        ) : selectedForTab.kind === "text" ? (
+        {tab === "text" ? (
           <TextEditingBody
-            overlay={selectedForTab as EditorTextOverlay}
-            onUpdate={(updates) =>
-              onUpdateOverlay(selectedForTab.id, updates)
+            overlay={
+              (selectedForTab as EditorTextOverlay | null) ?? defaultTextOverlay
             }
+            onUpdate={(updates) => {
+              if (selectedForTab) onUpdateOverlay(selectedForTab.id, updates);
+            }}
+            isPlaceholder={selectedForTab == null}
           />
         ) : (
           <BackgroundEditingBody
-            overlay={selectedForTab as EditorBackgroundOverlay}
-            onUpdate={(updates) =>
-              onUpdateOverlay(selectedForTab.id, updates)
+            overlay={
+              (selectedForTab as EditorBackgroundOverlay | null) ??
+              defaultBgOverlay
             }
-            onReorder={(direction) =>
-              onReorderOverlay(selectedForTab.id, direction)
-            }
+            onUpdate={(updates) => {
+              if (selectedForTab) onUpdateOverlay(selectedForTab.id, updates);
+            }}
+            onReorder={(direction) => {
+              if (selectedForTab)
+                onReorderOverlay(selectedForTab.id, direction);
+            }}
+            isPlaceholder={selectedForTab == null}
           />
         )}
 
-        {selectedForTab && (
-          <PresetSection
-            overlay={selectedForTab}
-            presetsApi={presetsApi}
-            onApply={(preset: WirePreset) => {
-              const merged = presetsApi.applyTo(selectedForTab, preset);
-              onUpdateOverlay(selectedForTab.id, merged);
-            }}
-          />
-        )}
+        {/* PresetSection (inline preset save + apply inside the wrapper) was
+            dropped per the 2026-05-18 goal capture. The GNB TemplateSaveMenu
+            and the right wrapper's 템플릿 tab already cover the same surface,
+            so keeping a third inline entrypoint just created conflicts.
+            presetsApi itself is preserved because the GNB still calls it. */}
       </div>
 
-      {/* Selection drag tracker so the user can click a different overlay
-          via the layer order without switching tabs. Hidden until > 1 overlay. */}
-      {state.overlays.length > 1 && (
-        <OverlaySelectorRow
-          state={state}
-          onSelect={onSelectOverlay}
-        />
-      )}
+      {/* OverlaySelectorRow (every-overlay chip strip) was pulled on
+          2026-05-18 — once auto-subtitle wiring added many text overlays
+          per session, the row filled the right wrapper with ``T: ...``
+          tags, which the user surfaced as a regression. Selecting a
+          different overlay still works via the preview / left subtitle
+          list, so the chip strip wasn't carrying weight either. */}
     </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "pb-2 text-sm transition-colors",
-        active
-          ? "border-b-2 border-indigo-600 font-semibold text-gray-900"
-          : "border-b-2 border-transparent font-medium text-gray-400 hover:text-gray-600",
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -213,20 +197,30 @@ function TabButton({
 function TextEditingBody({
   overlay,
   onUpdate,
+  isPlaceholder = false,
 }: {
   overlay: EditorTextOverlay;
   onUpdate: (updates: Partial<EditorTextOverlay>) => void;
+  // figma 1663:45752 — when no overlay is selected the controls still
+  // render with default values; isPlaceholder dims the surface so it's
+  // visually clear inputs won't persist until an overlay is added.
+  isPlaceholder?: boolean;
 }) {
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", isPlaceholder && "opacity-60")}>
       <textarea
         value={overlay.text}
         onChange={(e) => onUpdate({ text: e.target.value.slice(0, 500) })}
         placeholder={t.text.contentPlaceholder}
-        rows={3}
+        rows={4}
         maxLength={500}
-        className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        readOnly={isPlaceholder}
+        // figma 1663:45770 — Text Area Section: h-114 2px heimdex-navy/500
+        // border, 10px radius, px-14 py-16.
+        className="h-[114px] w-full resize-none rounded-[10px] border-2 border-heimdex-navy-500 bg-white px-[14px] py-[16px] text-[14px] tracking-[-0.35px] text-neutral-h-800 placeholder-neutral-h-300 focus:outline-none"
       />
+
+      <hr className="border-grayscale-100" />
 
       <div className="grid grid-cols-[1fr_120px] gap-2">
         <Dropdown
@@ -248,18 +242,26 @@ function TextEditingBody({
 
       <TextToolbar overlay={overlay} onChange={onUpdate} />
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
-      <TransformSection
-        overlay={overlay}
-        onChange={(transform: TransformProps) => onUpdate({ transform })}
-      />
+      {/* figma 1663:45821 — 변형 + 윤곽선 nudged into a 2-col row */}
+      <div className="grid grid-cols-2 gap-3">
+        <TransformSection
+          overlay={overlay}
+          onChange={(transform: TransformProps) => onUpdate({ transform })}
+        />
+        <StrokeBlock
+          effects={overlay.effects}
+          onChange={(effects: EffectsProps) => onUpdate({ effects })}
+        />
+      </div>
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
       <EffectsSection
         effects={overlay.effects}
         onChange={(effects: EffectsProps) => onUpdate({ effects })}
+        hideStroke
       />
     </div>
   );
@@ -269,35 +271,51 @@ function TextEditingBody({
 // Background editing body
 // ---------------------------------------------------------------------------
 
-function BackgroundEditingBody({
+export function BackgroundEditingBody({
   overlay,
   onUpdate,
   onReorder,
+  isPlaceholder = false,
 }: {
   overlay: EditorBackgroundOverlay;
   onUpdate: (updates: Partial<EditorBackgroundOverlay>) => void;
   onReorder: (direction: "front" | "back" | "forward" | "backward") => void;
+  isPlaceholder?: boolean;
 }) {
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", isPlaceholder && "opacity-60")}>
+      {/* Thin separator between the ActionBar (add background / insert
+          image) and the toolbar row. The 2026-05-18 spec calls out a
+          dedicated divider here so the add-row reads as a section of
+          its own rather than blending into the icon strip below. */}
+      <hr className="border-grayscale-100" />
+
       <BackgroundToolbar
         overlay={overlay}
         onChange={onUpdate}
         onReorder={onReorder}
       />
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
-      <TransformSection
-        overlay={overlay}
-        onChange={(transform: TransformProps) => onUpdate({ transform })}
-      />
+      {/* figma 1607:65622 — 변형 + 윤곽선 in one row, size/rotation lives only on Transform side */}
+      <div className="grid grid-cols-2 gap-3">
+        <TransformSection
+          overlay={overlay}
+          onChange={(transform: TransformProps) => onUpdate({ transform })}
+        />
+        <StrokeBlock
+          effects={overlay.effects}
+          onChange={(effects: EffectsProps) => onUpdate({ effects })}
+        />
+      </div>
 
-      <hr className="border-gray-100" />
+      <hr className="border-grayscale-100" />
 
       <EffectsSection
         effects={overlay.effects}
         onChange={(effects: EffectsProps) => onUpdate({ effects })}
+        hideStroke
       />
     </div>
   );
@@ -321,11 +339,11 @@ function NumericFieldWithUnit({
   onChange: (v: number) => void;
 }) {
   return (
-    <div className="flex items-center rounded-lg border border-gray-200 bg-white">
+    <div className="flex items-center rounded-lg border border-grayscale-200 bg-white">
       <button
         type="button"
         onClick={() => onChange(Math.max(min, value - 1))}
-        className="flex h-9 w-7 items-center justify-center text-gray-500 hover:text-gray-900"
+        className="flex h-9 w-7 items-center justify-center text-grayscale-500 hover:text-grayscale-800"
       >
         −
       </button>
@@ -338,13 +356,13 @@ function NumericFieldWithUnit({
           if (!Number.isFinite(raw)) return;
           onChange(Math.min(max, Math.max(min, raw)));
         }}
-        className="w-full min-w-0 border-x border-transparent bg-transparent py-1 text-center text-sm text-gray-900 focus:outline-none"
+        className="w-full min-w-0 border-x border-transparent bg-transparent py-1 text-center text-sm text-grayscale-800 focus:outline-none"
       />
-      <span className="px-1 text-[10px] text-gray-400">{unit}</span>
+      <span className="px-1 text-[10px] text-grayscale-400">{unit}</span>
       <button
         type="button"
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="flex h-9 w-7 items-center justify-center text-gray-500 hover:text-gray-900"
+        className="flex h-9 w-7 items-center justify-center text-grayscale-500 hover:text-grayscale-800"
       >
         +
       </button>
@@ -352,37 +370,7 @@ function NumericFieldWithUnit({
   );
 }
 
-function OverlaySelectorRow({
-  state,
-  onSelect,
-}: {
-  state: EditorState;
-  onSelect: (id: string | null) => void;
-}) {
-  const sorted = [...state.overlays].sort(
-    (a, b) => b.layerIndex - a.layerIndex,
-  );
-  return (
-    <div className="border-t border-gray-200 p-2">
-      <div className="flex flex-wrap gap-1">
-        {sorted.map((o) => (
-          <button
-            key={o.id}
-            type="button"
-            onClick={() => onSelect(o.id)}
-            className={cn(
-              "rounded border px-2 py-1 text-[10px]",
-              state.selectedOverlayId === o.id
-                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                : "border-gray-200 text-gray-600 hover:bg-gray-50",
-            )}
-          >
-            {o.kind === "text"
-              ? `T: ${(o as EditorTextOverlay).text.slice(0, 12) || "…"}`
-              : "BG"}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+// OverlaySelectorRow (the every-overlay ``T: ...`` chip strip) was
+// removed entirely on 2026-05-18 — it filled the right wrapper once
+// auto-subtitle wiring added many text overlays. Function definition
+// dropped to make sure nothing accidentally re-mounts it.

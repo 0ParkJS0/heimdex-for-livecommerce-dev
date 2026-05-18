@@ -7,7 +7,7 @@ import {
   DEFAULT_OVERLAY_DURATION_MS,
 } from "../lib/overlay-defaults";
 import { recomputeTimeline, getTotalDuration } from "../lib/timeline-math";
-import { DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
+import { DEFAULT_OUTPUT, DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 
 const INITIAL_STATE: EditorState = {
@@ -426,8 +426,27 @@ export function generateSubtitlesFromTranscript(
   speakerTranscript: string | undefined | null,
   clip: EditorClip,
 ): EditorSubtitle[] {
-  const turns = parseSpeakerTranscript(speakerTranscript);
-  if (turns.length === 0) return [];
+  let turns = parseSpeakerTranscript(speakerTranscript);
+  // Fallback: scenes without the ``SPEAKER_XX [m:ss]: text`` envelope
+  // (e.g., raw transcripts piped in from older indexing runs) parse to
+  // zero turns even when they carry usable text. When that happens we
+  // synthesize a single untimed turn from the original string so the
+  // even-distribution branch below still produces subtitles. Without
+  // this, /videos → editor entries with non-speaker-tagged transcripts
+  // landed in the editor with an empty subtitle list.
+  if (turns.length === 0) {
+    const raw = (speakerTranscript ?? "").trim();
+    if (!raw) return [];
+    turns = [
+      {
+        rawId: "UNTAGGED",
+        label: "A",
+        color: { bg: "", text: "", border: "" },
+        text: raw,
+        timestamp: null,
+      },
+    ];
+  }
 
   const clipDuration = clip.trimEndMs - clip.trimStartMs;
   const style = { ...DEFAULT_SUBTITLE_STYLE, fontSizePx: SUBTITLE_FONT_SIZE };
@@ -447,15 +466,42 @@ export function generateSubtitlesFromTranscript(
 
   const subtitles: EditorSubtitle[] = [];
 
+  // Transcripts can store timestamps two ways: absolute video time
+  // (offset from video start, so offsetMs ≥ clip.trimStartMs) or
+  // scene-relative (offset from scene start, so offsetMs ≥ 0 and
+  // < clipDuration). Sample EVERY turn against both interpretations and
+  // commit to whichever fits more turns inside the scene window — a
+  // single-turn sample (the previous heuristic) flipped to interpretRel
+  // on stray near-zero timestamps and crammed unrelated text into the
+  // scene. Ties break toward interpretAbs (the more conservative read).
+  // The timed loop below filters per-turn out-of-range entries so a
+  // mismatched transcript naturally produces few/no subtitles via the
+  // same gate, rather than via a brittle confidence threshold that
+  // dropped legitimate single-turn scenes (regression surfaced 2026-05-18).
+  const interpretAbs = (offsetMs: number) => offsetMs - clip.trimStartMs;
+  const interpretRel = (offsetMs: number) => offsetMs;
+  let interpretMs: (offsetMs: number) => number = interpretAbs;
+  if (turnsWithTs.length > 0) {
+    let absHits = 0;
+    let relHits = 0;
+    for (const { ms } of turnsWithTs) {
+      const a = interpretAbs(ms);
+      if (a >= 0 && a < clipDuration) absHits++;
+      const r = interpretRel(ms);
+      if (r >= 0 && r < clipDuration) relHits++;
+    }
+    interpretMs = absHits >= relHits ? interpretAbs : interpretRel;
+  }
+
   if (turnsWithTs.length > 0) {
     // Timestamp-based: chunk each turn, distribute chunks within the turn's time slot
     for (let i = 0; i < turnsWithTs.length; i++) {
       const { turn, ms: offsetMs } = turnsWithTs[i];
-      const relativeMs = offsetMs - clip.trimStartMs;
+      const relativeMs = interpretMs(offsetMs);
       if (relativeMs < 0 || relativeMs >= clipDuration) continue;
 
       const nextRelative = i + 1 < turnsWithTs.length
-        ? turnsWithTs[i + 1].ms - clip.trimStartMs
+        ? interpretMs(turnsWithTs[i + 1].ms)
         : clipDuration;
       const slotDuration = Math.min(nextRelative - relativeMs, DEFAULT_SUBTITLE_DURATION_MS * 3);
 
@@ -476,7 +522,18 @@ export function generateSubtitlesFromTranscript(
         });
       }
     }
-  } else {
+  }
+
+  // Fall through to even-distribution whenever the timestamp branch
+  // produced nothing — happens both when the transcript has no
+  // timestamps at all and when every timestamp fell outside the scene
+  // window. The earlier turnsWithTs-only gate stopped subtitles from
+  // showing for scenes whose stamps were slightly out of range, which
+  // surfaced as "subtitles aren't loading anymore" on 2026-05-18. The
+  // cross-runtime symptom this gate guarded against is rarer than
+  // legitimate off-by-a-bit stamps, so we accept the trade and let
+  // operators delete unwanted lines manually.
+  if (subtitles.length === 0) {
     // No timestamps: distribute all chunks evenly across clip
     const chunkDuration = Math.max(800, Math.floor(clipDuration / allChunks.length));
     if (chunkDuration < 500) return [];
@@ -598,16 +655,69 @@ export function useEditorState() {
     });
   }, [state.playheadMs, state.totalDurationMs]);
 
-  const addBackgroundOverlayAtPlayhead = useCallback(() => {
-    const { startMs, endMs } = _clampOverlayWindow(
-      state.playheadMs,
-      state.totalDurationMs,
-    );
-    dispatch({
-      type: "ADD_OVERLAY",
-      overlay: createDefaultBackgroundOverlay({ startMs, endMs }),
-    });
-  }, [state.playheadMs, state.totalDurationMs]);
+  // Auto-subtitle path needs explicit timing + pre-filled text. The
+  // playhead-based helper above can't fill text, and the V2 timeline only
+  // renders text overlays — V1 subtitles in state.subtitles never make it
+  // onto the timeline when isShortsEditorV2Enabled() is true. This helper
+  // lets the page-level effect insert a fully-formed overlay (timing+text)
+  // so generated subtitles light up the V2 timeline immediately.
+  const addTextOverlay = useCallback(
+    (params: { text: string; startMs: number; endMs: number }) => {
+      const overlay = createDefaultTextOverlay({
+        startMs: params.startMs,
+        endMs: params.endMs,
+      });
+      dispatch({
+        type: "ADD_OVERLAY",
+        overlay: { ...overlay, text: params.text },
+      });
+    },
+    [],
+  );
+
+  // Solid color backgrounds span the whole timeline AND fill the full
+  // canvas — used to cover the black letterbox area when a 16:9 clip
+  // sits inside the 9:16 frame (2026-05-18 review).
+  const addBackgroundOverlayAtPlayhead = useCallback(
+    (fillColor?: string) => {
+      const totalMs = state.totalDurationMs > 0
+        ? state.totalDurationMs
+        : DEFAULT_OVERLAY_DURATION_MS;
+      const overlay = createDefaultBackgroundOverlay({
+        startMs: 0,
+        endMs: totalMs,
+        fillColor,
+      });
+      overlay.transform = {
+        ...overlay.transform,
+        widthPx: DEFAULT_OUTPUT.width,
+        heightPx: DEFAULT_OUTPUT.height,
+      };
+      dispatch({ type: "ADD_OVERLAY", overlay });
+    },
+    [state.totalDurationMs],
+  );
+
+  // Image insert is intentionally NOT canvas-sized — the operator
+  // wants the picture to retain its natural aspect, centered on the
+  // preview, with the renderer's "contain" sizing fitting it into the
+  // canvas. We span the whole timeline so the image persists for the
+  // full composition, but we leave width/height at the factory default
+  // so the picture isn't stretched to the 9:16 frame.
+  const addImageBackgroundOverlayAtPlayhead = useCallback(
+    (imageUrl: string) => {
+      const totalMs = state.totalDurationMs > 0
+        ? state.totalDurationMs
+        : DEFAULT_OVERLAY_DURATION_MS;
+      const overlay = createDefaultBackgroundOverlay({
+        startMs: 0,
+        endMs: totalMs,
+        imageUrl,
+      });
+      dispatch({ type: "ADD_OVERLAY", overlay });
+    },
+    [state.totalDurationMs],
+  );
 
   const updateOverlay = useCallback(
     (id: string, updates: Partial<EditorOverlay>) => {
@@ -664,8 +774,10 @@ export function useEditorState() {
     removeSubtitle,
     selectSubtitle,
     // V2 overlay actions
+    addTextOverlay,
     addTextOverlayAtPlayhead,
     addBackgroundOverlayAtPlayhead,
+    addImageBackgroundOverlayAtPlayhead,
     updateOverlay,
     removeOverlay,
     selectOverlay,
