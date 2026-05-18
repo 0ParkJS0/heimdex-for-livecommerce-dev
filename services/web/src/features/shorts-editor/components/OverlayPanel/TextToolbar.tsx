@@ -8,6 +8,7 @@ import { useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { ColorPalettePopover } from "../primitives/ColorPalettePopover";
+import { ColorPalettePortal } from "../primitives/ColorPalettePortal";
 import {
   AlignCenterIcon,
   AlignLeftIcon,
@@ -189,14 +190,16 @@ function ColorTriggerButton({
   muted?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <div className="relative" ref={wrapRef}>
+    <>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="dialog"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="flex h-7 w-7 flex-col items-center justify-center gap-[2px] rounded"
       >
@@ -215,10 +218,9 @@ function ColorTriggerButton({
         />
       </button>
       {open && (
-        // right-0 으로 펼침 — 텍스트 툴바 의 색상 트리거가 우측 wrapper 우측 절반에
-        // 위치하므로 좌측 anchor 이면 팔레트 (260px) 가 wrapper 를 넘쳐 가로 스크롤이
-        // 발생한다. wrapper 안쪽으로 펼치도록 right-0 으로 통일.
-        <div className="absolute right-0 top-full z-50 mt-2">
+        // Portalled so the popover escapes the right-wrapper's overflow
+        // clip; ColorPalettePortal handles position + outside-click.
+        <ColorPalettePortal anchorRef={buttonRef} onClose={() => setOpen(false)}>
           <ColorPalettePopover
             color={color}
             onChange={(next) => {
@@ -228,8 +230,8 @@ function ColorTriggerButton({
             onClose={() => setOpen(false)}
             showOpacity={false}
           />
-        </div>
+        </ColorPalettePortal>
       )}
-    </div>
+    </>
   );
 }
