@@ -95,7 +95,6 @@ LABEL_PROMPT_SYSTEM = (
     "return an empty string."
 )
 
-
 LABEL_JSON_SCHEMA = {
     "name": "crop_label",
     "strict": True,
@@ -110,12 +109,11 @@ LABEL_JSON_SCHEMA = {
     },
 }
 
-
-# Default OWLv2 text queries, derived from the product categories the
-# old ``EnumerationPrompt.SYSTEM`` enumerated (cosmetics / food /
-# apparel / appliances / supplements). English on purpose — OWLv2 was
-# trained on English text-image pairs and degrades on Korean queries.
-DEFAULT_OWLV2_QUERIES: list[str] = [
+# Default text queries for OWLv2, derived from the product categories
+# enumerated in EnumerationPrompt.SYSTEM (cosmetics / food / apparel /
+# appliances / supplements). Tweak via --queries / --queries-file when
+# the segment's category is known.
+DEFAULT_QUERIES: list[str] = [
     # cosmetics
     "a cosmetic bottle",
     "a serum bottle",
@@ -123,26 +121,59 @@ DEFAULT_OWLV2_QUERIES: list[str] = [
     "a jar of cream",
     "a lipstick",
     "a cushion compact",
+    "a mask sheet pack", 
     # food
     "a food package",
     "a snack bag",
     "a frozen food pouch",
     "a bowl of food",
     "a plate of food",
+    "a bottle of beverage",
     # apparel
     "a sweater",
     "a jacket",
     "a shirt",
     "a dress",
     "a pair of pants",
+    "a coat",                   
+    "a skirt",               
+    # footwear
+    "a shoe",
+    "a pair of shoes",
+    "a sneaker",
+    "a boot",
+    "a sandal",
+    # bags & accessories
+    "a handbag",
+    "a backpack",
+    "a wallet",
+    "a watch",
+    "a pair of sunglasses",
+    "a hat",
+    "a scarf",
+    "a belt",
+    "a piece of jewelry",
     # appliances / kitchenware
     "a small kitchen appliance",
     "a pot",
     "a frying pan",
     "an electric appliance",
+    "a knife set",
+    # bedding / home
+    "a pillow",
+    "a blanket",
+    "a bedding set",
+    "a towel",
+    # health / personal care
+    "a massage device",
+    "a hair dryer",
+    "a toothbrush",
     # supplements / health
     "a supplement bottle",
     "a box of supplements",
+    # kids / pet
+    "a baby product",
+    "a pet food bag",
     # generic packaging fallback
     "a product box",
     "a product on a display table",
