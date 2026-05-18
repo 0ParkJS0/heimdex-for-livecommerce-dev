@@ -115,10 +115,14 @@ export function SubtitleBlock({
         onSeek?.(subtitle.startMs);
       }}
     >
-      {/* Invisible left resize zone — drag still works, no visible bar. */}
+      {/* Left resize zone — invisible by default; hovering surfaces a
+          2px white guide rail so the operator can find the edge. The
+          zone itself is 8px wide (tap target), the visual rail is
+          narrower so the block reads as a clean pill at rest. */}
       <div
-        className="absolute bottom-0 left-0 top-0 z-20 w-1.5 cursor-col-resize"
+        className="absolute bottom-1 left-0 top-1 z-20 w-2 cursor-col-resize after:absolute after:bottom-0 after:left-[3px] after:top-0 after:w-[2px] after:rounded-full after:bg-white/0 after:transition-colors hover:after:bg-white/70"
         onPointerDown={handlePointerDown("start")}
+        aria-label="자막 시작 시간 조정"
       />
 
       {/* Draggable body */}
@@ -133,9 +137,10 @@ export function SubtitleBlock({
         )}
       </div>
 
-      {/* Invisible right resize zone — drag still works, no visible bar. */}
+      {/* Right resize zone — mirror of the left, same hover affordance. */}
       <div
-        className="absolute bottom-0 right-0 top-0 z-20 w-1.5 cursor-col-resize"
+        className="absolute bottom-1 right-0 top-1 z-20 w-2 cursor-col-resize after:absolute after:bottom-0 after:right-[3px] after:top-0 after:w-[2px] after:rounded-full after:bg-white/0 after:transition-colors hover:after:bg-white/70"
+        aria-label="자막 종료 시간 조정"
         onPointerDown={handlePointerDown("end")}
       />
     </div>
