@@ -469,25 +469,42 @@ export function generateSubtitlesFromTranscript(
   // Transcripts can store timestamps two ways: absolute video time
   // (offset from video start, so offsetMs ≥ clip.trimStartMs) or
   // scene-relative (offset from scene start, so offsetMs ≥ 0 and
-  // < clipDuration). Detect at the turn-batch level by sampling the
-  // first timestamp — once we know the convention, both modes share
-  // the same slot-distribution math below. Mixed-mode transcripts are
-  // not supported (we'd need per-line probing); the assumption is the
-  // indexer uses one or the other consistently.
+  // < clipDuration). Pick the interpretation that places MORE turns
+  // inside the scene's window — sampling a single turn was brittle
+  // because a single near-zero stamp at the head of a mismatched
+  // transcript flipped the whole scene to interpretRel, which then
+  // crammed unrelated turns into the clip ("다른 런타임의 자막" symptom
+  // surfaced on 2026-05-18). Mixed-mode transcripts are not supported;
+  // when neither interpretation explains a majority of turns we leave
+  // the timed branch empty so the caller can fall back to even-
+  // distribution rather than emit misaligned subtitles.
   const interpretAbs = (offsetMs: number) => offsetMs - clip.trimStartMs;
   const interpretRel = (offsetMs: number) => offsetMs;
   let interpretMs: (offsetMs: number) => number = interpretAbs;
+  let interpretationConfident = false;
   if (turnsWithTs.length > 0) {
-    const first = interpretAbs(turnsWithTs[0].ms);
-    if (first < 0 || first >= clipDuration) {
-      const altFirst = interpretRel(turnsWithTs[0].ms);
-      if (altFirst >= 0 && altFirst < clipDuration) {
-        interpretMs = interpretRel;
-      }
+    let absHits = 0;
+    let relHits = 0;
+    for (const { ms } of turnsWithTs) {
+      const a = interpretAbs(ms);
+      if (a >= 0 && a < clipDuration) absHits++;
+      const r = interpretRel(ms);
+      if (r >= 0 && r < clipDuration) relHits++;
+    }
+    // Require a clear majority (≥60% of turns) to commit to an
+    // interpretation. The threshold lets a few stray turns from
+    // boundary-rounding survive without flipping the decision.
+    const threshold = Math.max(1, Math.ceil(turnsWithTs.length * 0.6));
+    if (absHits >= relHits && absHits >= threshold) {
+      interpretMs = interpretAbs;
+      interpretationConfident = true;
+    } else if (relHits > absHits && relHits >= threshold) {
+      interpretMs = interpretRel;
+      interpretationConfident = true;
     }
   }
 
-  if (turnsWithTs.length > 0) {
+  if (turnsWithTs.length > 0 && interpretationConfident) {
     // Timestamp-based: chunk each turn, distribute chunks within the turn's time slot
     for (let i = 0; i < turnsWithTs.length; i++) {
       const { turn, ms: offsetMs } = turnsWithTs[i];
@@ -518,11 +535,14 @@ export function generateSubtitlesFromTranscript(
     }
   }
 
-  // Fall through to even-distribution when the timestamp branch produced
-  // nothing — happens when the transcript carries scene-relative offsets
-  // (e.g., "0:00" means "scene start") that the absolute-timestamp math
-  // above filters out as negative relativeMs.
-  if (subtitles.length === 0) {
+  // Fall through to even-distribution only when the transcript HAS NO
+  // timestamps at all (i.e., the indexer emitted raw text without
+  // diarisation). When timestamps were present but we couldn't confidently
+  // pick an interpretation, the transcript is likely mismatched to this
+  // scene (cross-runtime artifact reported on 2026-05-18) — emitting
+  // evenly-distributed text would surface the wrong scene's content
+  // inside this clip. Skip rather than mislead.
+  if (subtitles.length === 0 && turnsWithTs.length === 0) {
     // No timestamps: distribute all chunks evenly across clip
     const chunkDuration = Math.max(800, Math.floor(clipDuration / allChunks.length));
     if (chunkDuration < 500) return [];
