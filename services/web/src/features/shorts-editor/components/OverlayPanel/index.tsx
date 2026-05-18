@@ -218,6 +218,8 @@ function TextEditingBody({
         className="h-[114px] w-full resize-none rounded-[10px] border-2 border-heimdex-navy-500 bg-white px-[14px] py-[16px] text-[14px] tracking-[-0.35px] text-neutral-h-800 placeholder-neutral-h-300 focus:outline-none"
       />
 
+      <hr className="border-grayscale-100" />
+
       <div className="grid grid-cols-[1fr_120px] gap-2">
         <Dropdown
           value={overlay.fontFamily}
@@ -280,6 +282,12 @@ function BackgroundEditingBody({
 }) {
   return (
     <div className={cn("space-y-4", isPlaceholder && "opacity-60")}>
+      {/* Thin separator between the ActionBar (add background / insert
+          image) and the toolbar row. The 2026-05-18 spec calls out a
+          dedicated divider here so the add-row reads as a section of
+          its own rather than blending into the icon strip below. */}
+      <hr className="border-grayscale-100" />
+
       <BackgroundToolbar
         overlay={overlay}
         onChange={onUpdate}
