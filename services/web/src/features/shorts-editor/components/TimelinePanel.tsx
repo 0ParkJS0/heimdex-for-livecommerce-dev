@@ -293,10 +293,13 @@ export function TimelinePanel({
     }
   }, [playheadMs, isPlaying, zoom]);
 
-  // figma: 1669:154010 (펼침) / 1669:49002 (접힘) — zoom ≥ 100 일 때 자막 트랙 펼침
-  const isSubtitleExpanded = zoom >= 100;
-  // playhead spans ruler (24px) + clip track (48px) + subtitle track (32 또는 48) + padding
-  const trackHeight = 88 + (isSubtitleExpanded ? 48 : 32);
+  // Subtitle track height is now locked to 48px regardless of zoom
+  // (2026-05-18 review — operators expected the row's vertical extent
+  // to stay constant while zoom only changed horizontal span). The
+  // ``expanded`` prop on SubtitleTrack is no longer load-bearing.
+  const isSubtitleExpanded = true;
+  // playhead spans ruler (24px) + clip track (48px) + subtitle track (48px) + padding
+  const trackHeight = 88 + 48;
 
   return (
     <div className="flex h-full flex-col">
