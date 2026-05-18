@@ -382,8 +382,15 @@ export function TimelinePanel({
         className="flex-1 overflow-x-auto overflow-y-hidden"
       >
         <div className="relative" style={{ minWidth: "100%" }}>
-          {/* Ruler */}
-          <TimelineRuler totalDurationMs={totalDurationMs} zoom={zoom} />
+          {/* Ruler — clicking anywhere on the ruler seeks the playhead
+              to that timecode. Reuses the same onSeek the playhead drag
+              already calls, so audio + preview sync paths converge on
+              one path. */}
+          <TimelineRuler
+            totalDurationMs={totalDurationMs}
+            zoom={zoom}
+            onSeek={onSeek}
+          />
 
           {/* Subtitle track — figma 1669:49003: subtitles row sits ABOVE clips */}
           <SubtitleTrack

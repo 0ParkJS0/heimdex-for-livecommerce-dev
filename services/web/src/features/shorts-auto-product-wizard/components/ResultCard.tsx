@@ -1,7 +1,5 @@
 "use client";
 
-import { SquareArrowOutUpRight } from "lucide-react";
-
 import type { JobStatusResponse } from "@/lib/types/shorts-auto-product-wizard";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +19,12 @@ interface Props {
   productLabels?: string[];
   // figma: 1699:252725 (쇼츠 카드) — 우측 컬럼 요약 텍스트. 50자(공백 포함) 초과 시 ellipsis truncate.
   summary?: string | null;
+  /**
+   * Custom title set by the user via the "제목 변경" menu entry. When
+   * present, replaces the default "쇼츠 {ordinal}" headline so the
+   * operator's chosen label (e.g., "센트롬_강조_1") sticks.
+   */
+  title?: string | null;
   onRename: () => void;
   onSave?: () => void;
   onExport?: () => void;
@@ -51,25 +55,39 @@ export function ResultCard({
   lengthSeconds,
   productLabels = [],
   summary,
+  title,
   onRename,
   onSave,
   onExport,
   onCancel,
   onOpenEditor,
 }: Props) {
+  const displayTitle = title && title.trim().length > 0 ? title : `쇼츠 ${ordinal}`;
   const state = deriveResultChipState(child);
   const isCompleted = state === "done";
   const progressPct = Math.max(0, Math.min(100, Math.round(child.progress_pct)));
   const summaryText = truncateSummary(summary);
 
+  // The standalone "open editor" icon button (lucide/square-arrow-out-up-
+  // right) was removed per the 2026-05-18 goal capture; the affordance now
+  // lives on the thumbnail itself. Clicking the thumbnail invokes
+  // onOpenEditor when the render is completed, matching the user-facing
+  // mental model ("open this clip" = "click the clip").
   return (
     <article
       className="flex h-[253px] w-[287px] gap-[10px] rounded-card bg-white p-[10px] shadow-card"
       data-testid={`result-card-${ordinal}`}
     >
-      <div className="relative h-full aspect-[9/16] shrink-0 overflow-hidden rounded-[8px] bg-grayscale-800">
+      <button
+        type="button"
+        onClick={onOpenEditor}
+        disabled={!isCompleted}
+        aria-label={isCompleted ? "편집 페이지 열기" : "쇼츠 생성 중"}
+        data-testid="result-card-open-editor"
+        className="group relative h-full aspect-[9/16] shrink-0 overflow-hidden rounded-[8px] bg-grayscale-800 text-left transition-opacity disabled:cursor-not-allowed"
+      >
         {productLabels.length > 0 ? (
-          <div className="absolute left-[8px] bottom-[8px] flex flex-wrap gap-[4px]">
+          <div className="absolute left-[8px] bottom-[8px] z-10 flex flex-wrap gap-[4px]">
             {productLabels.slice(0, 2).map((label, i) => (
               <span
                 key={`${label}-${i}`}
@@ -80,17 +98,24 @@ export function ResultCard({
             ))}
           </div>
         ) : null}
-      </div>
+        {isCompleted ? (
+          <span
+            aria-hidden
+            className="absolute inset-0 z-0 bg-transparent transition-colors group-hover:bg-black/10"
+          />
+        ) : null}
+      </button>
 
       <div className="flex h-full flex-1 flex-col justify-between py-[4px]">
         <p
           className={cn(
-            "font-pretendard text-[14px] font-semibold tracking-[-0.35px] leading-[1.4]",
+            "font-pretendard text-[14px] font-semibold tracking-[-0.35px] leading-[1.4] line-clamp-2",
             isCompleted ? "text-grayscale-800" : "text-grayscale-800",
           )}
           data-testid="result-card-title"
+          title={displayTitle}
         >
-          쇼츠 {ordinal}
+          {displayTitle}
         </p>
 
         <dl className="flex flex-col gap-[8px]">
@@ -137,16 +162,6 @@ export function ResultCard({
           onExport={onExport}
           onCancel={onCancel}
         />
-        <button
-          type="button"
-          aria-label="편집 페이지 열기"
-          data-testid="result-card-open-editor"
-          onClick={onOpenEditor}
-          disabled={!isCompleted}
-          className="inline-flex h-[24px] w-[24px] items-center justify-center rounded-[6px] text-grayscale-500 hover:bg-neutral-h-50 disabled:text-neutral-h-300 disabled:hover:bg-transparent"
-        >
-          <SquareArrowOutUpRight className="h-[16px] w-[16px]" />
-        </button>
       </div>
     </article>
   );
