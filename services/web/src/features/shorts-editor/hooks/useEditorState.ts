@@ -469,19 +469,18 @@ export function generateSubtitlesFromTranscript(
   // Transcripts can store timestamps two ways: absolute video time
   // (offset from video start, so offsetMs ≥ clip.trimStartMs) or
   // scene-relative (offset from scene start, so offsetMs ≥ 0 and
-  // < clipDuration). Pick the interpretation that places MORE turns
-  // inside the scene's window — sampling a single turn was brittle
-  // because a single near-zero stamp at the head of a mismatched
-  // transcript flipped the whole scene to interpretRel, which then
-  // crammed unrelated turns into the clip ("다른 런타임의 자막" symptom
-  // surfaced on 2026-05-18). Mixed-mode transcripts are not supported;
-  // when neither interpretation explains a majority of turns we leave
-  // the timed branch empty so the caller can fall back to even-
-  // distribution rather than emit misaligned subtitles.
+  // < clipDuration). Sample EVERY turn against both interpretations and
+  // commit to whichever fits more turns inside the scene window — a
+  // single-turn sample (the previous heuristic) flipped to interpretRel
+  // on stray near-zero timestamps and crammed unrelated text into the
+  // scene. Ties break toward interpretAbs (the more conservative read).
+  // The timed loop below filters per-turn out-of-range entries so a
+  // mismatched transcript naturally produces few/no subtitles via the
+  // same gate, rather than via a brittle confidence threshold that
+  // dropped legitimate single-turn scenes (regression surfaced 2026-05-18).
   const interpretAbs = (offsetMs: number) => offsetMs - clip.trimStartMs;
   const interpretRel = (offsetMs: number) => offsetMs;
   let interpretMs: (offsetMs: number) => number = interpretAbs;
-  let interpretationConfident = false;
   if (turnsWithTs.length > 0) {
     let absHits = 0;
     let relHits = 0;
@@ -491,20 +490,10 @@ export function generateSubtitlesFromTranscript(
       const r = interpretRel(ms);
       if (r >= 0 && r < clipDuration) relHits++;
     }
-    // Require a clear majority (≥60% of turns) to commit to an
-    // interpretation. The threshold lets a few stray turns from
-    // boundary-rounding survive without flipping the decision.
-    const threshold = Math.max(1, Math.ceil(turnsWithTs.length * 0.6));
-    if (absHits >= relHits && absHits >= threshold) {
-      interpretMs = interpretAbs;
-      interpretationConfident = true;
-    } else if (relHits > absHits && relHits >= threshold) {
-      interpretMs = interpretRel;
-      interpretationConfident = true;
-    }
+    interpretMs = absHits >= relHits ? interpretAbs : interpretRel;
   }
 
-  if (turnsWithTs.length > 0 && interpretationConfident) {
+  if (turnsWithTs.length > 0) {
     // Timestamp-based: chunk each turn, distribute chunks within the turn's time slot
     for (let i = 0; i < turnsWithTs.length; i++) {
       const { turn, ms: offsetMs } = turnsWithTs[i];
