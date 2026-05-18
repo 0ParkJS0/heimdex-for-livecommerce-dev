@@ -503,7 +503,9 @@ function OverviewPanel({
   return (
     // figma: 1602:38512 — 행동요약 + 스크립트 sections; the surrounding card
     // (radius/shadow/padding) is provided by VideoDetailPage's outer wrapper.
-    <div className="flex flex-col gap-6">
+    // Constrained to h-full + flex column so only the 스크립트 lane scrolls
+    // (2026-05-18 review): the outer card wrapper hides its scrollbar.
+    <div className="flex h-full min-h-0 flex-col gap-6">
       {/* figma: 1602:38474 (행동요약) — 제목 우측에 복사 아이콘 + AI/수정/재생성 뱃지 */}
       <section className="flex flex-col gap-5">
         <div className="flex items-center gap-3">
@@ -557,7 +559,7 @@ function OverviewPanel({
       </section>
 
       {/* figma: 1602:38542 (스크립트) — 제목 우측에 복사 아이콘, 본문만 독립 스크롤 */}
-      <section className="flex flex-col gap-5">
+      <section className="flex min-h-0 flex-1 flex-col gap-5">
         <div className="flex items-center gap-3">
           <h3 className="text-lg font-semibold tracking-[-0.45px] text-neutral-h-black">스크립트</h3>
           <button
@@ -571,7 +573,7 @@ function OverviewPanel({
           </button>
         </div>
         {hasDiarization ? (
-          <div className="max-h-[800px] overflow-y-auto space-y-3">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {diarizedScenes.map((ds, si) => (
               <div key={si}>
                 <div className="space-y-1">
@@ -591,7 +593,7 @@ function OverviewPanel({
             ))}
           </div>
         ) : (
-          <div className="max-h-[800px] overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+          <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap pr-1 text-sm leading-relaxed text-gray-700">
             {fullTranscript || "스크립트가 없습니다."}
           </div>
         )}
@@ -1425,10 +1427,16 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
             </nav>
           )}
 
-          {/* Active panel scroll surface — fixed-height card keeps the
-              outer layout stable; long lists scroll inside the card so
-              the surrounding columns never reflow. */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Active panel surface. Overview hides outer scroll so only
+              its script lane scrolls (2026-05-18 review). Other views
+              keep an outer scroll fallback so paginated lists / wizard
+              steps don't get clipped. */}
+          <div
+            className={cn(
+              "min-h-0 flex-1",
+              view === "overview" ? "overflow-hidden" : "overflow-y-auto",
+            )}
+          >
             {view === "overview" ? (
               <OverviewPanel
                 scenes={scenes}

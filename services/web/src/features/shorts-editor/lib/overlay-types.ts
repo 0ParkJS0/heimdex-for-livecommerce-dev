@@ -51,7 +51,7 @@ export interface EditorTextOverlay {
 
   text: string;
 
-  fontFamily: "Pretendard" | "Noto Sans KR";
+  fontFamily: string;
   fontSizePx: number; // [8, 200]
   fontWeight: number; // [100, 900]
   italic: boolean;
@@ -138,7 +138,7 @@ export interface WireTextOverlay {
   transform: WireTransform;
   effects: WireEffects;
   text: string;
-  font_family: "Pretendard" | "Noto Sans KR";
+  font_family: string;
   font_size_px: number;
   font_weight: number;
   italic: boolean;

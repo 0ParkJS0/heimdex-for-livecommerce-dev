@@ -11,8 +11,14 @@
  * CSS variable).
  */
 const FONT_FAMILY_CSS_MAP: Record<string, string> = {
-  Pretendard: "var(--font-pretendard)",
-  "Noto Sans KR": "var(--font-noto-kr)",
+  Pretendard: "var(--font-pretendard), 'Pretendard'",
+  "Noto Sans KR": "var(--font-noto-kr), 'Noto Sans KR'",
+  // Korean web fonts loaded via @import in globals.css. The string values
+  // map to the @font-face family declared by the upstream stylesheet.
+  "S-Core Dream": "'S-Core Dream', sans-serif",
+  NanumSquare: "'NanumSquare', sans-serif",
+  SUIT: "'SUIT', 'SUIT-Variable', sans-serif",
+  KoPubWorldDotum: "'KoPubWorldDotum', 'KoPub World Dotum', sans-serif",
 };
 
 export function resolveFontFamily(name: string | undefined | null): string {

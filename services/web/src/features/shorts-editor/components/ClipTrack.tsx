@@ -38,7 +38,7 @@ export function ClipTrack({
   onReorderClips,
   onSeek,
 }: ClipTrackProps) {
-  const totalWidth = msToPixels(totalDurationMs + 2000, zoom);
+  const totalWidth = msToPixels(totalDurationMs, zoom);
 
   // Require 8px of movement before starting a drag (so clicks still work for select)
   const sensors = useSensors(
@@ -81,7 +81,7 @@ export function ClipTrack({
     >
       <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
         <div
-          className="relative h-12 bg-grayscale-800/50"
+          className="relative h-12"
           style={{ width: totalWidth }}
           onClick={handleTrackClick}
         >

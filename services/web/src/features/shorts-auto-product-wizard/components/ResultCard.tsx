@@ -95,7 +95,6 @@ export function ResultCard({
   const state = deriveResultChipState(child);
   const isCompleted = state === "done";
   const progressPct = Math.max(0, Math.min(100, Math.round(child.progress_pct)));
-  const summaryText = truncateSummary(summary);
   // Resolve product chip rows: up to MAX_VISIBLE chips plus a single
   // "+N" overflow tag when there are more labels than slots.
   const visibleChips = productLabels.slice(0, MAX_VISIBLE_PRODUCT_CHIPS);
@@ -112,6 +111,7 @@ export function ResultCard({
     sceneId: string;
   } | null>(null);
   const [thumbStage, setThumbStage] = useState<"cloud" | "agent" | "placeholder">("cloud");
+  const [renderSummary, setRenderSummary] = useState<string | null>(null);
 
   useEffect(() => {
     if (!child.render_job_id) return;
@@ -128,6 +128,14 @@ export function ResultCard({
             videoId: job.thumbnail_video_id,
             sceneId: job.thumbnail_scene_id,
           });
+        }
+        // RenderJobResponse.summary is populated post-render via the
+        // summary_service. The wizard's scan-order poll doesn't echo it
+        // back, so we read it lazily here and use it as the fallback
+        // when ``child.render_summary`` (optimistic field, may be
+        // undefined in production) is null.
+        if (job.summary) {
+          setRenderSummary(job.summary);
         }
       } catch {
         // Card sticks to the agent / placeholder fallback chain.
@@ -159,6 +167,13 @@ export function ResultCard({
     setThumbStage((prev) => (prev === "cloud" ? "agent" : "placeholder"));
   };
 
+  // Summary resolution: prefer the (optimistic) field on the wizard
+  // poll response; fall back to the render-job's summary we fetched
+  // lazily above. While both are empty, a skeleton placeholder reads
+  // "요약 생성 중…" so the row doesn't collapse.
+  const resolvedSummary = summary ?? renderSummary;
+  const summaryText = truncateSummary(resolvedSummary);
+
   return (
     <article
       className="relative flex h-[253px] w-[287px] items-start overflow-clip rounded-card border border-grayscale-100 bg-white"
@@ -170,8 +185,18 @@ export function ResultCard({
         disabled={!isCompleted}
         aria-label={isCompleted ? "편집 페이지 열기" : "쇼츠 생성 중"}
         data-testid="result-card-open-editor"
-        className="group relative h-full w-[150px] shrink-0 overflow-hidden bg-grayscale-800 text-left transition-opacity disabled:cursor-not-allowed"
+        className="group relative h-full w-[150px] shrink-0 overflow-hidden bg-heimdex-navy-500 text-left transition-opacity disabled:cursor-not-allowed"
       >
+        {/* Heimdex-navy skeleton — visible until the thumbnail resolves
+            so the card never flashes a plain dark block while the
+            render-job fetch (or the slow cloud thumbnail) is in flight. */}
+        <div
+          aria-hidden
+          className={cn(
+            "absolute inset-0 animate-pulse bg-gradient-to-br from-heimdex-navy-500 to-heimdex-navy-600 transition-opacity",
+            thumbnailSrc ? "opacity-100" : "opacity-100",
+          )}
+        />
         {thumbnailSrc ? (
           <img
             src={thumbnailSrc}

@@ -14,6 +14,10 @@ interface SubtitleBlockProps {
   isSelected: boolean;
   onSelect: () => void;
   onUpdate: (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) => void;
+  // Click-snap: when the user clicks a subtitle block we move the
+  // playhead to its start so the preview jumps to the matching frame
+  // (2026-05-18 review — the playhead was previously lagging behind).
+  onSeek?: (ms: number) => void;
 }
 
 export function SubtitleBlock({
@@ -23,6 +27,7 @@ export function SubtitleBlock({
   isSelected,
   onSelect,
   onUpdate,
+  onSeek,
 }: SubtitleBlockProps) {
   const leftPx = msToPixels(subtitle.startMs, zoom);
   // Subtract a 2px gutter from the rendered width so back-to-back
@@ -97,13 +102,18 @@ export function SubtitleBlock({
         // text; selected = heimdex-navy/100 (light blue) to read against the
         // neutral-50 lane. Compressed columns (≤14px wide) drop text but keep
         // the same fill so the user can still hover/select.
+        // outline (not ring) so the highlight survives overflow-hidden.
         "group absolute bottom-1 top-1 flex items-center overflow-hidden rounded-[10px]",
         isSelected
-          ? "z-10 bg-heimdex-navy-300/40 ring-2 ring-heimdex-navy-500"
+          ? "z-10 bg-heimdex-navy-300/40 outline outline-2 -outline-offset-2 outline-heimdex-navy-500"
           : "bg-heimdex-navy-300 hover:brightness-110",
       )}
       style={{ left: leftPx, width: widthPx }}
-      onClick={(e) => { e.stopPropagation(); onSelect(); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+        onSeek?.(subtitle.startMs);
+      }}
     >
       {/* Left resize handle */}
       <div
