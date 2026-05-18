@@ -14,6 +14,7 @@ import {
 } from "@/components/layout/TopHeaderActionsContext";
 import { cn } from "@/lib/utils";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
+import { recomputeTimeline } from "../lib/timeline-math";
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import type { RenderStatus } from "../hooks/useCompositionExport";
 import { usePresets } from "../hooks/usePresets";
@@ -438,7 +439,16 @@ export function ShortsEditorPage() {
           : res.scenes;
 
         const sourceType = res.source_type ?? "gdrive";
-        const clips = scenes.map((scene) => createClipFromScene(scene, videoId, sourceType));
+        // createClipFromScene returns clips with timelineStartMs=0; the
+        // reducer normally lays them out via recomputeTimeline on
+        // INIT_FROM_SCENES, but the original array we hold here stays
+        // unmodified. Run the same layout locally so the per-clip
+        // ``clip.timelineStartMs`` we feed into the subtitle generator
+        // matches what the reducer applies — otherwise every scene's
+        // subtitles stack at timeline 0 and never appear on later clips.
+        const clips = recomputeTimeline(
+          scenes.map((scene) => createClipFromScene(scene, videoId, sourceType)),
+        );
         initFromScenes(videoId, sourceType, clips);
 
         // Auto-generate subtitles when entering with a curated scene set
