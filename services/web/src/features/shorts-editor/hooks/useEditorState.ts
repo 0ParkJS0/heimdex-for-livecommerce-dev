@@ -7,7 +7,7 @@ import {
   DEFAULT_OVERLAY_DURATION_MS,
 } from "../lib/overlay-defaults";
 import { recomputeTimeline, getTotalDuration } from "../lib/timeline-math";
-import { DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
+import { DEFAULT_OUTPUT, DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 
 const INITIAL_STATE: EditorState = {
@@ -675,36 +675,51 @@ export function useEditorState() {
     [],
   );
 
+  // Solid + image background adds now persist for the whole timeline
+  // and size to the full canvas (2026-05-18 review). The operator no
+  // longer needs to drag the block to extend it — the new overlay spans
+  // 0 → totalDuration and fills the 9:16 frame so a horizontal clip's
+  // top/bottom letterbox is covered by the chosen color (or image).
+  // When the timeline is empty we fall back to the DEFAULT_OVERLAY
+  // duration so the overlay still has a non-zero window.
   const addBackgroundOverlayAtPlayhead = useCallback(
     (fillColor?: string) => {
-      const { startMs, endMs } = _clampOverlayWindow(
-        state.playheadMs,
-        state.totalDurationMs,
-      );
-      dispatch({
-        type: "ADD_OVERLAY",
-        overlay: createDefaultBackgroundOverlay({ startMs, endMs, fillColor }),
+      const totalMs = state.totalDurationMs > 0
+        ? state.totalDurationMs
+        : DEFAULT_OVERLAY_DURATION_MS;
+      const overlay = createDefaultBackgroundOverlay({
+        startMs: 0,
+        endMs: totalMs,
+        fillColor,
       });
+      overlay.transform = {
+        ...overlay.transform,
+        widthPx: DEFAULT_OUTPUT.width,
+        heightPx: DEFAULT_OUTPUT.height,
+      };
+      dispatch({ type: "ADD_OVERLAY", overlay });
     },
-    [state.playheadMs, state.totalDurationMs],
+    [state.totalDurationMs],
   );
 
-  // "Insert image" path — seeds a new background overlay with the
-  // data URL the file picker returned. Kept separate from the solid-
-  // background factory so the call sites don't have to juggle a
-  // discriminated argument shape.
   const addImageBackgroundOverlayAtPlayhead = useCallback(
     (imageUrl: string) => {
-      const { startMs, endMs } = _clampOverlayWindow(
-        state.playheadMs,
-        state.totalDurationMs,
-      );
-      dispatch({
-        type: "ADD_OVERLAY",
-        overlay: createDefaultBackgroundOverlay({ startMs, endMs, imageUrl }),
+      const totalMs = state.totalDurationMs > 0
+        ? state.totalDurationMs
+        : DEFAULT_OVERLAY_DURATION_MS;
+      const overlay = createDefaultBackgroundOverlay({
+        startMs: 0,
+        endMs: totalMs,
+        imageUrl,
       });
+      overlay.transform = {
+        ...overlay.transform,
+        widthPx: DEFAULT_OUTPUT.width,
+        heightPx: DEFAULT_OUTPUT.height,
+      };
+      dispatch({ type: "ADD_OVERLAY", overlay });
     },
-    [state.playheadMs, state.totalDurationMs],
+    [state.totalDurationMs],
   );
 
   const updateOverlay = useCallback(

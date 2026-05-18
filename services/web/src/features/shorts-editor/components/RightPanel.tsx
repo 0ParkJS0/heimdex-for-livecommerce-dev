@@ -38,7 +38,12 @@ export function RightPanel({
       className="flex h-full flex-col gap-[16px] p-[20px]"
     >
       <RightPanelTabs active={activeTab} onChange={setActiveTab} />
-      <div className="min-h-0 flex-1 overflow-y-auto">{body}</div>
+      <div
+        className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden"
+        style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
+        {body}
+      </div>
     </div>
   );
 }

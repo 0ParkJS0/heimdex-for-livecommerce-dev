@@ -28,10 +28,7 @@ import type {
 } from "../../lib/overlay-types";
 import type { EditorState } from "../../lib/types";
 
-const FONT_OPTIONS = [
-  { value: "Pretendard", label: "Pretendard" },
-  { value: "Noto Sans KR", label: "Noto Sans KR" },
-] as const;
+import { FONT_OPTIONS } from "../../constants";
 
 interface OverlayPanelProps {
   state: EditorState;

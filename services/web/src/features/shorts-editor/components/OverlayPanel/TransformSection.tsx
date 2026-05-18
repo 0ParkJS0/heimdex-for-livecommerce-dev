@@ -44,7 +44,11 @@ export function TransformSection({ overlay, onChange }: TransformSectionProps) {
           resulting transform.x / transform.y / transform.rotationDeg
           values. Typing in either box still updates the overlay, but
           we drop the +/- stepper chrome per 2026-05-18 figma. */}
-      <div className="grid grid-cols-2 gap-2">
+      {/* 회전 column slimmed to a fixed 60px (right-aligned) so the 위치
+          column can spread X/Y values without clipping. Operators rarely
+          type free-form degrees here — the box mirrors the preview drag
+          rotation, so a narrow display column is enough. */}
+      <div className="grid grid-cols-[1fr_60px] gap-2">
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-medium text-grayscale-500">위치</span>
           <ValueBoxXY
@@ -66,6 +70,7 @@ export function TransformSection({ overlay, onChange }: TransformSectionProps) {
             onChange={(v) => updateTransform({ rotationDeg: v })}
             suffix="°"
             ariaLabel="overlay rotation"
+            className="px-1"
           />
         </div>
       </div>

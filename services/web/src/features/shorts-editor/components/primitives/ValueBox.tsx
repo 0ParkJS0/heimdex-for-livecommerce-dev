@@ -93,13 +93,14 @@ export function ValueBoxXY({
   className,
   ariaLabel,
 }: ValueBoxXYProps) {
-  // Tightened on 2026-05-18 — px-1 / gap-0.5 / no extra ml on the Y
-  // label so "X00 Y00" fits inside the narrow column the 위치 sub-
-  // control sits in. Letter prefixes hug the numeric values directly.
+  // Tightened again on 2026-05-18 (round 2) — drop gap to 0 and slim
+  // padding to px-0.5 so 3-digit values (X 100 Y 100) no longer poke
+  // past the rounded container in the narrow 위치 column. Letter
+  // prefixes sit flush against the inputs.
   return (
     <div
       className={cn(
-        "flex h-9 items-center justify-center gap-0.5 rounded-lg border border-grayscale-200 bg-white px-1",
+        "flex h-9 items-center justify-center gap-0 rounded-lg border border-grayscale-200 bg-white px-0.5",
         className,
       )}
       aria-label={ariaLabel}
@@ -187,7 +188,7 @@ function ValueInput({
         onChange(next);
       }}
       aria-label={ariaLabel}
-      className="w-7 border-0 bg-transparent p-0 text-center text-sm text-grayscale-800 focus:outline-none"
+      className="w-8 border-0 bg-transparent p-0 text-center text-sm text-grayscale-800 focus:outline-none"
     />
   );
 }

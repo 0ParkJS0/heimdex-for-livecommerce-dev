@@ -31,6 +31,10 @@ export const DEFAULT_SUBTITLE_DURATION_MS = 3000;
 export const MAX_COMPOSITION_DURATION_MS = 300_000; // 5 minutes
 
 export const FONT_OPTIONS = [
-  { value: "Pretendard", label: "Pretendard" },
+  { value: "Pretendard", label: "프리텐다드" },
   { value: "Noto Sans KR", label: "Noto Sans KR" },
+  { value: "S-Core Dream", label: "에스코어드림" },
+  { value: "NanumSquare", label: "나눔스퀘어" },
+  { value: "SUIT", label: "수트(SUIT)" },
+  { value: "KoPubWorldDotum", label: "KoPub돋움" },
 ] as const;

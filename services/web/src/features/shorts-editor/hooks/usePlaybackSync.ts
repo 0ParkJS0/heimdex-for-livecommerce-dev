@@ -148,14 +148,19 @@ export function usePlaybackSync({
       const elapsed = performance.now() - startTimeRef.current;
       const newPlayhead = playheadAtStartRef.current + elapsed;
 
-      // Check if we've gone past all clips
+      // Check if we've gone past all clips — loop back to 0 so a
+      // multi-clip composition replays automatically without the user
+      // having to scrub back to the start.
       const totalEnd = clips.length > 0
         ? clips[clips.length - 1].timelineStartMs + getClipDuration(clips[clips.length - 1])
         : 0;
 
       if (newPlayhead >= totalEnd) {
-        onPlayheadChange(totalEnd);
-        onPlayingChange(false);
+        onPlayheadChange(0);
+        playheadAtStartRef.current = 0;
+        startTimeRef.current = performance.now();
+        lastClipIndexRef.current = -1;
+        animFrameRef.current = requestAnimationFrame(tick);
         return;
       }
 
@@ -188,9 +193,10 @@ export function usePlaybackSync({
       const nextClip = clips[nextClipIndex];
       onPlayheadChange(nextClip.timelineStartMs);
     } else {
-      onPlayingChange(false);
+      // Loop back to the start so the composition keeps playing.
+      onPlayheadChange(0);
     }
-  }, [currentSource, clips, onPlayheadChange, onPlayingChange]);
+  }, [currentSource, clips, onPlayheadChange]);
 
   const seekTo = useCallback(
     (ms: number) => {

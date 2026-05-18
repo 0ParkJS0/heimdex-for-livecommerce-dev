@@ -485,6 +485,7 @@ export function TimelinePanel({
             onSelectSubtitle={onSelectSubtitle}
             onUpdateSubtitle={onUpdateSubtitle}
             onAddSubtitle={onAddSubtitle}
+            onSeek={onSeek}
             expanded={isSubtitleExpanded}
           />
 
