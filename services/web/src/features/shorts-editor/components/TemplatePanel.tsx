@@ -159,6 +159,10 @@ function StarterTemplateCard({
               color: style.fontColor,
               textShadow: shadowCss,
               WebkitTextStroke: strokeCss,
+              // Match OverlayRenderer so the card preview shows the
+              // same stroke-behind look the canvas will render after
+              // the operator clicks the template.
+              paintOrder: strokeCss ? "stroke fill" : undefined,
               wordBreak: "keep-all",
             }}
           >

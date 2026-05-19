@@ -127,7 +127,21 @@ function TextOverlayBox({
   return (
     <div
       data-overlay-id={overlay.id}
-      style={{ ...containerStyle, opacity: overlay.effects.opacity }}
+      style={{
+        ...containerStyle,
+        opacity: overlay.effects.opacity,
+        // 2026-05-19 — without `width: max-content` the absolute box's
+        // auto-width is capped by the parent's right edge. When the
+        // operator drags the overlay near the right side of the canvas
+        // the available right-of-anchor space shrinks, forcing the
+        // <p>'s pre-wrap text to wrap and the box to grow tall
+        // (operator reported the caption "stretching vertically as it
+        // approached the right edge"). max-content keeps the box at
+        // the text's intrinsic single-line width regardless of where
+        // it sits on the canvas; visually it may extend past the
+        // preview frame, but the box no longer reshapes mid-drag.
+        width: "max-content",
+      }}
       className={cn(
         "absolute select-none cursor-grab active:cursor-grabbing",
         isSelected && "ring-2 ring-indigo-400 ring-offset-1",
@@ -312,8 +326,19 @@ function positionContainerStyle(
 function textShadowAndStrokeStyles(e: EffectsProps): CSSProperties {
   const out: CSSProperties = {};
   if (e.stroke) {
-    (out as CSSProperties & { WebkitTextStroke?: string }).WebkitTextStroke =
-      `${e.stroke.widthPx}px ${e.stroke.color}`;
+    // 2026-05-19 — paint-order: stroke fill so the stroke renders
+    // BEHIND the glyph fill. The default paint order for SVG/text
+    // (fill, stroke, markers) draws the stroke on top, so the
+    // letter shape gets visually eaten by the stroke at higher
+    // widths. Putting `stroke` first means the fill sits cleanly
+    // on top — the outline reads as a halo behind the letter, not
+    // a thickening of its own outline.
+    (out as CSSProperties & {
+      WebkitTextStroke?: string;
+      paintOrder?: string;
+    }).WebkitTextStroke = `${e.stroke.widthPx}px ${e.stroke.color}`;
+    (out as CSSProperties & { paintOrder?: string }).paintOrder =
+      "stroke fill";
   }
   if (e.shadow) {
     out.textShadow = cssTextShadow(e.shadow);

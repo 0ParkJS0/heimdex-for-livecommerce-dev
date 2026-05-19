@@ -18,6 +18,14 @@ import type { EditorTextOverlay } from "./overlay-types";
 
 const FULLSCREEN_FRAME_HEIGHT_PX = 688;
 
+// 2026-05-19 — operator review on PR #232 asked for all three starter
+// templates to land at the same vertical slot so applying one preset
+// after another lines up visually instead of jumping around. The
+// original design specs (254 / 45 / 344) are preserved in the
+// references here for forensics, but every template uses the same
+// top-pinned offset now.
+const UNIFIED_TOP_PX = 27;
+
 /** Style + text payload for creating a new text overlay from a template. */
 export type StarterTemplateStyle = Omit<
   EditorTextOverlay,
@@ -68,7 +76,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       fontSizePx: 38,
       fontWeight: 400,
       fontColor: "#FFFFFF",
-      transform: CENTERED_TRANSFORM(254),
+      transform: CENTERED_TRANSFORM(UNIFIED_TOP_PX),
       effects: {
         opacity: 1,
         stroke: { color: "#000000", widthPx: 1.5 },
@@ -98,7 +106,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       fontSizePx: 30,
       fontWeight: 600,
       fontColor: "#2D2007",
-      transform: CENTERED_TRANSFORM(45),
+      transform: CENTERED_TRANSFORM(UNIFIED_TOP_PX),
       effects: {
         opacity: 1,
         stroke: null,
@@ -118,7 +126,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       fontSizePx: 32,
       fontWeight: 700,
       fontColor: "#FFFFFF",
-      transform: CENTERED_TRANSFORM(344),
+      transform: CENTERED_TRANSFORM(UNIFIED_TOP_PX),
       effects: {
         opacity: 1,
         stroke: null,

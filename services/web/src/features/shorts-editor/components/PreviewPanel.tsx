@@ -365,6 +365,11 @@ export function PreviewPanel({
                 top: `${sub.style.positionY * 100}%`,
                 transform: "translate(-50%, -50%)",
                 pointerEvents: "auto",
+                // 2026-05-19 — see OverlayRenderer for the rationale on
+                // `width: max-content`. The lockedWidth branch below
+                // still wins during an active drag because it lands
+                // later in the spread.
+                width: "max-content",
                 ...(isDraggingThis && dragRef.current?.lockedWidth
                   ? { width: `${dragRef.current.lockedWidth}px` }
                   : {}),
