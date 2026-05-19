@@ -46,7 +46,10 @@ describe("buildCompositionSpec", () => {
 
     expect(spec.version).toBe(1);
     expect(spec.title).toBe("My Short");
-    expect(spec.output.width).toBe(406);
+    // 2026-05-19 — DEFAULT_OUTPUT.width was nudged from 406 → 405 so
+    // the output frame is exact 9:16 (matches FullscreenOverlay +
+    // EditorLayout preview slot).
+    expect(spec.output.width).toBe(405);
     expect(spec.output.height).toBe(720);
     expect(spec.output.fps).toBe(30);
     expect(spec.scene_clips).toHaveLength(1);
