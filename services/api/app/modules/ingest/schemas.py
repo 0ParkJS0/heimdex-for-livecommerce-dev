@@ -14,7 +14,23 @@ __all__ = [
     "EnrichScenesRequest",
     "EnrichScenesResponse",
     "SourceType",
+    "TranscriptWord",
 ]
+
+
+class TranscriptWord(BaseModel):
+    """One word-level timestamp from a Whisper-style STT pass.
+
+    Populated by ``drive-stt-worker`` (cross-repo) at enrichment time.
+    The timestamps are absolute milliseconds relative to the source
+    video, not relative to the scene window — the scene-aware filter
+    happens at read time so a single Whisper pass over the full audio
+    can fan out to every overlapping scene without re-running.
+    """
+
+    word: str = Field(..., min_length=1)
+    start_ms: int = Field(..., ge=0)
+    end_ms: int = Field(..., ge=0)
 
 
 class IngestScenesResponse(BaseModel):
@@ -47,6 +63,14 @@ class EnrichSceneUpdate(BaseModel):
     visual_embedding: list[float] | None = Field(default=None)
     color_embedding: list[float] | None = Field(default=None)
     dominant_colors: list[str] | None = Field(default=None)
+    # Word-level transcript from Whisper (or any STT pass that returns
+    # word-grain timestamps). Filtered to words whose timestamp window
+    # overlaps the scene's [start_ms, end_ms]; downstream consumers can
+    # rely on each entry's start/end being scene-relative-ish but still
+    # absolute. ``drive-stt-worker`` populates this; older workers that
+    # don't ship word data simply omit the field and existing scenes
+    # stay backward-compatible.
+    transcript_words: list[TranscriptWord] | None = Field(default=None)
 
 
 class EnrichScenesRequest(BaseModel):

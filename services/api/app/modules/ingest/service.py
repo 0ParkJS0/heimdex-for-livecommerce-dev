@@ -352,6 +352,18 @@ class SceneIngestService:
             if enrichment.speaker_transcript is not None and "speaker_transcript" not in protected:
                 partial["speaker_transcript"] = enrichment.speaker_transcript
                 partial["speaker_count"] = enrichment.speaker_count or 0
+            if (
+                enrichment.transcript_words is not None
+                and "transcript_words" not in protected
+            ):
+                # Word-level transcript pass-through from
+                # ``drive-stt-worker``. Stored as ``list[dict]`` so the
+                # OpenSearch dynamic mapping treats each word as a
+                # nested-ish object; consumers re-hydrate into
+                # ``TranscriptWord`` at the API boundary.
+                partial["transcript_words"] = [
+                    w.model_dump() for w in enrichment.transcript_words
+                ]
             if enrichment.ocr_text_raw is not None:
                 ocr_norm = normalize_transcript(enrichment.ocr_text_raw) if enrichment.ocr_text_raw else ""
                 partial["ocr_text_raw"] = enrichment.ocr_text_raw

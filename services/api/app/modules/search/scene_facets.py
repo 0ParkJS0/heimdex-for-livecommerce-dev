@@ -253,6 +253,7 @@ class SceneFacetsMixin:
                 "people_cluster_ids", "ingest_time", "keyframe_timestamp_ms",
                 "speaker_transcript", "speaker_count",
                 "ocr_text_raw", "ocr_char_count",
+                "transcript_words",
                 "video_title", "source_type", "source_path", "capture_time",
                 "web_view_link",
                 "library_id",
@@ -282,6 +283,12 @@ class SceneFacetsMixin:
                 "speaker_count": src.get("speaker_count", 0),
                 "ocr_text_raw": src.get("ocr_text_raw", ""),
                 "ocr_char_count": src.get("ocr_char_count", 0),
+                # Word-level transcript pass-through. Empty list when
+                # the scene wasn't enriched with word data; otherwise a
+                # list of ``{word, start_ms, end_ms}`` dicts that
+                # Pydantic coerces into ``TranscriptWord`` instances on
+                # the way out.
+                "transcript_words": src.get("transcript_words") or [],
                 "web_view_link": src.get("web_view_link"),
             })
 
