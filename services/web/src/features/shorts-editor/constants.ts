@@ -1,7 +1,16 @@
 import type { CompositionOutputSpec, SubtitleStyle } from "./lib/types";
 
+// 2026-05-19 — width nudged from 406 → 405 so the output frame is
+// exact 9:16 (405 / 720 = 0.5625). This aligns the rendered MP4
+// with the editor preview surfaces, both of which already target
+// 9:16: FullscreenOverlay (387×688 = exact 9:16) and EditorLayout
+// preview slot (352×626 ≈ exact 9:16 at integer-pixel resolution).
+// The one-pixel narrowing has no visible effect on rendered shorts
+// but removes the ~0.25% aspect drift operators noticed when
+// switching between the editor view, the fullscreen popup, and the
+// final exported video.
 export const DEFAULT_OUTPUT: CompositionOutputSpec = {
-  width: 406,
+  width: 405,
   height: 720,
   fps: 30,
   format: "mp4",
