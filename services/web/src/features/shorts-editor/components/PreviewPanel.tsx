@@ -390,7 +390,15 @@ export function PreviewPanel({
                   )}
                   style={{
                     fontFamily: resolveFontFamily(sub.style.fontFamily),
-                    fontSize: `${Math.max(8, sub.style.fontSizePx * 0.5)}px`,
+                    // 2026-05-19 — bumped from 0.5 → 0.55 so the inline
+                    // preview matches the fullscreen modal's subtitle
+                    // scale (FullscreenOverlay.tsx uses 0.55). Both
+                    // surfaces render the same composition; their on-
+                    // screen pill sizes should agree relative to the
+                    // host canvas. Fullscreen is the reference (it
+                    // mirrors the figma 9:16 phone frame); the inline
+                    // preview now follows.
+                    fontSize: `${Math.max(8, sub.style.fontSizePx * 0.55)}px`,
                     color: sub.style.fontColor,
                     fontWeight: sub.style.fontWeight,
                     textAlign: "center",
