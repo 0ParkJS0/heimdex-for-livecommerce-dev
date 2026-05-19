@@ -50,8 +50,15 @@ function DownloadIcon() {
   );
 }
 
+// 2026-05-19 — idle label flipped from "내보내기" to "저장하기" so the
+// editor button reads as a save action ("write this composition to my
+// saved-shorts list") rather than a delivery action. The behavior is
+// unchanged — submitComposition still triggers the render pipeline
+// and the resulting short shows up on /export/shorts via the
+// existing polling path. The download affordance now lives on the
+// saved-shorts list itself.
 const RENDER_STATUS_LABELS: Record<RenderStatus, string> = {
-  idle: "내보내기",
+  idle: "저장하기",
   submitting: "제출 중...",
   queued: "대기 중...",
   rendering: "렌더링 중...",
