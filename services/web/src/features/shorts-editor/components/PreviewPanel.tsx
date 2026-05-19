@@ -118,8 +118,11 @@ export function PreviewPanel({
 
   // V2 overlay drag state — separate from V1 dragRef so the two paths
   // don't step on each other when a session has both populated.
+  // The third mode ``rotate`` captures the angle at pointerdown
+  // (startAngleRad) and the overlay's original rotationDeg so
+  // pointermove can apply the delta around the overlay's center.
   const overlayDragRef = useRef<{
-    mode: "move" | "resize";
+    mode: "move" | "resize" | "rotate";
     overlayId: string;
     overlayKind: "text" | "background";
     startX: number;
@@ -129,6 +132,8 @@ export function PreviewPanel({
     origFontSizePx: number;
     origWidthPx: number;
     origHeightPx: number;
+    origRotationDeg: number;
+    startAngleRad: number;
   } | null>(null);
 
   const getSubtitleIndex = useCallback((subtitleId: string): number => {
@@ -228,6 +233,28 @@ export function PreviewPanel({
         onUpdateOverlay(ovDrag.overlayId, {
           transform: { ...overlay.transform, x: newX, y: newY },
         } as Partial<EditorOverlay>);
+      } else if (ovDrag.mode === "rotate") {
+        // Compute the cursor's current angle around the overlay
+        // center and add the delta against the angle captured at
+        // pointerdown. Clamp to the TransformProps invariant
+        // [-360, 360]; users that want a continuous spin can drag
+        // again from the wrapped value.
+        const centerX = rect.left + ovDrag.origX * rect.width;
+        const centerY = rect.top + ovDrag.origY * rect.height;
+        const currentAngleRad = Math.atan2(
+          e.clientY - centerY,
+          e.clientX - centerX,
+        );
+        const deltaRad = currentAngleRad - ovDrag.startAngleRad;
+        const deltaDeg = (deltaRad * 180) / Math.PI;
+        const next = ovDrag.origRotationDeg + deltaDeg;
+        const clamped = Math.max(-360, Math.min(360, next));
+        onUpdateOverlay(ovDrag.overlayId, {
+          transform: {
+            ...overlay.transform,
+            rotationDeg: clamped,
+          },
+        } as Partial<EditorOverlay>);
       } else {
         const centerX = rect.left + ovDrag.origX * rect.width;
         const centerY = rect.top + ovDrag.origY * rect.height;
@@ -284,6 +311,8 @@ export function PreviewPanel({
           overlay.kind === "text" ? overlay.fontSizePx : 0,
         origWidthPx: overlay.transform.widthPx ?? 0,
         origHeightPx: overlay.transform.heightPx ?? 0,
+        origRotationDeg: overlay.transform.rotationDeg,
+        startAngleRad: 0,
       };
     },
     [onSelectOverlay],
@@ -312,6 +341,45 @@ export function PreviewPanel({
           overlay.kind === "text" ? overlay.fontSizePx : 0,
         origWidthPx: overlay.transform.widthPx ?? 0,
         origHeightPx: overlay.transform.heightPx ?? 0,
+        origRotationDeg: overlay.transform.rotationDeg,
+        startAngleRad: 0,
+      };
+    },
+    [],
+  );
+
+  // Corner-outer rotate: caller fires this when a pointerdown lands on
+  // the small rotate handle just outside each resize corner. We snap
+  // the starting angle (cursor → overlay center) into the ref so
+  // pointermove can apply a delta around the center.
+  const handleOverlayRotatePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const centerX = rect.left + overlay.transform.x * rect.width;
+      const centerY = rect.top + overlay.transform.y * rect.height;
+      const startAngleRad = Math.atan2(
+        e.clientY - centerY,
+        e.clientX - centerX,
+      );
+      overlayDragRef.current = {
+        mode: "rotate",
+        overlayId: overlay.id,
+        overlayKind: overlay.kind,
+        startX: 0,
+        startY: 0,
+        origX: overlay.transform.x,
+        origY: overlay.transform.y,
+        origFontSizePx:
+          overlay.kind === "text" ? overlay.fontSizePx : 0,
+        origWidthPx: overlay.transform.widthPx ?? 0,
+        origHeightPx: overlay.transform.heightPx ?? 0,
+        origRotationDeg: overlay.transform.rotationDeg,
+        startAngleRad,
       };
     },
     [],
@@ -469,6 +537,9 @@ export function PreviewPanel({
               }
               onResizePointerDown={(_corner, e) =>
                 handleOverlayResizePointerDown(e, o)
+              }
+              onRotatePointerDown={(_corner, e) =>
+                handleOverlayRotatePointerDown(e, o)
               }
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
