@@ -11,11 +11,19 @@ import { useId, useState } from "react";
 
 import { Check, Plus, Trash2 } from "lucide-react";
 
+import { resolveFontFamily } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
 import type { WirePreset } from "../lib/overlay-types";
+import type { StarterTemplate } from "../lib/starter-templates";
 
 interface TemplatePanelProps {
   presets: WirePreset[];
+  // Hardcoded "ready-made caption" templates rendered above the user
+  // presets section. Clicking one inserts a brand new text overlay at
+  // the playhead with the template's full style payload; the user-
+  // preset apply-to-selected flow below is unaffected.
+  starterTemplates?: readonly StarterTemplate[];
+  onApplyStarter?: (template: StarterTemplate) => void;
   isLoading?: boolean;
   error?: string | null;
   selectedId: string | null;
@@ -27,6 +35,8 @@ interface TemplatePanelProps {
 
 export function TemplatePanel({
   presets,
+  starterTemplates = [],
+  onApplyStarter,
   isLoading = false,
   error = null,
   selectedId,
@@ -47,28 +57,118 @@ export function TemplatePanel({
         }}
       />
 
-      <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <p className="text-xs text-grayscale-400">템플릿 불러오는 중…</p>
-        ) : presets.length === 0 ? (
-          <EmptyState onOpenSaveDialog={onOpenSaveDialog} />
-        ) : (
-          <div className="grid grid-cols-2 gap-4">
-            {presets.map((preset) => (
-              <TemplateCard
-                key={preset.id}
-                preset={preset}
-                selected={preset.id === selectedId}
-                onSelect={() => onSelect(preset.id)}
-                onDelete={onDelete ? () => onDelete(preset) : undefined}
-              />
-            ))}
-          </div>
+      <div className="flex-1 space-y-4 overflow-y-auto">
+        {starterTemplates.length > 0 && onApplyStarter && (
+          <section aria-labelledby="starter-templates-heading">
+            <h3
+              id="starter-templates-heading"
+              className="mb-2 text-[12px] font-semibold text-grayscale-500"
+            >
+              기본 자막
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              {starterTemplates.map((template) => (
+                <StarterTemplateCard
+                  key={template.id}
+                  template={template}
+                  onApply={() => onApplyStarter(template)}
+                />
+              ))}
+            </div>
+          </section>
         )}
-        {error && (
-          <p className="mt-2 text-[11px] text-red-h-500">{error}</p>
-        )}
+
+        <section aria-labelledby="saved-templates-heading">
+          {starterTemplates.length > 0 && (
+            <h3
+              id="saved-templates-heading"
+              className="mb-2 text-[12px] font-semibold text-grayscale-500"
+            >
+              저장된 템플릿
+            </h3>
+          )}
+          {isLoading ? (
+            <p className="text-xs text-grayscale-400">템플릿 불러오는 중…</p>
+          ) : presets.length === 0 ? (
+            <EmptyState onOpenSaveDialog={onOpenSaveDialog} />
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              {presets.map((preset) => (
+                <TemplateCard
+                  key={preset.id}
+                  preset={preset}
+                  selected={preset.id === selectedId}
+                  onSelect={() => onSelect(preset.id)}
+                  onDelete={onDelete ? () => onDelete(preset) : undefined}
+                />
+              ))}
+            </div>
+          )}
+          {error && (
+            <p className="mt-2 text-[11px] text-red-h-500">{error}</p>
+          )}
+        </section>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Card for a hardcoded starter template. Renders the template's
+ * preview text inside a 9:16 chip with the actual template style
+ * applied (font family, weight, color, stroke, shadow) so the
+ * operator sees what they'll get before clicking. The card is purely
+ * click-to-insert — no selection state, no apply button — because the
+ * action is unambiguous (add a new overlay at the playhead).
+ */
+function StarterTemplateCard({
+  template,
+  onApply,
+}: {
+  template: StarterTemplate;
+  onApply: () => void;
+}) {
+  const { style } = template;
+  const shadowCss = style.effects.shadow
+    ? `${style.effects.shadow.offsetX}px ${style.effects.shadow.offsetY}px ${style.effects.shadow.blurPx}px ${style.effects.shadow.color}`
+    : undefined;
+  const strokeCss = style.effects.stroke
+    ? `${style.effects.stroke.widthPx}px ${style.effects.stroke.color}`
+    : undefined;
+  return (
+    <div className="group flex flex-col gap-1.5 text-left">
+      <button
+        type="button"
+        onClick={onApply}
+        style={{ aspectRatio: "9 / 16" }}
+        className="relative w-full overflow-hidden rounded-card border border-grayscale-200 bg-white transition-colors hover:border-heimdex-navy-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-heimdex-navy-500"
+        aria-label={`${template.name} 템플릿 추가`}
+      >
+        <CheckerPattern />
+        <div className="absolute inset-0 flex items-center justify-center px-2">
+          <span
+            className="whitespace-pre-line text-center leading-tight"
+            style={{
+              fontFamily: resolveFontFamily(style.fontFamily),
+              // The preview chip scales the template font down so a
+              // 38px caption fits inside a ~120px wide card without
+              // truncating; the renderer-side size on the canvas is
+              // unchanged.
+              fontSize: `${Math.max(11, Math.round(style.fontSizePx * 0.4))}px`,
+              fontWeight: style.fontWeight,
+              color: style.fontColor,
+              textShadow: shadowCss,
+              WebkitTextStroke: strokeCss,
+              wordBreak: "keep-all",
+            }}
+          >
+            {template.previewLabel}
+          </span>
+        </div>
+      </button>
+      <span className="truncate text-sm font-medium text-grayscale-800">
+        {template.name}
+      </span>
     </div>
   );
 }

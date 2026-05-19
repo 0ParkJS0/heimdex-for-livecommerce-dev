@@ -1,0 +1,137 @@
+/**
+ * Built-in caption template starters for the editor's 템플릿 tab.
+ *
+ * Distinct from user-saved presets (WirePreset) — these are
+ * hardcoded "ready-made captions" that the operator clicks to drop a
+ * fully-styled text overlay onto the canvas in one move. The
+ * template specs (text, font, position, stroke, shadow) come from the
+ * design team's reference screenshots (Slack #team-uiux 2026-05-18).
+ *
+ * Position (transform.y) is normalized against the FullscreenOverlay
+ * phone frame height (688px). At canvas height 720 (DEFAULT_OUTPUT)
+ * the absolute top differs by ~5%, which the design team accepts as
+ * a known minor drift until the preview/fullscreen frames are unified
+ * against the output dimensions in a separate pass.
+ */
+
+import type { EditorTextOverlay } from "./overlay-types";
+
+const FULLSCREEN_FRAME_HEIGHT_PX = 688;
+
+/** Style + text payload for creating a new text overlay from a template. */
+export type StarterTemplateStyle = Omit<
+  EditorTextOverlay,
+  "kind" | "id" | "startMs" | "endMs" | "layerIndex"
+>;
+
+export interface StarterTemplate {
+  id: string;
+  /** Short label rendered under the card. */
+  name: string;
+  /** Long-form preview text rendered inside the card. */
+  previewLabel: string;
+  style: StarterTemplateStyle;
+}
+
+const CENTERED_TRANSFORM = (topPx: number) => ({
+  x: 0.5,
+  y: topPx / FULLSCREEN_FRAME_HEIGHT_PX,
+  rotationDeg: 0,
+  widthPx: null,
+  heightPx: null,
+});
+
+const NO_HIGHLIGHT = {
+  highlightColor: null,
+  highlightPaddingPx: 0,
+  highlightOpacity: 0,
+};
+
+const COMMON_TEXT_FIELDS = {
+  italic: false,
+  underline: false,
+  textAlign: "center" as const,
+  lineHeight: 1.3,
+  letterSpacing: 0,
+};
+
+export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
+  {
+    id: "starter-clean-organizer",
+    name: "분리수납",
+    previewLabel: "한눈에 보이는\n분리수납!",
+    style: {
+      ...COMMON_TEXT_FIELDS,
+      ...NO_HIGHLIGHT,
+      text: "한눈에 보이는 분리수납!",
+      fontFamily: "Onglyph Positive",
+      fontSizePx: 38,
+      fontWeight: 400,
+      fontColor: "#FFFFFF",
+      transform: CENTERED_TRANSFORM(254),
+      effects: {
+        opacity: 1,
+        stroke: { color: "#000000", widthPx: 1.5 },
+        // 80% black — packed as #RRGGBBAA so the renderer's color parser
+        // (composition-builder serializer) carries opacity through to
+        // the wire shape without needing a separate alpha field.
+        shadow: {
+          color: "#000000CC",
+          offsetX: 1,
+          offsetY: 1,
+          blurPx: 1,
+          spreadPx: 0,
+        },
+      },
+    },
+  },
+  {
+    id: "starter-apsong-crossbag",
+    name: "앱송 반달",
+    previewLabel: "앱송 반달\n크로스백",
+    style: {
+      ...COMMON_TEXT_FIELDS,
+      ...NO_HIGHLIGHT,
+      text: "앱송 반달 크로스백",
+      fontFamily: "A2Z",
+      // 6SemiBold weight from the A2Z family — mapped to CSS 600.
+      fontSizePx: 30,
+      fontWeight: 600,
+      fontColor: "#2D2007",
+      transform: CENTERED_TRANSFORM(45),
+      effects: {
+        opacity: 1,
+        stroke: null,
+        shadow: null,
+      },
+    },
+  },
+  {
+    id: "starter-comfortable-handle",
+    name: "손잡이",
+    previewLabel: "손잡이가 있어\n편한~",
+    style: {
+      ...COMMON_TEXT_FIELDS,
+      ...NO_HIGHLIGHT,
+      text: "손잡이가 있어 편한~",
+      fontFamily: "Pretendard",
+      fontSizePx: 32,
+      fontWeight: 700,
+      fontColor: "#FFFFFF",
+      transform: CENTERED_TRANSFORM(344),
+      effects: {
+        opacity: 1,
+        stroke: null,
+        // 25% black — see the 분리수납 template for the alpha-packing
+        // rationale.
+        shadow: {
+          color: "#00000040",
+          offsetX: 1,
+          offsetY: 1,
+          blurPx: 1,
+          spreadPx: 0,
+        },
+      },
+    },
+  },
+];
