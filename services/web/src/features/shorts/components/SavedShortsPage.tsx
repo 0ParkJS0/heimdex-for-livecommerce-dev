@@ -538,12 +538,19 @@ export function SavedShortsPage() {
                   : isFailed(item)
                     ? "bg-red-h-50 text-red-h-500"
                     : "bg-neutral-h-100 text-neutral-h-500";
+              // 2026-05-19 — both saved-shorts and completed renders
+              // now route through the same shortId-keyed editor entry
+              // (/export/shorts/editor). The legacy
+              // /export/shorts/[renderJobId]/edit single-render entry
+              // point (which mounted EditClipsPage) was removed because
+              // its hydration drifted from the canonical editor — same
+              // composition would show different subtitles / overlays
+              // depending on which entry point the operator hit.
               const editHref =
-                item.type === "saved" && item.scene_ids
-                  ? `/export/shorts/editor?shortId=${item.id}`
-                  : item.type === "render" && isCompleted(item)
-                    ? `/export/shorts/${encodeURIComponent(item.id)}/edit`
-                    : null;
+                (item.type === "saved" && item.scene_ids) ||
+                (item.type === "render" && isCompleted(item))
+                  ? `/export/shorts/editor?shortId=${encodeURIComponent(item.id)}`
+                  : null;
               // 2026-05-18 — both saved-shorts and completed render
               // jobs share the same shortId-based hydration path on the
               // editor. Routing every thumbnail there preserves the
