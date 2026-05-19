@@ -48,7 +48,14 @@ import type { WizardCriteriaDraft } from "./InlineWizardCriteriaPanel";
 import { normalizeTimeRangeForSubmit } from "./VideoSegmentRangeSlider";
 
 const POLL_INTERVAL_MS = 5_000;
-const POLL_TIMEOUT_MS = 180_000;
+// 2026-05-19 — bumped from 180_000 (3min) to 900_000 (15min). The
+// initial 3min ceiling was derived from a 30-90s expected enumeration,
+// but in practice the backend scan can run well past that. With the
+// stage simulation also stretched to 4min total below, the user now
+// sees a stuck-but-not-errored progress card until either products
+// land or the 15min watchdog fires. 5s poll cadence × 15min = 180
+// requests/session at worst case (vs 36 previously).
+const POLL_TIMEOUT_MS = 900_000;
 
 interface Props {
   videoId: string;
@@ -226,7 +233,13 @@ export function InlineWizardProductPanel({
     "assembling",
     "rendering",
   ];
-  const STAGE_DURATION_MS = 15_000;
+  // 2026-05-19 — stretched from 15_000 (60s total simulation) to
+  // 60_000 (240s = 4min total). The earlier 60s ceiling matched the
+  // documented 30-90s expectation, but actual scan time can stretch
+  // further; the previous cadence pegged the bar at 95% within a
+  // minute and looked frozen for the rest of the wait. completedAt
+  // still snaps to 100% whenever the catalog poll succeeds first.
+  const STAGE_DURATION_MS = 60_000;
   void stageTick; // tick is only used to force the re-render
   const elapsedMs = Date.now() - startedAtRef.current;
   let stageIdx: number;
