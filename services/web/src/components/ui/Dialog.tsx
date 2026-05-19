@@ -5,10 +5,10 @@
 
 import { useEffect, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { WarningIcon } from "@/components/icons/figma";
+import { InfoIcon, WarningIcon } from "@/components/icons/figma";
 import { Button } from "./Button";
 
-type IconKind = "warning" | "none";
+type IconKind = "warning" | "info" | "none";
 
 interface DialogAction {
   label: string;
@@ -64,14 +64,21 @@ export function Dialog({
         <div className="flex w-full flex-col items-center justify-center gap-[12px]">
           {icon === "warning" ? (
             <WarningIcon className="h-[24px] w-[24px]" />
+          ) : icon === "info" ? (
+            <InfoIcon className="h-[24px] w-[24px]" />
           ) : null}
           <p className="font-pretendard text-[18px] font-bold tracking-[-0.45px] leading-[1.4] text-neutral-h-800">
             {title}
           </p>
           {body ? (
-            <p className="w-full text-center font-pretendard text-[14px] font-medium tracking-[-0.35px] leading-[1.4] text-grayscale-800">
+            // 2026-05-19 — switched from <p> to <div> so callers can
+            // embed block-level content (lists, file rows, etc.) in
+            // body without producing invalid HTML. Plain-text bodies
+            // continue to inherit the existing centered medium-14px
+            // grayscale-800 styling.
+            <div className="w-full text-center font-pretendard text-[14px] font-medium tracking-[-0.35px] leading-[1.4] text-grayscale-800">
               {body}
-            </p>
+            </div>
           ) : null}
         </div>
         <div className="flex w-[128px] items-start gap-[8px]">

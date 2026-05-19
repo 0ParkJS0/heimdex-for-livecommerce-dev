@@ -1,7 +1,16 @@
 import type { CompositionOutputSpec, SubtitleStyle } from "./lib/types";
 
+// 2026-05-19 — width nudged from 406 → 405 so the output frame is
+// exact 9:16 (405 / 720 = 0.5625). This aligns the rendered MP4
+// with the editor preview surfaces, both of which already target
+// 9:16: FullscreenOverlay (387×688 = exact 9:16) and EditorLayout
+// preview slot (352×626 ≈ exact 9:16 at integer-pixel resolution).
+// The one-pixel narrowing has no visible effect on rendered shorts
+// but removes the ~0.25% aspect drift operators noticed when
+// switching between the editor view, the fullscreen popup, and the
+// final exported video.
 export const DEFAULT_OUTPUT: CompositionOutputSpec = {
-  width: 406,
+  width: 405,
   height: 720,
   fps: 30,
   format: "mp4",
@@ -46,9 +55,10 @@ export const DEFAULT_SUBTITLE_DURATION_MS = 3000;
 export const MAX_COMPOSITION_DURATION_MS = 300_000; // 5 minutes
 
 // Each option's ``value`` must match a key in FONT_FAMILY_CSS_MAP
-// (lib/fonts.ts) AND have a matching next/font/local block in
-// app/fonts.ts — otherwise selecting it silently falls back to the
-// system default.
+// (lib/fonts.ts) AND have either a next/font/local block in
+// app/fonts.ts or a matching @font-face declaration in
+// app/globals.css — otherwise selecting it silently falls back to
+// the system default.
 export const FONT_OPTIONS = [
   { value: "Pretendard", label: "프리텐다드" },
   { value: "Noto Sans KR", label: "Noto Sans KR" },
@@ -56,4 +66,7 @@ export const FONT_OPTIONS = [
   { value: "NanumSquare", label: "나눔스퀘어" },
   { value: "SUIT", label: "수트(SUIT)" },
   { value: "KoPubWorldDotum", label: "KoPub돋움" },
+  // 2026-05-19 — added for the new caption template presets.
+  { value: "Onglyph Positive", label: "온글잎 긍정" },
+  { value: "A2Z", label: "A2Z (에이투지체)" },
 ] as const;

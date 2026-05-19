@@ -14,6 +14,7 @@ import {
 } from "@/components/layout/TopHeaderActionsContext";
 import { cn } from "@/lib/utils";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
+import { STARTER_TEMPLATES } from "../lib/starter-templates";
 import { recomputeTimeline } from "../lib/timeline-math";
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import type { RenderStatus } from "../hooks/useCompositionExport";
@@ -50,8 +51,15 @@ function DownloadIcon() {
   );
 }
 
+// 2026-05-19 — idle label flipped from "내보내기" to "저장하기" so the
+// editor button reads as a save action ("write this composition to my
+// saved-shorts list") rather than a delivery action. The behavior is
+// unchanged — submitComposition still triggers the render pipeline
+// and the resulting short shows up on /export/shorts via the
+// existing polling path. The download affordance now lives on the
+// saved-shorts list itself.
 const RENDER_STATUS_LABELS: Record<RenderStatus, string> = {
-  idle: "내보내기",
+  idle: "저장하기",
   submitting: "제출 중...",
   queued: "대기 중...",
   rendering: "렌더링 중...",
@@ -756,6 +764,29 @@ export function ShortsEditorPage() {
             const templateTab = (
               <TemplatePanel
                 presets={presetsApi.presets}
+                starterTemplates={STARTER_TEMPLATES}
+                onApplyStarter={(template) => {
+                  // Dual behavior:
+                  //   * Text overlay selected → apply the template's
+                  //     visual layer (font, color, transform, effects)
+                  //     to it, preserving the existing text + identity
+                  //     + timing. Operator stays anchored on the same
+                  //     subtitle slot but gets a fresh look.
+                  //   * Nothing selected (or a background overlay
+                  //     selected) → drop a brand new text overlay at
+                  //     the playhead with the template's full payload,
+                  //     including its example text.
+                  if (selectedOverlay?.kind === "text") {
+                    const { text: _templateText, ...visualStyle } =
+                      template.style;
+                    editor.updateOverlay(selectedOverlay.id, {
+                      ...selectedOverlay,
+                      ...visualStyle,
+                    });
+                  } else {
+                    editor.addStarterTextOverlay(template.style);
+                  }
+                }}
                 isLoading={presetsApi.isLoading}
                 error={presetsApi.error}
                 selectedId={selectedTemplateId}

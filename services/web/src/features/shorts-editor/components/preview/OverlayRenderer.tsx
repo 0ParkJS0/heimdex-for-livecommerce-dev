@@ -27,6 +27,14 @@ interface OverlayRendererProps {
     corner: Corner,
     e: ReactPointerEvent<HTMLDivElement>,
   ) => void;
+  // Corner-outer drag — caller wires this to a "rotate" gesture that
+  // updates transform.rotationDeg. The handle sits slightly outside
+  // each resize corner so the user gets a free-rotation affordance
+  // when their cursor drifts diagonally past the resize square.
+  onRotatePointerDown?: (
+    corner: Corner,
+    e: ReactPointerEvent<HTMLDivElement>,
+  ) => void;
   // Drag continuation — these MUST be attached to the same elements that
   // call setPointerCapture in the pointerdown handlers, otherwise the
   // captured element delivers events to nowhere and the gesture appears
@@ -58,6 +66,7 @@ export function OverlayRenderer({
   isSelected,
   onMovePointerDown,
   onResizePointerDown,
+  onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
@@ -66,6 +75,7 @@ export function OverlayRenderer({
     isSelected,
     onMovePointerDown,
     onResizePointerDown,
+    onRotatePointerDown,
     onPointerMove,
     onPointerUp,
     onClick,
@@ -85,6 +95,7 @@ function TextOverlayBox({
   isSelected,
   onMovePointerDown,
   onResizePointerDown,
+  onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
@@ -93,6 +104,10 @@ function TextOverlayBox({
   isSelected: boolean;
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown?: (
+    corner: Corner,
+    e: ReactPointerEvent<HTMLDivElement>,
+  ) => void;
+  onRotatePointerDown?: (
     corner: Corner,
     e: ReactPointerEvent<HTMLDivElement>,
   ) => void;
@@ -127,7 +142,21 @@ function TextOverlayBox({
   return (
     <div
       data-overlay-id={overlay.id}
-      style={{ ...containerStyle, opacity: overlay.effects.opacity }}
+      style={{
+        ...containerStyle,
+        opacity: overlay.effects.opacity,
+        // 2026-05-19 — without `width: max-content` the absolute box's
+        // auto-width is capped by the parent's right edge. When the
+        // operator drags the overlay near the right side of the canvas
+        // the available right-of-anchor space shrinks, forcing the
+        // <p>'s pre-wrap text to wrap and the box to grow tall
+        // (operator reported the caption "stretching vertically as it
+        // approached the right edge"). max-content keeps the box at
+        // the text's intrinsic single-line width regardless of where
+        // it sits on the canvas; visually it may extend past the
+        // preview frame, but the box no longer reshapes mid-drag.
+        width: "max-content",
+      }}
       className={cn(
         "absolute select-none cursor-grab active:cursor-grabbing",
         isSelected && "ring-2 ring-indigo-400 ring-offset-1",
@@ -156,6 +185,13 @@ function TextOverlayBox({
           onPointerUp={onPointerUp}
         />
       )}
+      {isSelected && onRotatePointerDown && (
+        <RotateHandles
+          onRotate={onRotatePointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      )}
     </div>
   );
 }
@@ -169,6 +205,7 @@ function BackgroundOverlayBox({
   isSelected,
   onMovePointerDown,
   onResizePointerDown,
+  onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
@@ -177,6 +214,10 @@ function BackgroundOverlayBox({
   isSelected: boolean;
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown?: (
+    corner: Corner,
+    e: ReactPointerEvent<HTMLDivElement>,
+  ) => void;
+  onRotatePointerDown?: (
     corner: Corner,
     e: ReactPointerEvent<HTMLDivElement>,
   ) => void;
@@ -247,6 +288,13 @@ function BackgroundOverlayBox({
           onPointerUp={onPointerUp}
         />
       )}
+      {isSelected && onRotatePointerDown && (
+        <RotateHandles
+          onRotate={onRotatePointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      )}
     </div>
   );
 }
@@ -260,6 +308,19 @@ const CORNER_STYLES: Record<Corner, string> = {
   ne: "-top-1.5 -right-1.5 cursor-nesw-resize",
   sw: "-bottom-1.5 -left-1.5 cursor-nesw-resize",
   se: "-bottom-1.5 -right-1.5 cursor-nwse-resize",
+};
+
+// Rotation handles sit one step further diagonally out from the
+// resize handles so the operator gets a free-rotation affordance the
+// moment their cursor drifts past the resize square. Operator-tested
+// offset: ~16px past the corner, which lands the handle just outside
+// the visible focus ring but still within easy thumb reach on
+// touchpads.
+const ROTATE_CORNER_STYLES: Record<Corner, string> = {
+  nw: "-top-5 -left-5 cursor-grab active:cursor-grabbing",
+  ne: "-top-5 -right-5 cursor-grab active:cursor-grabbing",
+  sw: "-bottom-5 -left-5 cursor-grab active:cursor-grabbing",
+  se: "-bottom-5 -right-5 cursor-grab active:cursor-grabbing",
 };
 
 function ResizeHandles({
@@ -292,6 +353,40 @@ function ResizeHandles({
   );
 }
 
+// Rotation handles — small ghosted dots positioned one notch
+// diagonally outside the resize squares. Visually understated so they
+// don't compete with the resize affordance, but reachable with a
+// slight outward drift of the cursor. Drag math (angle delta around
+// the overlay's center) lives in PreviewPanel's pointermove branch.
+function RotateHandles({
+  onRotate,
+  onPointerMove,
+  onPointerUp,
+}: {
+  onRotate: (corner: Corner, e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerMove?: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp?: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <>
+      {(["nw", "ne", "sw", "se"] as const).map((corner) => (
+        <div
+          key={`rotate-${corner}`}
+          aria-label={`Rotate ${corner}`}
+          className={cn(
+            "absolute z-10 h-2.5 w-2.5 rounded-full border border-white bg-indigo-300/70",
+            ROTATE_CORNER_STYLES[corner],
+          )}
+          onPointerDown={(e) => onRotate(corner, e)}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ))}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Style helpers
 // ---------------------------------------------------------------------------
@@ -312,8 +407,19 @@ function positionContainerStyle(
 function textShadowAndStrokeStyles(e: EffectsProps): CSSProperties {
   const out: CSSProperties = {};
   if (e.stroke) {
-    (out as CSSProperties & { WebkitTextStroke?: string }).WebkitTextStroke =
-      `${e.stroke.widthPx}px ${e.stroke.color}`;
+    // 2026-05-19 — paint-order: stroke fill so the stroke renders
+    // BEHIND the glyph fill. The default paint order for SVG/text
+    // (fill, stroke, markers) draws the stroke on top, so the
+    // letter shape gets visually eaten by the stroke at higher
+    // widths. Putting `stroke` first means the fill sits cleanly
+    // on top — the outline reads as a halo behind the letter, not
+    // a thickening of its own outline.
+    (out as CSSProperties & {
+      WebkitTextStroke?: string;
+      paintOrder?: string;
+    }).WebkitTextStroke = `${e.stroke.widthPx}px ${e.stroke.color}`;
+    (out as CSSProperties & { paintOrder?: string }).paintOrder =
+      "stroke fill";
   }
   if (e.shadow) {
     out.textShadow = cssTextShadow(e.shadow);

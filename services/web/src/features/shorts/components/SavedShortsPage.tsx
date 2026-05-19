@@ -13,6 +13,7 @@ import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Search,
+  Check,
   ChevronDown,
   Plus,
   Download,
@@ -33,6 +34,7 @@ import type { BasketItem } from "@/features/basket/useSceneBasket";
 import { getRenderJobStatus, type RenderJobResponse } from "@/lib/api/highlight-reel";
 import { generateRenderJobSummary } from "@/lib/api/shorts-render";
 import { Pagination } from "@/components/ui/Pagination";
+import { Dialog } from "@/components/ui/Dialog";
 import { Button, Snackbar } from "@/components/ui/figma-index";
 
 interface SavedShort {
@@ -108,6 +110,16 @@ export function SavedShortsPage() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // 2026-05-19 — bulk-download mode toggled by the 다운로드 button.
+  // When true: cards expose a checkbox in their top-left, the
+  // 새 쇼츠 생성 + 다운로드 header pair flips to
+  // 모두 다운로드 + 선택한 쇼츠 다운로드, and a confirm dialog
+  // (downloadDialog) gates the actual download trigger. ESC exits
+  // the mode without downloading.
+  const [downloadMode, setDownloadMode] = useState(false);
+  const [downloadDialog, setDownloadDialog] = useState<
+    "all" | "selected" | null
+  >(null);
   // figma 1602:35774 — single open menu at a time (per-card dot-3 popover).
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -181,6 +193,21 @@ export function SavedShortsPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showExportMenu, showSort]);
 
+  // ESC exits download mode (no download fires). Confirm dialogs own
+  // their own ESC handling (Dialog component), so when a dialog is
+  // open we leave the mode handling to it.
+  useEffect(() => {
+    if (!downloadMode || downloadDialog !== null) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDownloadMode(false);
+        setSelectedIds(new Set());
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [downloadMode, downloadDialog]);
+
   const displayItems: DisplayItem[] = useMemo(() => {
     const items: DisplayItem[] = [];
 
@@ -247,6 +274,39 @@ export function SavedShortsPage() {
   const selectedShorts = useMemo(
     () => savedShorts.filter((s) => selectedIds.has(s.id)),
     [savedShorts, selectedIds],
+  );
+
+  // Toggle selection helper for the download-mode checkbox overlay.
+  // Mutates the shared selectedIds set so the count surfaced on the
+  // 선택한 쇼츠 다운로드 button updates immediately.
+  const toggleDownloadSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Items that can actually be downloaded — saved shorts with at
+  // least one scene to clip, and completed render jobs. Pending /
+  // failed renders are excluded so the 모두 다운로드 dialog count
+  // matches what triggerBulkDownload can deliver.
+  const downloadableItems = useMemo(
+    () =>
+      displayItems.filter(
+        (item) =>
+          (item.type === "saved" &&
+            item.scene_ids &&
+            item.scene_ids.length > 0) ||
+          (item.type === "render" && item.status === "completed"),
+      ),
+    [displayItems],
+  );
+
+  const selectedDownloadableItems = useMemo(
+    () => downloadableItems.filter((item) => selectedIds.has(item.id)),
+    [downloadableItems, selectedIds],
   );
 
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
@@ -346,6 +406,54 @@ export function SavedShortsPage() {
     }
   }, [getAccessToken]);
 
+  // Generic bulk download — walks an arbitrary list of DisplayItem
+  // and routes each through the matching legacy single-item path
+  // (saved shorts → downloadClipCloud, completed renders → render
+  // download endpoint). Used by the download-mode dialogs below; the
+  // legacy `handleClipDownload` (selectedShorts-bound, savedShort
+  // only) stays put because the Premiere Pro export menu is still
+  // wired to it.
+  const triggerBulkDownload = useCallback(
+    async (items: DisplayItem[]) => {
+      const total = items.length;
+      if (total === 0) return;
+      setExportProgress({ current: 0, total });
+      try {
+        let done = 0;
+        for (const item of items) {
+          if (item.type === "saved") {
+            const short = savedShorts.find((s) => s.id === item.id);
+            if (short) {
+              const startMs = short.start_ms ?? 0;
+              const endMs = short.end_ms ?? 0;
+              const name = short.title ?? `shorts_${short.video_id}`;
+              if (short.video_id.startsWith("gd_") && startMs < endMs) {
+                await downloadClipCloud(
+                  {
+                    video_id: short.video_id,
+                    clip_name: name,
+                    start_ms: startMs,
+                    end_ms: endMs,
+                  },
+                  getAccessToken,
+                );
+              }
+            }
+          } else if (item.type === "render" && item.status === "completed") {
+            await handleRenderDownload(item.id);
+          }
+          done += 1;
+          setExportProgress({ current: done, total });
+        }
+      } catch {
+        // silent per legacy convention
+      } finally {
+        setExportProgress(null);
+      }
+    },
+    [savedShorts, getAccessToken, handleRenderDownload],
+  );
+
   const exportItems: BasketItem[] = useMemo(
     () =>
       selectedShorts.map((s) => ({
@@ -420,42 +528,80 @@ export function SavedShortsPage() {
             </span>
           </h1>
           <div className="flex items-center gap-[8px]">
-            <Link href="/export/shorts/editor">
-              <Button variant="secondary" size="sm" leadingIcon={<Plus className="h-4 w-4" strokeWidth={2} />}>
-                새 쇼츠 생성
-              </Button>
-            </Link>
-            <div className="relative" ref={exportMenuRef}>
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={exportDisabled}
-                leadingIcon={<Download className="h-4 w-4" strokeWidth={2} />}
-                onClick={() => setShowExportMenu((v) => !v)}
-              >
-                내보내기
-              </Button>
-              {showExportMenu && (
-                <div className="absolute right-0 top-full z-20 mt-[6px] w-[200px] rounded-card border border-grayscale-100 bg-white py-1 shadow-dialog">
-                  <button
-                    type="button"
-                    onClick={handleClipDownload}
-                    className="flex w-full items-center gap-[8px] px-[12px] py-[10px] text-left text-[13px] text-neutral-h-700 hover:bg-neutral-h-50"
+            {downloadMode ? (
+              <>
+                {/* 2026-05-19 — download mode flips the header pair:
+                    새 쇼츠 생성 → 모두 다운로드 (left), 다운로드 →
+                    선택한 쇼츠 다운로드 (right). The right one is
+                    disabled while no card is selected so the dialog
+                    can't open empty. ESC exits download mode (handled
+                    by the keydown effect above). */}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leadingIcon={
+                    <Download className="h-4 w-4" strokeWidth={2} />
+                  }
+                  onClick={() => setDownloadDialog("all")}
+                  disabled={exportProgress !== null}
+                >
+                  모두 다운로드
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leadingIcon={
+                    <Download className="h-4 w-4" strokeWidth={2} />
+                  }
+                  onClick={() => setDownloadDialog("selected")}
+                  disabled={
+                    selectedIds.size === 0 || exportProgress !== null
+                  }
+                >
+                  선택한 쇼츠 다운로드
+                  {selectedIds.size > 0 && ` (${selectedIds.size})`}
+                </Button>
+              </>
+            ) : (
+              <>
+                {/* 2026-05-19 — re-routed from /export/shorts/editor
+                    (a blank editor session with no source clips) to
+                    the home dashboard, which is the operator's video
+                    search + composition entry point. Creating a "new
+                    short" starts with picking source video material,
+                    not landing in an empty editor with nothing to
+                    edit. */}
+                <Link href="/">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    leadingIcon={
+                      <Plus className="h-4 w-4" strokeWidth={2} />
+                    }
                   >
-                    <Download className="h-4 w-4" />
-                    클립 다운로드
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowExportMenu(false); setShowExportDialog(true); }}
-                    className="flex w-full items-center gap-[8px] px-[12px] py-[10px] text-left text-[13px] text-neutral-h-700 hover:bg-neutral-h-50"
-                  >
-                    <Film className="h-4 w-4" />
-                    Premiere Pro 내보내기
-                  </button>
-                </div>
-              )}
-            </div>
+                    새 쇼츠 생성
+                  </Button>
+                </Link>
+                {/* 2026-05-19 — clicking 다운로드 enters download mode
+                    instead of opening the legacy export dropdown. The
+                    dropdown's Premiere Pro export was the only other
+                    surface; that flow is being deprecated per the
+                    /export/shorts redesign. */}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leadingIcon={
+                    <Download className="h-4 w-4" strokeWidth={2} />
+                  }
+                  onClick={() => {
+                    setSelectedIds(new Set());
+                    setDownloadMode(true);
+                  }}
+                >
+                  다운로드
+                </Button>
+              </>
+            )}
           </div>
         </div>
 
@@ -656,7 +802,51 @@ export function SavedShortsPage() {
                       {statusLabel}
                     </span>
 
-                    {/* dot-3 action menu (figma 1602:35774 hover state) */}
+                    {/* 2026-05-19 — download-mode selection overlay.
+                        A transparent button sits above the thumbnail
+                        Link to intercept clicks and toggle the card
+                        into / out of the selectedIds set; the
+                        rounded-square checkbox at top-right mirrors
+                        the dot-3 menu's anchor so the operator's eye
+                        lands in the same place. Only renders for
+                        items that can actually be downloaded — saved
+                        shorts with scene_ids or completed renders. */}
+                    {downloadMode && thumbHref && (
+                      <>
+                        <button
+                          type="button"
+                          aria-label={`${item.title ?? "쇼츠"} 선택`}
+                          aria-pressed={selectedIds.has(item.id)}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleDownloadSelection(item.id);
+                          }}
+                          className="absolute inset-0 z-20 cursor-pointer bg-transparent"
+                        />
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "absolute right-2 top-2 z-30 inline-flex h-5 w-5 items-center justify-center rounded-[4px] border transition-colors",
+                            selectedIds.has(item.id)
+                              ? "border-heimdex-navy-500 bg-heimdex-navy-500"
+                              : "border-white bg-white/80 backdrop-blur",
+                          )}
+                        >
+                          {selectedIds.has(item.id) && (
+                            <Check
+                              className="h-3 w-3 text-white"
+                              strokeWidth={3}
+                            />
+                          )}
+                        </span>
+                      </>
+                    )}
+
+                    {/* dot-3 action menu (figma 1602:35774 hover state)
+                        — hidden in download mode so the checkbox stays
+                        the only top-right affordance. */}
+                    {!downloadMode && (
                     <div className="absolute right-1 top-1">
                       <button
                         type="button"
@@ -708,11 +898,14 @@ export function SavedShortsPage() {
                         </div>
                       )}
                     </div>
+                    )}
 
                     {/* external-link icon (bottom-right of thumbnail) for
                         saved shorts so the user can jump to the editor
-                        without opening the menu. */}
-                    {item.type === "saved" && thumbHref && (
+                        without opening the menu. Hidden in download
+                        mode since the click-overlay above intercepts
+                        all card clicks. */}
+                    {!downloadMode && item.type === "saved" && thumbHref && (
                       <Link
                         href={thumbHref}
                         aria-label="편집기에서 열기"
@@ -814,6 +1007,83 @@ export function SavedShortsPage() {
           onClose={() => setExportProgress(null)}
         />
       )}
+
+      {/* Bulk-download confirm dialogs (figma 1961:97387 / 1961:97363).
+          Both reuse the shared Dialog with `icon="info"`; the
+          difference is the body — popup 1 is a one-line count, popup
+          2 is a file list scoped to the current selection. Confirming
+          either fires triggerBulkDownload + exits download mode. */}
+      <Dialog
+        open={downloadDialog === "all"}
+        onClose={() => setDownloadDialog(null)}
+        icon="info"
+        title="모든 쇼츠를 다운로드할까요?"
+        body={
+          <span>
+            내 쇼츠에 저장된 영상{" "}
+            <span className="font-bold text-heimdex-navy-500">
+              {downloadableItems.length}개
+            </span>
+            를 다운로드합니다
+          </span>
+        }
+        secondary={{
+          label: "취소",
+          onClick: () => setDownloadDialog(null),
+        }}
+        primary={{
+          label: "다운로드",
+          onClick: () => {
+            const items = downloadableItems;
+            setDownloadDialog(null);
+            setDownloadMode(false);
+            setSelectedIds(new Set());
+            void triggerBulkDownload(items);
+          },
+        }}
+      />
+      <Dialog
+        open={downloadDialog === "selected"}
+        onClose={() => setDownloadDialog(null)}
+        icon="info"
+        title={
+          <span>
+            선택한 쇼츠{" "}
+            <span className="text-heimdex-navy-500">
+              {selectedDownloadableItems.length}개
+            </span>
+            를 다운로드할까요?
+          </span>
+        }
+        body={
+          <ul className="flex w-[243px] flex-col gap-[8px] rounded-[8px] bg-neutral-h-50 px-[12px] py-[10px] text-left text-[12px] tracking-[-0.3px] text-grayscale-800">
+            {selectedDownloadableItems.map((item) => (
+              <li key={item.id} className="truncate">
+                {(item.title ??
+                  (item.type === "render"
+                    ? "하이라이트 릴"
+                    : `쇼츠 ${item.scene_ids?.length ?? 0}장면`))
+                  .toString()}
+                .mp4
+              </li>
+            ))}
+          </ul>
+        }
+        secondary={{
+          label: "취소",
+          onClick: () => setDownloadDialog(null),
+        }}
+        primary={{
+          label: "다운로드",
+          onClick: () => {
+            const items = selectedDownloadableItems;
+            setDownloadDialog(null);
+            setDownloadMode(false);
+            setSelectedIds(new Set());
+            void triggerBulkDownload(items);
+          },
+        }}
+      />
     </div>
   );
 }

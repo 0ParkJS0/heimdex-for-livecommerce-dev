@@ -20,6 +20,9 @@ const FONT_FAMILY_CSS_MAP: Record<string, string> = {
   NanumSquare: "'NanumSquare', sans-serif",
   SUIT: "'SUIT', sans-serif",
   KoPubWorldDotum: "'KoPubWorldDotum', serif",
+  // 2026-05-19 — added for the editor's new caption template presets.
+  "Onglyph Positive": "'Onglyph Positive', cursive",
+  A2Z: "'A2Z', sans-serif",
 };
 
 export function resolveFontFamily(name: string | undefined | null): string {

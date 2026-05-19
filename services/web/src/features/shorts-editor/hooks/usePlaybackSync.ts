@@ -146,7 +146,18 @@ export function usePlaybackSync({
 
     const tick = () => {
       const elapsed = performance.now() - startTimeRef.current;
-      const newPlayhead = playheadAtStartRef.current + elapsed;
+      // performance.now() returns sub-millisecond precision; the
+      // timeline + subtitle boundary math is integer-ms throughout
+      // (msToPixels, getActiveSubtitles `>= startMs && < endMs`).
+      // Letting fractional ms reach onPlayheadChange caused captions
+      // to flicker into view ~half a millisecond before the timeline
+      // block visually crossed the playhead — operator-reported as a
+      // ~0.1s drift between the timeline block and the on-canvas
+      // caption appearance. Rounding here pins the playhead to the
+      // same integer ms the timeline already snaps to.
+      const newPlayhead = Math.round(
+        playheadAtStartRef.current + elapsed,
+      );
 
       // Check if we've gone past all clips — loop back to 0 so a
       // multi-clip composition replays automatically without the user
