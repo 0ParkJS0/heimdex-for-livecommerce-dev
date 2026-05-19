@@ -33,6 +33,7 @@ import {
   createScanOrder,
   getProductCatalog,
   triggerEnumeration,
+  triggerRescan,
 } from "@/lib/api/shorts-auto-product-wizard";
 import { useAuth } from "@/lib/auth";
 import { formatVideoTimestampHMS } from "@/lib/timeline";
@@ -322,6 +323,42 @@ export function InlineWizardProductPanel({
     setRetryCount((n) => n + 1);
   };
 
+  // "상품 재인식" — operator-triggered force re-enumeration.
+  // Calls backend /rescan (which invalidates the prior catalog and
+  // enqueues a fresh enumeration job), then flips the panel back to
+  // the 4-stage progress view by re-priming the polling effect.
+  //
+  // The retryCount bump below also re-fires triggerEnumeration in the
+  // useEffect — that POST /scan call will hit backend's 60s
+  // idempotency window and dedup against the just-created rescan job
+  // (one redundant network round-trip, no duplicate work). Keeping
+  // them paired is intentional so the polling lifecycle stays in one
+  // place and doesn't grow a parallel "rescan-only" path.
+  const handleRescan = useCallback(async () => {
+    setEntries([]);
+    setSelectedIds(new Set());
+    setErrorMessage(null);
+    setCompletedAt(null);
+    startedAtRef.current = Date.now();
+    setPollState("enumerating");
+    try {
+      await triggerRescan(videoId, getAccessToken);
+    } catch (err) {
+      if (err instanceof WizardBudgetExceededError) {
+        setErrorMessage(`일일 비용 한도 초과: ${err.message}`);
+      } else if (err instanceof WizardRateLimitError) {
+        setErrorMessage(`동시 실행 한도 초과: ${err.message}`);
+      } else {
+        setErrorMessage(
+          err instanceof Error ? err.message : "상품 재인식에 실패했어요",
+        );
+      }
+      setPollState("error");
+      return;
+    }
+    setRetryCount((n) => n + 1);
+  }, [videoId, getAccessToken]);
+
   const selectedCount = selectedIds.size;
   const cap = criteria.requested_count;
   const atCap = selectedCount >= cap;
@@ -448,6 +485,21 @@ export function InlineWizardProductPanel({
             >
               {summaryChip(criteria, videoDurationMs)}
             </span>
+            {pollState === "ready" ? (
+              // Force re-enumeration. Sits left of "다음" because the
+              // primary forward action keeps the right anchor. Disabled
+              // while a scan-order submit is in flight so the operator
+              // doesn't strand a half-submitted job.
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleRescan}
+                disabled={submitting}
+                data-testid="inline-product-rescan"
+              >
+                상품 재인식
+              </Button>
+            ) : null}
             <Button
               variant="primary"
               size="sm"
