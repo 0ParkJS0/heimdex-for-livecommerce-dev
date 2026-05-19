@@ -342,7 +342,10 @@ export function InlineWizardProductPanel({
     startedAtRef.current = Date.now();
     setPollState("enumerating");
     try {
-      await triggerRescan(videoId, getAccessToken);
+      // Body matches the initial triggerEnumeration call above
+      // (duration_preset_sec: 60). Backend reuses the same ScanRequest
+      // Pydantic model on /rescan, so the field is mandatory.
+      await triggerRescan(videoId, { duration_preset_sec: 60 }, getAccessToken);
     } catch (err) {
       if (err instanceof WizardBudgetExceededError) {
         setErrorMessage(`일일 비용 한도 초과: ${err.message}`);
