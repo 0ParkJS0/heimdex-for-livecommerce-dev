@@ -113,7 +113,7 @@ LABEL_JSON_SCHEMA = {
 # enumerated in EnumerationPrompt.SYSTEM (cosmetics / food / apparel /
 # appliances / supplements). Tweak via --queries / --queries-file when
 # the segment's category is known.
-DEFAULT_QUERIES: list[str] = [
+DEFAULT_OWLV2_QUERIES: list[str] = [
     # cosmetics
     "a cosmetic bottle",
     "a serum bottle",
