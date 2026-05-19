@@ -288,7 +288,10 @@ describe("InlineWizardProductPanel", () => {
   });
 
   it("renders timeout separately from no-products while scan is still in progress", async () => {
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(181_000);
+    // POLL_TIMEOUT_MS was stretched from 180_000 (3min) to 900_000
+    // (15min) in the panel — push the mocked elapsed time past the
+    // new ceiling so the watchdog still fires inside the test.
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(901_000);
     triggerEnumerationMock.mockResolvedValue({ job_id: "j1", deduped: false });
     getProductCatalogMock.mockResolvedValue({
       video_id: "gd_test",
