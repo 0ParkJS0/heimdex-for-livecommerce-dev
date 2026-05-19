@@ -27,6 +27,14 @@ interface OverlayRendererProps {
     corner: Corner,
     e: ReactPointerEvent<HTMLDivElement>,
   ) => void;
+  // Corner-outer drag — caller wires this to a "rotate" gesture that
+  // updates transform.rotationDeg. The handle sits slightly outside
+  // each resize corner so the user gets a free-rotation affordance
+  // when their cursor drifts diagonally past the resize square.
+  onRotatePointerDown?: (
+    corner: Corner,
+    e: ReactPointerEvent<HTMLDivElement>,
+  ) => void;
   // Drag continuation — these MUST be attached to the same elements that
   // call setPointerCapture in the pointerdown handlers, otherwise the
   // captured element delivers events to nowhere and the gesture appears
@@ -58,6 +66,7 @@ export function OverlayRenderer({
   isSelected,
   onMovePointerDown,
   onResizePointerDown,
+  onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
@@ -66,6 +75,7 @@ export function OverlayRenderer({
     isSelected,
     onMovePointerDown,
     onResizePointerDown,
+    onRotatePointerDown,
     onPointerMove,
     onPointerUp,
     onClick,
@@ -85,6 +95,7 @@ function TextOverlayBox({
   isSelected,
   onMovePointerDown,
   onResizePointerDown,
+  onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
@@ -93,6 +104,10 @@ function TextOverlayBox({
   isSelected: boolean;
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown?: (
+    corner: Corner,
+    e: ReactPointerEvent<HTMLDivElement>,
+  ) => void;
+  onRotatePointerDown?: (
     corner: Corner,
     e: ReactPointerEvent<HTMLDivElement>,
   ) => void;
@@ -170,6 +185,13 @@ function TextOverlayBox({
           onPointerUp={onPointerUp}
         />
       )}
+      {isSelected && onRotatePointerDown && (
+        <RotateHandles
+          onRotate={onRotatePointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      )}
     </div>
   );
 }
@@ -183,6 +205,7 @@ function BackgroundOverlayBox({
   isSelected,
   onMovePointerDown,
   onResizePointerDown,
+  onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
@@ -191,6 +214,10 @@ function BackgroundOverlayBox({
   isSelected: boolean;
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown?: (
+    corner: Corner,
+    e: ReactPointerEvent<HTMLDivElement>,
+  ) => void;
+  onRotatePointerDown?: (
     corner: Corner,
     e: ReactPointerEvent<HTMLDivElement>,
   ) => void;
@@ -261,6 +288,13 @@ function BackgroundOverlayBox({
           onPointerUp={onPointerUp}
         />
       )}
+      {isSelected && onRotatePointerDown && (
+        <RotateHandles
+          onRotate={onRotatePointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        />
+      )}
     </div>
   );
 }
@@ -274,6 +308,19 @@ const CORNER_STYLES: Record<Corner, string> = {
   ne: "-top-1.5 -right-1.5 cursor-nesw-resize",
   sw: "-bottom-1.5 -left-1.5 cursor-nesw-resize",
   se: "-bottom-1.5 -right-1.5 cursor-nwse-resize",
+};
+
+// Rotation handles sit one step further diagonally out from the
+// resize handles so the operator gets a free-rotation affordance the
+// moment their cursor drifts past the resize square. Operator-tested
+// offset: ~16px past the corner, which lands the handle just outside
+// the visible focus ring but still within easy thumb reach on
+// touchpads.
+const ROTATE_CORNER_STYLES: Record<Corner, string> = {
+  nw: "-top-5 -left-5 cursor-grab active:cursor-grabbing",
+  ne: "-top-5 -right-5 cursor-grab active:cursor-grabbing",
+  sw: "-bottom-5 -left-5 cursor-grab active:cursor-grabbing",
+  se: "-bottom-5 -right-5 cursor-grab active:cursor-grabbing",
 };
 
 function ResizeHandles({
@@ -299,6 +346,40 @@ function ResizeHandles({
           onPointerUp={onPointerUp}
           // Stop click bubbling so corner clicks don't double as
           // body-clicks (which would re-fire selection).
+          onClick={(e) => e.stopPropagation()}
+        />
+      ))}
+    </>
+  );
+}
+
+// Rotation handles — small ghosted dots positioned one notch
+// diagonally outside the resize squares. Visually understated so they
+// don't compete with the resize affordance, but reachable with a
+// slight outward drift of the cursor. Drag math (angle delta around
+// the overlay's center) lives in PreviewPanel's pointermove branch.
+function RotateHandles({
+  onRotate,
+  onPointerMove,
+  onPointerUp,
+}: {
+  onRotate: (corner: Corner, e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerMove?: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp?: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <>
+      {(["nw", "ne", "sw", "se"] as const).map((corner) => (
+        <div
+          key={`rotate-${corner}`}
+          aria-label={`Rotate ${corner}`}
+          className={cn(
+            "absolute z-10 h-2.5 w-2.5 rounded-full border border-white bg-indigo-300/70",
+            ROTATE_CORNER_STYLES[corner],
+          )}
+          onPointerDown={(e) => onRotate(corner, e)}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
           onClick={(e) => e.stopPropagation()}
         />
       ))}
