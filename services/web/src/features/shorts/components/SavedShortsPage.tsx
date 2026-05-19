@@ -551,10 +551,16 @@ export function SavedShortsPage() {
               // that the legacy ``videoId+sceneIds`` URL was dropping.
               // The thumbnail no longer triggers a download — exports
               // happen from inside the editor instead.
+              // 2026-05-19 — `&preview=1` tells the editor to auto-open
+              // its FullscreenOverlay once the composition lands, so
+              // the thumbnail click becomes a "watch this short" entry
+              // point rather than a "jump into edit mode" entry point.
+              // The menu's [편집] link omits the param so it still
+              // opens the editor with chrome visible.
               const thumbHref =
                 (item.type === "saved" && item.scene_ids) ||
                 (item.type === "render" && isCompleted(item))
-                  ? `/export/shorts/editor?shortId=${encodeURIComponent(item.id)}`
+                  ? `/export/shorts/editor?shortId=${encodeURIComponent(item.id)}&preview=1`
                   : null;
               const isMenuOpen = openMenuId === item.id;
               return (
