@@ -420,7 +420,13 @@ export function SavedShortsPage() {
             </span>
           </h1>
           <div className="flex items-center gap-[8px]">
-            <Link href="/export/shorts/editor">
+            {/* 2026-05-19 — re-routed from /export/shorts/editor (a
+                blank editor session with no source clips) to the home
+                dashboard, which is the operator's video search +
+                composition entry point. Creating a "new short" starts
+                with picking source video material, not landing in an
+                empty editor with nothing to edit. */}
+            <Link href="/">
               <Button variant="secondary" size="sm" leadingIcon={<Plus className="h-4 w-4" strokeWidth={2} />}>
                 새 쇼츠 생성
               </Button>
