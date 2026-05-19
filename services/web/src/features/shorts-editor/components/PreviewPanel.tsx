@@ -201,8 +201,20 @@ export function PreviewPanel({
     const drag = dragRef.current;
     if (drag) {
       if (drag.mode === "move") {
-        const deltaX = (e.clientX - drag.startX) / rect.width;
-        const deltaY = (e.clientY - drag.startY) / rect.height;
+        let deltaX = (e.clientX - drag.startX) / rect.width;
+        let deltaY = (e.clientY - drag.startY) / rect.height;
+        // Shift-drag axis lock: when the user holds Shift while
+        // moving, keep the motion on whichever axis they're currently
+        // pushing harder on. Computed per-frame (not at gesture
+        // start) so the lock can flip mid-drag if the user releases
+        // Shift, swings the other direction, and re-presses Shift.
+        if (e.shiftKey) {
+          if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+            deltaY = 0;
+          } else {
+            deltaX = 0;
+          }
+        }
         const newX = Math.max(0, Math.min(1, drag.origX + deltaX));
         const newY = Math.max(0, Math.min(1, drag.origY + deltaY));
         onUpdateSubtitlePosition(drag.subtitleIndex, newX, newY);
@@ -226,8 +238,16 @@ export function PreviewPanel({
       if (!overlay || !onUpdateOverlay) return;
 
       if (ovDrag.mode === "move") {
-        const deltaX = (e.clientX - ovDrag.startX) / rect.width;
-        const deltaY = (e.clientY - ovDrag.startY) / rect.height;
+        let deltaX = (e.clientX - ovDrag.startX) / rect.width;
+        let deltaY = (e.clientY - ovDrag.startY) / rect.height;
+        // Shift-drag axis lock — see the V1 path above for rationale.
+        if (e.shiftKey) {
+          if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+            deltaY = 0;
+          } else {
+            deltaX = 0;
+          }
+        }
         const newX = Math.max(0, Math.min(1, ovDrag.origX + deltaX));
         const newY = Math.max(0, Math.min(1, ovDrag.origY + deltaY));
         onUpdateOverlay(ovDrag.overlayId, {
