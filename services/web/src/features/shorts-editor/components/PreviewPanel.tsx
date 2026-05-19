@@ -465,6 +465,13 @@ export function PreviewPanel({
           surface so the editor center is the 9:16 stage with no padding. */}
       <div
         ref={containerRef}
+        // ``container-type: size`` opts this surface into CSS
+        // container queries so overlays inside can size themselves
+        // with ``cqw`` / ``cqh`` units relative to the actual preview
+        // dimensions. Overlay fontSize / width / height are stored in
+        // 720-tall output coords and re-scaled at render time —
+        // see OverlayRenderer + the V1 subtitle span below.
+        style={{ containerType: "size" }}
         className={cn(
           "relative overflow-hidden bg-black",
           aspectRatio === "9:16"
@@ -533,15 +540,16 @@ export function PreviewPanel({
                   )}
                   style={{
                     fontFamily: resolveFontFamily(sub.style.fontFamily),
-                    // 2026-05-19 — bumped from 0.5 → 0.55 so the inline
-                    // preview matches the fullscreen modal's subtitle
-                    // scale (FullscreenOverlay.tsx uses 0.55). Both
-                    // surfaces render the same composition; their on-
-                    // screen pill sizes should agree relative to the
-                    // host canvas. Fullscreen is the reference (it
-                    // mirrors the figma 9:16 phone frame); the inline
-                    // preview now follows.
-                    fontSize: `${Math.max(8, sub.style.fontSizePx * 0.55)}px`,
+                    // 2026-05-20 — switched from a static 0.55 multiplier
+                    // to a container-query scale. ``fontSizePx`` is stored
+                    // in 720-tall output coords; the preview canvas
+                    // (containerType: size set above) varies with viewport,
+                    // so ``100cqh / 720`` resolves to whatever fraction of
+                    // a px the current canvas height implies. The Math.max
+                    // floor keeps tiny stored sizes legible (8px minimum
+                    // displayed). Same formula used by OverlayRenderer +
+                    // FullscreenOverlay so all three surfaces agree.
+                    fontSize: `max(8px, calc(${sub.style.fontSizePx} * 100cqh / 720))`,
                     color: sub.style.fontColor,
                     fontWeight: sub.style.fontWeight,
                     textAlign: "center",

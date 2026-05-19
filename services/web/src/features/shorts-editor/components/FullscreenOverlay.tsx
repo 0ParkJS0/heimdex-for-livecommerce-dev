@@ -103,9 +103,13 @@ export function FullscreenOverlay({
           </button>
         </div>
 
-        {/* Vertical phone frame — figma 387×688 */}
+        {/* Vertical phone frame — figma 387×688. ``containerType: size``
+            opts this canvas into CSS container queries so overlay font
+            sizes inside the frame scale with its actual dimensions
+            (same pattern as PreviewPanel). */}
         <div
           className="relative flex h-[688px] w-[387px] items-end justify-center overflow-hidden rounded-[10px] bg-black"
+          style={{ containerType: "size" }}
           onClick={() => onSelectOverlay?.(null)}
         >
           <video
@@ -127,7 +131,11 @@ export function FullscreenOverlay({
                 top: `${sub.style.positionY * 100}%`,
                 transform: "translate(-50%, -50%)",
                 fontFamily: resolveFontFamily(sub.style.fontFamily),
-                fontSize: `${Math.max(8, sub.style.fontSizePx * 0.55)}px`,
+                // 2026-05-20 — container-query scale matching PreviewPanel
+                // and OverlayRenderer. ``fontSizePx`` is stored in 720-
+                // tall output coords; ``100cqh / 720`` resolves to the
+                // current phone-frame fraction (688/720 ≈ 0.955 here).
+                fontSize: `max(8px, calc(${sub.style.fontSizePx} * 100cqh / 720))`,
                 color: sub.style.fontColor,
                 fontWeight: sub.style.fontWeight,
                 // See PreviewPanel for the rationale on these wrapping
