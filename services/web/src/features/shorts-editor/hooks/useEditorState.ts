@@ -761,17 +761,53 @@ export function useEditorState() {
   // canvas. We span the whole timeline so the image persists for the
   // full composition, but we leave width/height at the factory default
   // so the picture isn't stretched to the 9:16 frame.
+  // 2026-05-19 — operator feedback: a 480×480 square was awkward to
+  // resize when the user dropped in a landscape product still. The
+  // helper now async-loads the source to read naturalWidth /
+  // naturalHeight, computes a width = 2/3 of the canvas (~270px at
+  // the 405px output), and derives height from the natural aspect.
+  // The picture lands at a comfortable two-thirds-of-frame size with
+  // its original proportions intact. Falls back to the factory
+  // default (480×480 from createDefaultBackgroundOverlay) if the
+  // image fails to load — e.g. a malformed data URL.
   const addImageBackgroundOverlayAtPlayhead = useCallback(
     (imageUrl: string) => {
-      const totalMs = state.totalDurationMs > 0
-        ? state.totalDurationMs
-        : DEFAULT_OVERLAY_DURATION_MS;
-      const overlay = createDefaultBackgroundOverlay({
-        startMs: 0,
-        endMs: totalMs,
-        imageUrl,
-      });
-      dispatch({ type: "ADD_OVERLAY", overlay });
+      const totalMs =
+        state.totalDurationMs > 0
+          ? state.totalDurationMs
+          : DEFAULT_OVERLAY_DURATION_MS;
+      const dispatchOverlay = (sizeOverride: {
+        widthPx: number;
+        heightPx: number;
+      } | null) => {
+        const overlay = createDefaultBackgroundOverlay({
+          startMs: 0,
+          endMs: totalMs,
+          imageUrl,
+        });
+        if (sizeOverride) {
+          overlay.transform = {
+            ...overlay.transform,
+            widthPx: sizeOverride.widthPx,
+            heightPx: sizeOverride.heightPx,
+          };
+        }
+        dispatch({ type: "ADD_OVERLAY", overlay });
+      };
+      const img = new Image();
+      img.onload = () => {
+        if (img.naturalWidth <= 0 || img.naturalHeight <= 0) {
+          dispatchOverlay(null);
+          return;
+        }
+        const widthPx = Math.round((DEFAULT_OUTPUT.width * 2) / 3);
+        const heightPx = Math.round(
+          (widthPx * img.naturalHeight) / img.naturalWidth,
+        );
+        dispatchOverlay({ widthPx, heightPx });
+      };
+      img.onerror = () => dispatchOverlay(null);
+      img.src = imageUrl;
     },
     [state.totalDurationMs],
   );
