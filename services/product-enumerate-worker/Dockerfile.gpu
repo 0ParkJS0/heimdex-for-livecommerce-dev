@@ -106,25 +106,37 @@ RUN useradd -m -u 1000 appuser
 # Pre-warm SigLIP2 + OWLv2 weights. SigLIP2 variant must match
 # drive-visual-embed-worker exactly so OS scene-level vectors stay
 # reusable as the coarse pre-filter for Phase 3 tracking. OWLv2 is the
-# stage-1 detector added in PR #204 (two-stage OWLv2 → gpt-4o-mini
-# per-crop labeling). Both must live in the image — any missed model
-# means Aircloud cold-starts download ~600MB at first boot and the
-# liveness probe times out before the worker is ready.
+# stage-1 detector — now the onnx-community fp32 ONNX export driven
+# via raw onnxruntime.InferenceSession (faster than the transformers/
+# PyTorch checkpoint on per-keyframe inference; optimum does not yet
+# support OWLv2 — see huggingface/optimum#1721). Both must live in the
+# image — any missed model means Aircloud cold-starts download weights
+# at first boot and the liveness probe times out before the worker is
+# ready.
+#
+# Owlv2Processor is pinned to the original google/ repo to match the
+# PyTorch baseline's preprocessing; the ONNX file itself is fetched
+# straight from the onnx-community repo via hf_hub_download so it lands
+# in HF_HOME alongside the processor cache.
 #
 # Build fails immediately if any download is unreachable — broken
 # pulls must be visible at build time, not at 2am during an enumerate
 # run when the Aircloud worker comes back unhealthy.
 RUN mkdir -p /models/hf \
     && python -c "\
+from huggingface_hub import hf_hub_download; \
 from transformers import (\
     AutoImageProcessor, SiglipVisionModel, \
-    Owlv2ForObjectDetection, Owlv2Processor, \
+    Owlv2Processor, \
 ); \
 SiglipVisionModel.from_pretrained('google/siglip2-base-patch16-256'); \
 AutoImageProcessor.from_pretrained('google/siglip2-base-patch16-256'); \
-Owlv2ForObjectDetection.from_pretrained('google/owlv2-base-patch16-ensemble'); \
 Owlv2Processor.from_pretrained('google/owlv2-base-patch16-ensemble'); \
-print('siglip2 + owlv2 cached')"
+hf_hub_download(\
+    repo_id='onnx-community/owlv2-base-patch16-ensemble-ONNX', \
+    filename='onnx/model.onnx', \
+); \
+print('siglip2 + owlv2-onnx (fp32) cached')"
 
 COPY dev-heimdex-for-livecommerce/services/product-enumerate-worker/src/ src/
 
