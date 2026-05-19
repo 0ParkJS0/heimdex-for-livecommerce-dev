@@ -55,18 +55,31 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
   // chevron flips the local axis state without touching transform.x/y so
   // the user can pick which axis to center next. Mirrors the text-align
   // cycle pattern (icon + chevron) the user explicitly referenced.
-  const [canvasAxis, setCanvasAxis] = useState<"vertical" | "horizontal">("vertical");
+  //
+  // 2026-05-20 — axis semantics flipped to match the new lucide
+  // ``align-center-horizontal`` glyph. The unrotated icon now reads as
+  // "center on the horizontal x axis (x = 0.5)" and the 90deg-rotated
+  // form reads as "center on the vertical y axis (y = 0.5)". State
+  // defaults to "horizontal" so the first press lands on x-center.
+  const [canvasAxis, setCanvasAxis] = useState<"vertical" | "horizontal">(
+    "horizontal",
+  );
 
   const handleCanvasAlign = () => {
-    if (canvasAxis === "vertical") {
-      onChange({ transform: { ...overlay.transform, y: 0.5 } });
-    } else {
+    if (canvasAxis === "horizontal") {
       onChange({ transform: { ...overlay.transform, x: 0.5 } });
+    } else {
+      onChange({ transform: { ...overlay.transform, y: 0.5 } });
     }
   };
 
   return (
-    <div className="flex items-center gap-1">
+    // 2026-05-20 — operator review on text-tab feedback: B / I / U and
+    // the align/canvas-align clusters should spread evenly across the
+    // panel width instead of huddling at the left. ``justify-between``
+    // pins the first and last elements to the wrapper edges and
+    // distributes the rest evenly between them.
+    <div className="flex w-full items-center justify-between">
       <ToolbarButton
         active={isBold}
         onClick={() => onChange({ fontWeight: isBold ? 400 : 700 })}
@@ -124,13 +137,14 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
       </button>
 
       {/* Canvas-level alignment: center the overlay on the preview canvas.
-          Vertical mode → transform.y = 0.5, horizontal mode → transform.x.
+          Horizontal mode → transform.x = 0.5 (unrotated icon),
+          Vertical mode → transform.y = 0.5 (90deg-rotated icon).
           The chevron flips which axis the icon represents. */}
       <ToolbarButton
-        ariaLabel={canvasAxis === "vertical" ? "캔버스 세로 중앙 정렬" : "캔버스 가로 중앙 정렬"}
+        ariaLabel={canvasAxis === "horizontal" ? "캔버스 가로 중앙 정렬" : "캔버스 세로 중앙 정렬"}
         onClick={handleCanvasAlign}
       >
-        <CanvasAlignCenterIcon rotated={canvasAxis === "horizontal"} />
+        <CanvasAlignCenterIcon rotated={canvasAxis === "vertical"} />
       </ToolbarButton>
       <button
         type="button"
