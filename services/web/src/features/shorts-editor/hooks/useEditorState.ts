@@ -5,7 +5,9 @@ import {
   createDefaultBackgroundOverlay,
   createDefaultTextOverlay,
   DEFAULT_OVERLAY_DURATION_MS,
+  generateOverlayId,
 } from "../lib/overlay-defaults";
+import type { StarterTemplateStyle } from "../lib/starter-templates";
 import { recomputeTimeline, getTotalDuration } from "../lib/timeline-math";
 import { DEFAULT_OUTPUT, DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
@@ -705,6 +707,31 @@ export function useEditorState() {
     [],
   );
 
+  // Starter caption templates (lib/starter-templates.ts) ship with a
+  // full style payload (text + font + position + stroke/shadow). This
+  // helper splices in the playhead-derived timing so the operator can
+  // drop a template at the current cursor with one click.
+  const addStarterTextOverlay = useCallback(
+    (style: StarterTemplateStyle) => {
+      const { startMs, endMs } = _clampOverlayWindow(
+        state.playheadMs,
+        state.totalDurationMs,
+      );
+      dispatch({
+        type: "ADD_OVERLAY",
+        overlay: {
+          kind: "text",
+          id: generateOverlayId("text"),
+          startMs,
+          endMs,
+          layerIndex: 0,
+          ...style,
+        },
+      });
+    },
+    [state.playheadMs, state.totalDurationMs],
+  );
+
   // Solid color backgrounds span the whole timeline AND fill the full
   // canvas — used to cover the black letterbox area when a 16:9 clip
   // sits inside the 9:16 frame (2026-05-18 review).
@@ -806,6 +833,7 @@ export function useEditorState() {
     // V2 overlay actions
     addTextOverlay,
     addTextOverlayAtPlayhead,
+    addStarterTextOverlay,
     addBackgroundOverlayAtPlayhead,
     addImageBackgroundOverlayAtPlayhead,
     updateOverlay,

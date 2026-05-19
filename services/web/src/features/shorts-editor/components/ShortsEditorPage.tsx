@@ -14,6 +14,7 @@ import {
 } from "@/components/layout/TopHeaderActionsContext";
 import { cn } from "@/lib/utils";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
+import { STARTER_TEMPLATES } from "../lib/starter-templates";
 import { recomputeTimeline } from "../lib/timeline-math";
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import type { RenderStatus } from "../hooks/useCompositionExport";
@@ -763,6 +764,29 @@ export function ShortsEditorPage() {
             const templateTab = (
               <TemplatePanel
                 presets={presetsApi.presets}
+                starterTemplates={STARTER_TEMPLATES}
+                onApplyStarter={(template) => {
+                  // Dual behavior:
+                  //   * Text overlay selected → apply the template's
+                  //     visual layer (font, color, transform, effects)
+                  //     to it, preserving the existing text + identity
+                  //     + timing. Operator stays anchored on the same
+                  //     subtitle slot but gets a fresh look.
+                  //   * Nothing selected (or a background overlay
+                  //     selected) → drop a brand new text overlay at
+                  //     the playhead with the template's full payload,
+                  //     including its example text.
+                  if (selectedOverlay?.kind === "text") {
+                    const { text: _templateText, ...visualStyle } =
+                      template.style;
+                    editor.updateOverlay(selectedOverlay.id, {
+                      ...selectedOverlay,
+                      ...visualStyle,
+                    });
+                  } else {
+                    editor.addStarterTextOverlay(template.style);
+                  }
+                }}
                 isLoading={presetsApi.isLoading}
                 error={presetsApi.error}
                 selectedId={selectedTemplateId}
