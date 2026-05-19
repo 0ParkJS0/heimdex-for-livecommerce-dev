@@ -451,11 +451,18 @@ export function InlineWizardProductPanel({
         {pollState === "enumerating" ? (
           // 2026-05-18 — render the 4-stage indexing panel in ``bare``
           // mode so it inherits the outer card instead of drawing its
-          // own. Stage + percent are simulated client-side off elapsed
+          // own. ``flex w-full flex-1`` forwards the wrapper's
+          // remaining vertical/horizontal real estate so the panel can
+          // center its stepper inside it (2026-05-19 fix — without
+          // these the panel hugged the wrapper's top-left corner).
+          // Stage + percent are simulated client-side off elapsed
           // time; once the catalog poll succeeds we hold at 100% with
           // every stage checked for 3s before pollState flips to
           // "ready" (handled by the completedAt timer above).
-          <div data-testid="inline-product-loading">
+          <div
+            className="flex w-full flex-1"
+            data-testid="inline-product-loading"
+          >
             <IndexingProgressPanel
               progress={progressPct / 100}
               currentStage={simulatedCurrentStage}

@@ -1,21 +1,22 @@
+// figma: 1713:288103  (cache: .figma-cache/1713-288103_phase2_wizard-indexing.api.json)
+// node-name: Component2-6.b AI 쇼츠 생성(인덱싱 중)
 // ============================================================================
 // Inline-wizard step 2-1 (인덱싱 진행) progress panel.
 //
-// 2026-05-19 redesign: drop the pill-style stage chips that wrapped
-// their inline labels vertically when the wrapper width was squeezed.
-// New layout is a step indicator — circle + label-below — with a
-// single horizontal connector line that passes UNDER the circles
-// (z-index trick) so there is no visible gap between line and circle.
-//
-// Stage labels map to backend ``ScanStage`` values:
-//   enumerating → "분석 중"
-//   tracking    → "상품 확인"
-//   assembling  → "분류 중"
-//   rendering   → "마무리 중"
-//
-// The mount condition is owned by the caller. This component takes
-// the derived ``progress``, ``currentStage`` and ``completedStages``
-// as props so it stays stateless.
+// 2026-05-19 — goal-mock revision. The pill layout is restored (icon +
+// label live INSIDE each pill) but the connectors and centering are
+// tightened so the four stages always read on a single horizontal row,
+// centered inside the parent wrapper. Key fixes vs the previous attempt:
+//   - panel root spans the host wrapper (``flex-1`` + ``items-center``)
+//     so the stepper centers vertically/horizontally instead of sitting
+//     at the wrapper's top-left
+//   - each pill is ``whitespace-nowrap`` so "분석 중" / "상품 확인" /
+//     "분류 중" / "마무리 중" never break to a vertical character stack
+//   - connectors are short fixed-width lines flush against the pill
+//     edges (no inter-pill padding)
+//   - completed marker = the Figma green check (also at
+//     public/icons/check-step.svg) inlined as SVG so first paint
+//     doesn't pay an extra request
 // ============================================================================
 
 "use client";
@@ -27,8 +28,8 @@ import { cn } from "@/lib/utils";
 import type { WizardCriteriaDraft } from "./InlineWizardCriteriaPanel";
 
 const NAVY = "#234C77";
-const GREEN_CHECK = "#3FB675";
-const QUEUED_GRAY = "#E5E7EB";
+const QUEUED_BORDER = "#E5E7EB";
+const QUEUED_TEXT = "#9CA3AF";
 
 export type IndexingStage =
   | "enumerating"
@@ -56,10 +57,7 @@ interface Props {
   hidePercent?: boolean;
   /** Accepted for backward-compat, never read. */
   estimatedRemainingSeconds?: number;
-  /**
-   * Drop the outer white card + heading row so the panel sits flush
-   * inside a parent surface.
-   */
+  /** Drop the outer white card + heading row. */
   bare?: boolean;
 }
 
@@ -86,20 +84,19 @@ function clampPercent(progress: number): number {
   return Math.max(0, Math.min(100, Math.round(progress * 100)));
 }
 
-function CheckMarkIcon() {
+function CheckIcon({ color = "white" }: { color?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      width="22"
-      height="22"
+      width="16"
+      height="16"
       fill="none"
       aria-hidden="true"
     >
-      <rect width="24" height="24" rx="12" fill={GREEN_CHECK} />
       <path
         d="M17 8.66211L10.125 15.5371L7 12.4121"
-        stroke="white"
-        strokeWidth="1.5"
+        stroke={color}
+        strokeWidth="2.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -107,11 +104,15 @@ function CheckMarkIcon() {
   );
 }
 
-function Spinner() {
+function Spinner({ tone }: { tone: "active" | "queued" }) {
+  const ringColor = tone === "active" ? NAVY : QUEUED_TEXT;
   return (
     <span
-      className="block h-3 w-3 animate-spin rounded-full border-2 border-gray-200"
-      style={{ borderTopColor: NAVY }}
+      className="inline-block h-[14px] w-[14px] animate-spin rounded-full"
+      style={{
+        border: "2px solid #E5E7EB",
+        borderTopColor: ringColor,
+      }}
       aria-hidden="true"
     />
   );
@@ -132,9 +133,9 @@ export function IndexingProgressPanel({
   const showHeaderActions =
     !hideHeaderActions && criteria != null && videoDurationMs != null;
 
-  const stepper = (
+  const stepperRow = (
     <ol
-      className="relative mx-auto flex w-full max-w-[520px] items-start"
+      className="flex items-center justify-center"
       data-testid="indexing-stage-list"
       aria-label="쇼츠 생성 파이프라인"
     >
@@ -149,57 +150,43 @@ export function IndexingProgressPanel({
         return (
           <li
             key={stage.id}
-            className="relative flex flex-1 flex-col items-center last:flex-none"
+            className="flex items-center"
             data-testid={`indexing-stage-${stage.id}`}
             data-state={state}
           >
-            {/* Connector to next stage. Starts at center of this
-                circle (left: 50%) and ends at center of next (right:
-                -50%). z-0 places it UNDER the circles so there's no
-                visible gap at either end. */}
+            <span
+              className={cn(
+                "flex items-center gap-[6px] whitespace-nowrap rounded-full px-[14px] py-[8px] text-[13px] font-semibold tracking-[-0.3px] transition",
+                isCompleted && "text-white",
+                isActive && "border-2 bg-white",
+                state === "queued" && "border bg-white",
+              )}
+              style={
+                isCompleted
+                  ? { backgroundColor: NAVY }
+                  : isActive
+                    ? { borderColor: NAVY, color: NAVY }
+                    : { borderColor: QUEUED_BORDER, color: QUEUED_TEXT }
+              }
+            >
+              {isCompleted ? (
+                <CheckIcon color="white" />
+              ) : (
+                <Spinner tone={isActive ? "active" : "queued"} />
+              )}
+              <span>{stage.label}</span>
+            </span>
+            {/* Short connector line flush against the pill edges. */}
             {i < STAGES.length - 1 ? (
               <span
                 aria-hidden="true"
-                className="absolute top-4 z-0 h-[2px] -translate-y-1/2"
+                data-testid="indexing-stage-connector"
+                className="h-[2px] w-[20px]"
                 style={{
-                  left: "50%",
-                  right: "-50%",
-                  backgroundColor: isCompleted ? NAVY : QUEUED_GRAY,
+                  backgroundColor: isCompleted ? NAVY : QUEUED_BORDER,
                 }}
               />
             ) : null}
-
-            <span
-              className={cn(
-                "relative z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white transition",
-                !isCompleted &&
-                  (isActive
-                    ? "border-2"
-                    : "border-2 border-gray-300"),
-              )}
-              style={isActive ? { borderColor: NAVY } : undefined}
-            >
-              {isCompleted ? (
-                <CheckMarkIcon />
-              ) : isActive ? (
-                <Spinner />
-              ) : (
-                <span className="text-xs font-semibold text-gray-400">
-                  {i + 1}
-                </span>
-              )}
-            </span>
-
-            <span
-              className={cn(
-                "mt-2 whitespace-nowrap text-[12px] font-medium tracking-[-0.3px]",
-                isCompleted || isActive
-                  ? "text-grayscale-800"
-                  : "text-grayscale-500",
-              )}
-            >
-              {stage.label}
-            </span>
           </li>
         );
       })}
@@ -229,17 +216,21 @@ export function IndexingProgressPanel({
         </div>
       ) : null}
 
-      <div className="flex w-full flex-col items-center gap-[24px] py-[12px]">
-        {stepper}
+      {/* Centring layer — ``flex-1`` lets this absorb whatever vertical
+          space the host wrapper has (943×454) so the stepper row sits
+          in the middle of that surface instead of clinging to its
+          top-left. */}
+      <div className="flex w-full flex-1 flex-col items-center justify-center gap-[16px]">
+        {stepperRow}
 
-        <div className="flex flex-col items-center gap-[6px]">
+        <div className="flex flex-col items-center gap-[4px]">
           {!hidePercent ? (
             <p
               className="text-[16px] font-semibold leading-[1.4] tracking-[-0.4px]"
               style={{ color: NAVY }}
               data-testid="indexing-progress-percent"
             >
-              진행률 {percent}%
+              {percent}%
             </p>
           ) : null}
           <p
@@ -256,7 +247,7 @@ export function IndexingProgressPanel({
   if (bare) {
     return (
       <div
-        className="space-y-[20px] font-pretendard"
+        className="flex w-full flex-1 flex-col font-pretendard"
         data-testid="indexing-progress-bare"
       >
         {body}
