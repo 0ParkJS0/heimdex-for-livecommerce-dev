@@ -219,6 +219,19 @@ services:
       - AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_TIMEOUT_S=${AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_TIMEOUT_S:-5.0}
       - AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_DAILY_BUDGET_USD=${AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_DAILY_BUDGET_USD:-5.0}
       - AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_PROMPT_VERSION=${AUTO_SHORTS_PRODUCT_V2_STORYBOARD_LLM_PROMPT_VERSION:-v1}
+      # L1 label-gated post-merge — dedupes same-product entries that
+      # SigLIP2 cosine clustering split within ONE enumeration scan
+      # (OWLv2 same-frame dup boxes / cross-keyframe visual variance).
+      # Pure post-process on enumerate_products() output (worker only;
+      # media-pipelines untouched). Default OFF = zero regression;
+      # activate with ENUM_LABEL_MERGE_ENABLED=true. v1 token path has
+      # NO extra LLM/cost; the optional gpt-4o-mini semantic-variant
+      # adjudicator is gated separately by ENUM_LABEL_MERGE_LLM_ENABLED
+      # (not implemented in v1 — off until diagnosed).
+      - ENUM_LABEL_MERGE_ENABLED=${ENUM_LABEL_MERGE_ENABLED:-false}
+      - ENUM_LABEL_MERGE_TOKEN_JACCARD=${ENUM_LABEL_MERGE_TOKEN_JACCARD:-0.6}
+      - ENUM_LABEL_MERGE_COSINE_FLOOR=${ENUM_LABEL_MERGE_COSINE_FLOOR:-0.70}
+      - ENUM_LABEL_MERGE_LLM_ENABLED=${ENUM_LABEL_MERGE_LLM_ENABLED:-false}
       # Phase 1 live-block filter (only source clips from scenes
       # where the host was actively talking). See
       # ``config.py::auto_shorts_product_v2_live_only_enabled``.
