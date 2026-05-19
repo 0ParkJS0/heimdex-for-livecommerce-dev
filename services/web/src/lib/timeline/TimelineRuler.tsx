@@ -11,6 +11,14 @@ interface TimelineRulerProps {
   // timecode. Mirrors how PlayheadCursor already calls onSeek during
   // drag — so the same handler also drives the preview/audio sync.
   onSeek?: (ms: number) => void;
+  /**
+   * Optional viewport width in px. When set, the ruler extends its
+   * tick generation past ``totalDurationMs`` until the rendered width
+   * reaches at least this value — useful at low zoom where the
+   * content extent is much narrower than the visible track and the
+   * empty area would otherwise have no timecode labels.
+   */
+  minWidthPx?: number;
 }
 
 // figma: 1669:49089 — "0s ㆍㆍㆍㆍ 1s ㆍㆍㆍㆍ 2s ㆍ··" pattern. Every
@@ -34,8 +42,18 @@ function formatRulerLabel(ms: number): string {
 // label cadence (1s per major mark) stays constant at zoom ≥ 100.
 const RULER_MIN_EXTENT_MS = 12_000;
 
-export function TimelineRuler({ totalDurationMs, zoom, onSeek }: TimelineRulerProps) {
-  const endMs = Math.max(totalDurationMs + 2000, RULER_MIN_EXTENT_MS);
+export function TimelineRuler({ totalDurationMs, zoom, onSeek, minWidthPx }: TimelineRulerProps) {
+  // Extend the ruler whichever is longer: content + 2s pad, the 12s
+  // baseline floor, or whatever the viewport says it needs to keep
+  // labels visible across the empty area. The viewport-driven extent
+  // is what fixes "ruler ends short when zoomed out / video is short".
+  const minMsFromViewport =
+    minWidthPx && minWidthPx > 0 ? pixelsToMs(minWidthPx, zoom) : 0;
+  const endMs = Math.max(
+    totalDurationMs + 2000,
+    RULER_MIN_EXTENT_MS,
+    Math.ceil(minMsFromViewport),
+  );
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
