@@ -130,6 +130,13 @@ export function FullscreenOverlay({
                 fontSize: `${Math.max(8, sub.style.fontSizePx * 0.55)}px`,
                 color: sub.style.fontColor,
                 fontWeight: sub.style.fontWeight,
+                // See PreviewPanel for the rationale on these wrapping
+                // properties. Keeping both previews aligned so a
+                // subtitle that fits on one line in the inline panel
+                // also fits on one line in the fullscreen modal.
+                wordBreak: "keep-all",
+                overflowWrap: "break-word",
+                maxWidth: "85%",
                 padding: "2px 6px",
                 borderRadius: "2px",
                 ...(sub.style.backgroundColor

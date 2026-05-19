@@ -132,6 +132,14 @@ export function InlineWizardProductPanel({
   // card. Auto-dismisses after 2.5s so the snackbar doesn't stack.
   const [showCapSnackbar, setShowCapSnackbar] = useState(false);
   const startedAtRef = useRef<number>(Date.now());
+  // Job-id race guard. Populated from the triggerEnumeration / triggerRescan
+  // response, then compared against ``catalog.scan_job_id`` on every poll
+  // tick so a stale prior batch (returned briefly during the rescan
+  // soft-reject window) doesn't flip the panel to "ready". Both sides must
+  // be populated for the rejection to kick in — a null on either side
+  // falls through to legacy "first non-empty wins" so first-mount races
+  // and older backends keep working.
+  const expectedJobIdRef = useRef<string | null>(null);
   const capSnackbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -147,7 +155,19 @@ export function InlineWizardProductPanel({
       try {
         const resp = await getProductCatalog(videoId, getAccessToken);
         if (cancelled) return;
-        if (resp.products.length > 0) {
+        // Reject responses that belong to a prior enumeration job. The
+        // backend soft-rejects the old catalog on rescan, but there's a
+        // narrow window where ``GET /products`` can still return the
+        // old entries with their old ``scan_job_id``. Without this
+        // guard, a quick second rescan would flash the prior batch as
+        // if it were the new result.
+        const expectedJobId = expectedJobIdRef.current;
+        const catalogJobId = resp.scan_job_id;
+        const staleJob =
+          expectedJobId != null &&
+          catalogJobId != null &&
+          catalogJobId !== expectedJobId;
+        if (resp.products.length > 0 && !staleJob) {
           // Cache the products + mark the completion moment. The grid
           // doesn't render yet — the post-completion timer below holds
           // pollState at "enumerating" for ~3s so the progress card
@@ -156,12 +176,15 @@ export function InlineWizardProductPanel({
           setCompletedAt(Date.now());
           return;
         }
-        if (resp.scan_status === "failed") {
+        // scan_status terminals are only authoritative when the catalog
+        // we're reading actually corresponds to the job we triggered —
+        // otherwise we may be inspecting the prior batch mid-rescan.
+        if (!staleJob && resp.scan_status === "failed") {
           setErrorMessage("이전 스캔이 실패했어요. 다시 시도해 주세요.");
           setPollState("error");
           return;
         }
-        if (resp.scan_status === "complete") {
+        if (!staleJob && resp.scan_status === "complete") {
           setPollState("no_products");
           return;
         }
@@ -181,11 +204,16 @@ export function InlineWizardProductPanel({
 
     const start = async () => {
       try {
-        await triggerEnumeration(
+        const resp = await triggerEnumeration(
           videoId,
           { duration_preset_sec: 60 },
           getAccessToken,
         );
+        // Snapshot the job id so poll() can verify the catalog it reads
+        // back belongs to this enumeration. When the trigger is a dedup
+        // hit (in-flight rescan + this remount), the backend returns
+        // the same id, so the race guard stays accurate.
+        expectedJobIdRef.current = resp.job_id;
       } catch (err) {
         if (cancelled) return;
         // eslint-disable-next-line no-console
@@ -340,12 +368,22 @@ export function InlineWizardProductPanel({
     setErrorMessage(null);
     setCompletedAt(null);
     startedAtRef.current = Date.now();
+    // Clear the prior job id so the next poll() doesn't compare against
+    // it. The triggerRescan response (and the dedup'd triggerEnumeration
+    // call that follows when retryCount bumps) repopulates it with the
+    // fresh job id.
+    expectedJobIdRef.current = null;
     setPollState("enumerating");
     try {
       // Body matches the initial triggerEnumeration call above
       // (duration_preset_sec: 60). Backend reuses the same ScanRequest
       // Pydantic model on /rescan, so the field is mandatory.
-      await triggerRescan(videoId, { duration_preset_sec: 60 }, getAccessToken);
+      const resp = await triggerRescan(
+        videoId,
+        { duration_preset_sec: 60 },
+        getAccessToken,
+      );
+      expectedJobIdRef.current = resp.job_id;
     } catch (err) {
       if (err instanceof WizardBudgetExceededError) {
         setErrorMessage(`일일 비용 한도 초과: ${err.message}`);
@@ -578,14 +616,28 @@ export function InlineWizardProductPanel({
               처리 시간이 예상보다 길어지고 있습니다. 스캔은 계속 진행될 수
               있으니 잠시 후 다시 확인해 주세요.
             </p>
-            <button
-              type="button"
-              onClick={handleRetry}
-              className="rounded-md bg-amber-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-800"
-              data-testid="inline-product-timeout-retry"
-            >
-              다시 확인
-            </button>
+            {/* 다시 확인 = same dedup'd /scan call (no-op if backend is
+                stuck on the same job). 상품 재인식 = force /rescan,
+                invalidate the prior catalog, and enqueue a fresh job —
+                the escape hatch when enumeration is genuinely wedged. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="rounded-md bg-amber-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-800"
+                data-testid="inline-product-timeout-retry"
+              >
+                다시 확인
+              </button>
+              <button
+                type="button"
+                onClick={handleRescan}
+                className="rounded-md border border-amber-700 bg-white px-4 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100"
+                data-testid="inline-product-timeout-rescan"
+              >
+                상품 재인식
+              </button>
+            </div>
           </div>
         ) : null}
 

@@ -68,12 +68,25 @@ export function ShortsEditorPage() {
   const videoId = searchParams.get("videoId") ?? "";
   const sceneIdsParam = searchParams.get("sceneIds") ?? "";
   const shortId = searchParams.get("shortId") ?? "";
+  // 2026-05-19 — `?preview=1` is set by SavedShortsPage when the
+  // operator clicks the thumbnail (vs the menu's [편집]). It signals
+  // "show me the fullscreen preview, not the edit chrome", so the
+  // editor auto-opens FullscreenOverlay once the composition lands.
+  // Closing the overlay drops back into the regular editor; that's
+  // intentional so the operator can switch from "watch" to "edit"
+  // without re-navigating.
+  const previewOnEntry = searchParams.get("preview") === "1";
 
   const [meta, setMeta] = useState<VideoScenesResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // One-shot guard for the `?preview=1` auto-open below. Without it,
+  // closing the fullscreen overlay then toggling some state that
+  // re-runs the effect would re-open the overlay and pin the operator
+  // in preview mode.
+  const [didAutoOpenPreview, setDidAutoOpenPreview] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   // playback rate lifted to page so timeline toggle + preview <video>
@@ -419,6 +432,17 @@ export function ShortsEditorPage() {
     isRenderWorking,
   ]);
   useTopHeaderActions(headerRightSlot);
+
+  // Open fullscreen once the composition is ready when `?preview=1`
+  // is in the URL. Gated on `state.clips.length > 0` so the overlay
+  // never lands on an empty <video> element; the one-shot guard above
+  // (didAutoOpenPreview) keeps closing-the-overlay from re-triggering.
+  useEffect(() => {
+    if (!previewOnEntry || didAutoOpenPreview) return;
+    if (state.clips.length === 0 || isLoading) return;
+    setIsFullscreen(true);
+    setDidAutoOpenPreview(true);
+  }, [previewOnEntry, didAutoOpenPreview, state.clips.length, isLoading]);
 
   // Load from scene IDs (entry from ShortsPlanPanel or saved-shorts list)
   useEffect(() => {
