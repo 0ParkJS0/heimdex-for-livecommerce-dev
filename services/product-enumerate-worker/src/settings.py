@@ -93,7 +93,7 @@ class WorkerSettings(BaseSettings):
     # processor pads to 960x960, so resizing the long edge to 960 avoids
     # wasted compute on letterbox bands.
     owlv2_max_image_side: int = 960
-    owlv2_threshold: float = 0.475
+    owlv2_threshold: float = 0.45
     owlv2_nms_iou: float = 0.5
     owlv2_max_dets_per_keyframe: int = 5
     # Padding around each OWLv2 bbox when cropping for the labeling

@@ -93,7 +93,7 @@ class OpenAIVlmClient:
     timeout_sec: float = 30.0
     max_retries: int = 3
     # Stage-1 (OWLv2) tunables — defaults mirror WorkerSettings.
-    threshold: float = 0.475
+    threshold: float = 0.45
     nms_iou: float = 0.5
     max_dets_per_keyframe: int = 5
     max_image_side: int = 960
