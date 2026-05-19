@@ -14,6 +14,7 @@ import type {
   ProductCatalogResponse,
   ProductScanRequest,
   ProductScanResponse,
+  RescanResponse,
   ScanOrderCreateRequest,
   ScanOrderResponse,
   ScanOrderStatusResponse,
@@ -252,6 +253,44 @@ export async function triggerEnumeration(
     throw new Error(`triggerEnumeration failed: ${await detailMessage(res)}`);
   }
   return (await res.json()) as ProductScanResponse;
+}
+
+// ----------------------------------------------------------------------
+// POST /api/shorts/auto/products/{video_id}/rescan
+//
+// Force re-enumeration. Unlike /scan (60s idempotency window), rescan
+// is always intentional: existing catalog entries get soft-rejected
+// with rejected_reason="rescan_invalidated" and a brand new
+// enumeration job is enqueued. Returns the new job_id +
+// invalidated_count so callers can surface "N items invalidated"
+// affordances if they want to.
+// ----------------------------------------------------------------------
+
+export async function triggerRescan(
+  videoId: string,
+  tokenGetter: TokenGetter,
+): Promise<RescanResponse> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/shorts/auto/products/${encodeURIComponent(videoId)}/rescan`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: await authHeader(tokenGetter),
+    },
+  );
+  if (res.status === 404) {
+    throw await classify404(res, "triggerRescan failed");
+  }
+  if (res.status === 402) {
+    throw new WizardBudgetExceededError(await detailMessage(res));
+  }
+  if (res.status === 429) {
+    throw new WizardRateLimitError(await detailMessage(res));
+  }
+  if (!res.ok) {
+    throw new Error(`triggerRescan failed: ${await detailMessage(res)}`);
+  }
+  return (await res.json()) as RescanResponse;
 }
 
 // ----------------------------------------------------------------------

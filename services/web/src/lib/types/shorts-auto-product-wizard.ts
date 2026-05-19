@@ -94,6 +94,19 @@ export interface ProductScanResponse {
   deduped: boolean;
 }
 
+/**
+ * Response for ``POST /api/shorts/auto/products/{video_id}/rescan``.
+ *
+ * Unlike ``/scan`` (60s idempotency), rescan is always intentional:
+ * existing catalog entries get soft-rejected with
+ * ``rejected_reason="rescan_invalidated"`` and a brand new enumeration
+ * job is enqueued.
+ */
+export interface RescanResponse {
+  job_id: string;
+  invalidated_count: number;
+}
+
 /** A single enumerated product in the catalog (gallery shape). */
 export interface CatalogProductSummary {
   catalog_entry_id: string;
