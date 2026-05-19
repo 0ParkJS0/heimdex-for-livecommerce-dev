@@ -45,6 +45,7 @@ from heimdex_worker_sdk.s3 import S3Client
 
 from src.api_client import ApiClient
 from src.openai_vlm import OpenAIVlmClient, VlmSchemaError, VlmTimeoutError
+from src.product_merge import merge_products_by_label
 from src.settings import WorkerSettings
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -205,7 +206,7 @@ def handle_enumerate_job(
                 error_message=str(exc)[:1900],
             )
             return
-
+        products = merge_products_by_label(products, settings=settings)
         # All-rejected != failure — we still post the rejected entries
         # so the API surfaces the empty-state UI honestly. But "0
         # candidate clusters at all" (e.g., LLM returned nothing) is a
