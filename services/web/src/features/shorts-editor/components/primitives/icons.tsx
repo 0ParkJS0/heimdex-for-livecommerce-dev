@@ -113,9 +113,9 @@ export function PaintBucketIcon({ className }: { className?: string }) {
 // Canvas-level alignment trigger — Lucide ``align-center-horizontal``
 // glyph: a long center bar with two short bars hanging below and two
 // short bars pinned above. Default (unrotated) state represents
-// horizontal centering on the x axis (x = 0.5); ``rotated`` applies a
-// 90deg clockwise transform so the same path doubles as the vertical
-// center (y = 0.5) icon.
+// centering ON the horizontal axis (transform.y = 0.5); ``rotated``
+// applies a 90deg transform so the same path doubles as the
+// horizontal-center (transform.x = 0.5) icon.
 //
 // 2026-05-20 — swapped the hand-rolled "two rounded rectangles + line"
 // shape for the Lucide ``align-center-horizontal`` path so the editor's
