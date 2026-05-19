@@ -37,6 +37,12 @@ export function BorderControl({
   onColorClick,
   disabled = false,
 }: BorderControlProps) {
+  // Stepping 0.1 ten times leaves the JS float at 0.9999... instead of
+  // 1 — round to two decimals on every commit so the rendered value
+  // stays human-readable and the persisted widthPx doesn't carry that
+  // drift into the wire format.
+  const commitWidth = (next: number) =>
+    onWidthChange(Math.round(next * 100) / 100);
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-medium text-grayscale-500">{t.effects.width}</span>
@@ -45,6 +51,14 @@ export function BorderControl({
           value={width}
           min={0}
           max={50}
+          // 2026-05-19 — sub-pixel stroke widths are visually
+          // meaningful at small font sizes (operator feedback from
+          // PR #232 review: 1px outline already looks heavy on a
+          // 30px cap, half-pixel widths read more naturally). Step
+          // is 0.1, the input itself accepts any decimal the user
+          // types directly thanks to NumericStepper's text-with-
+          // decimal inputMode.
+          step={0.1}
           onChange={onWidthChange}
           unit="px"
           ariaLabel={`${t.effects.stroke} width`}
