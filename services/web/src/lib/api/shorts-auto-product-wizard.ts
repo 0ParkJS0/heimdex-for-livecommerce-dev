@@ -264,10 +264,15 @@ export async function triggerEnumeration(
 // enumeration job is enqueued. Returns the new job_id +
 // invalidated_count so callers can surface "N items invalidated"
 // affordances if they want to.
+//
+// Body schema matches /scan (ScanRequest with duration_preset_sec);
+// backend reuses the same Pydantic model on the rescan handler, so an
+// empty body lands as a 422 missing-field error.
 // ----------------------------------------------------------------------
 
 export async function triggerRescan(
   videoId: string,
+  body: ProductScanRequest,
   tokenGetter: TokenGetter,
 ): Promise<RescanResponse> {
   const res = await fetch(
@@ -276,6 +281,7 @@ export async function triggerRescan(
       method: "POST",
       credentials: "include",
       headers: await authHeader(tokenGetter),
+      body: JSON.stringify(body),
     },
   );
   if (res.status === 404) {
