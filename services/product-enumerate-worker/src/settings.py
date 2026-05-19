@@ -104,6 +104,11 @@ class WorkerSettings(BaseSettings):
     # the OWLv2 threshold) or remove the floor entirely.
     enum_min_confidence: float = 0.6
 
+    enum_label_merge_enabled: bool = False
+    enum_label_merge_token_jaccard: float = 0.6
+    enum_label_merge_cosine_floor: float = 0.70
+    enum_label_merge_llm_enabled: bool = False
+
     # ---------- safety ----------
 
     product_v2_enabled: bool = False
