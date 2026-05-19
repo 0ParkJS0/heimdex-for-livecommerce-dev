@@ -66,6 +66,34 @@
   font-style: normal;
   font-display: swap;
 }
+/* 2026-05-19 — Two new families added so the editor's caption
+   template presets can mirror the operator-target screenshots
+   shipped from the design side. ``Onglyph Positive`` (온글잎 긍정)
+   covers the handwritten 분리수납 template; ``A2Z`` (에이투지체)
+   covers the bold sans-serif 앱송 반달 크로스백 template. Both follow
+   the existing ttf-under-/public/fonts pattern so the build pipeline
+   stays consistent. */
+@font-face {
+  font-family: "Onglyph Positive";
+  src: url("/fonts/OnglyphPositive/OnglyphPositive-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "A2Z";
+  src: url("/fonts/A2Z/A2Z-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "A2Z";
+  src: url("/fonts/A2Z/A2Z-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
 
 @layer base {
   html {

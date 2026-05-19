@@ -46,9 +46,10 @@ export const DEFAULT_SUBTITLE_DURATION_MS = 3000;
 export const MAX_COMPOSITION_DURATION_MS = 300_000; // 5 minutes
 
 // Each option's ``value`` must match a key in FONT_FAMILY_CSS_MAP
-// (lib/fonts.ts) AND have a matching next/font/local block in
-// app/fonts.ts — otherwise selecting it silently falls back to the
-// system default.
+// (lib/fonts.ts) AND have either a next/font/local block in
+// app/fonts.ts or a matching @font-face declaration in
+// app/globals.css — otherwise selecting it silently falls back to
+// the system default.
 export const FONT_OPTIONS = [
   { value: "Pretendard", label: "프리텐다드" },
   { value: "Noto Sans KR", label: "Noto Sans KR" },
@@ -56,4 +57,7 @@ export const FONT_OPTIONS = [
   { value: "NanumSquare", label: "나눔스퀘어" },
   { value: "SUIT", label: "수트(SUIT)" },
   { value: "KoPubWorldDotum", label: "KoPub돋움" },
+  // 2026-05-19 — added for the new caption template presets.
+  { value: "Onglyph Positive", label: "온글잎 긍정" },
+  { value: "A2Z", label: "A2Z (에이투지체)" },
 ] as const;
