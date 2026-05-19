@@ -18,6 +18,7 @@ function makeState(overrides: Partial<EditorState> = {}): EditorState {
     totalDurationMs: 0,
     zoom: 100,
     isDirty: false,
+    history: [],
     ...overrides,
   };
 }

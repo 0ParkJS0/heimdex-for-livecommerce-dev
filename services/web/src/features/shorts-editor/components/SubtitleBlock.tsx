@@ -4,7 +4,7 @@
 // node-name: Subtitle Block · spec: Block 자막 미리보기 fs=10 fw=500 → text-[10px] font-medium
 import { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import type { EditorSubtitle } from "../lib/types";
+import type { EditorSubtitle, HistoryEntry } from "../lib/types";
 import { msToPixels, pixelsToMs } from "../lib/timeline-math";
 
 interface SubtitleBlockProps {
@@ -18,6 +18,10 @@ interface SubtitleBlockProps {
   // playhead to its start so the preview jumps to the matching frame
   // (2026-05-18 review — the playhead was previously lagging behind).
   onSeek?: (ms: number) => void;
+  // Undo plumbing — pushed on pointerdown so Ctrl+Z can roll back the
+  // time-drag (start/end/move) gesture in one stroke. Optional so
+  // callers that don't surface dragging (read-only embeds) skip it.
+  onPushHistory?: (entry: HistoryEntry) => void;
 }
 
 export function SubtitleBlock({
@@ -28,6 +32,7 @@ export function SubtitleBlock({
   onSelect,
   onUpdate,
   onSeek,
+  onPushHistory,
 }: SubtitleBlockProps) {
   const leftPx = msToPixels(subtitle.startMs, zoom);
   // Subtract a 2px gutter from the rendered width so back-to-back
@@ -75,6 +80,16 @@ export function SubtitleBlock({
   const handlePointerDown = useCallback(
     (mode: "move" | "start" | "end") => (e: React.PointerEvent) => {
       e.stopPropagation();
+      // Snapshot the pre-gesture window so Ctrl+Z can roll back the
+      // entire move / start-edge / end-edge drag in one stroke. Pushed
+      // on pointerdown so the first pointermove already has an entry
+      // to undo to.
+      onPushHistory?.({
+        kind: "subtitle_time",
+        index,
+        startMs: subtitle.startMs,
+        endMs: subtitle.endMs,
+      });
       draggingRef.current = mode;
       startXRef.current = e.clientX;
       startValuesRef.current = {
@@ -114,7 +129,7 @@ export function SubtitleBlock({
       document.addEventListener("pointermove", handleMove);
       document.addEventListener("pointerup", handleUp);
     },
-    [subtitle.startMs, subtitle.endMs],
+    [subtitle.startMs, subtitle.endMs, index, onPushHistory],
   );
 
   return (

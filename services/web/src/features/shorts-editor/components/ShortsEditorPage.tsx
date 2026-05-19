@@ -116,7 +116,31 @@ export function ShortsEditorPage() {
     setPlaying,
     selectSubtitle,
     updateSubtitle,
+    undo,
   } = editor;
+
+  // Ctrl+Z / Cmd+Z to roll back the most recent drag-style gesture
+  // (overlay move/resize/rotate, V1 subtitle move/resize, subtitle
+  // time-drag). Skipped when the focused element is a text input so
+  // typing into a subtitle / preset name doesn't get hijacked.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (!meta || e.shiftKey || e.altKey) return;
+      if (e.key !== "z" && e.key !== "Z") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isEditable =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        target?.isContentEditable === true;
+      if (isEditable) return;
+      e.preventDefault();
+      undo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo]);
 
   const {
     renderStatus,
@@ -770,6 +794,7 @@ export function ShortsEditorPage() {
             onSelectSubtitle={selectSubtitle}
             onUpdateSubtitlePosition={handleSubtitlePositionChange}
             onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+            onPushHistory={editor.pushHistory}
             playbackRate={playbackRate}
           />
         }
@@ -888,6 +913,7 @@ export function ShortsEditorPage() {
             volume={masterVolume}
             onVolumeChange={setMasterVolume}
             onToggleFullscreen={() => setIsFullscreen(true)}
+            onPushHistory={editor.pushHistory}
           />
         }
       />

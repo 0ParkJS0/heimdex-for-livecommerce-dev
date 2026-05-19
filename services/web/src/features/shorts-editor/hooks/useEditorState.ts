@@ -1,5 +1,11 @@
 import { useReducer, useCallback } from "react";
-import type { EditorState, EditorAction, EditorClip, EditorSubtitle } from "../lib/types";
+import type {
+  EditorState,
+  EditorAction,
+  EditorClip,
+  EditorSubtitle,
+  HistoryEntry,
+} from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
 import {
   createDefaultBackgroundOverlay,
@@ -26,7 +32,10 @@ const INITIAL_STATE: EditorState = {
   totalDurationMs: 0,
   zoom: DEFAULT_ZOOM,
   isDirty: false,
+  history: [],
 };
+
+const HISTORY_LIMIT = 50;
 
 function clampVolume(v: number): number {
   return Math.max(0, Math.min(3, v));
@@ -280,6 +289,53 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
 
     case "MARK_CLEAN":
       return { ...state, isDirty: false };
+
+    case "PUSH_HISTORY": {
+      // Cap the stack so a long editing session can't grow it
+      // unboundedly. Older entries fall off the bottom — operators
+      // get up to 50 reversible gestures, which mirrors the
+      // industry-standard undo depth for design tools.
+      const history = [...state.history, action.entry].slice(-HISTORY_LIMIT);
+      return { ...state, history };
+    }
+
+    case "UNDO": {
+      const entry = state.history[state.history.length - 1];
+      if (!entry) return state;
+      const nextHistory = state.history.slice(0, -1);
+      switch (entry.kind) {
+        case "subtitle_style": {
+          const subtitles = state.subtitles.map((s, i) =>
+            i === entry.index ? { ...s, style: entry.style } : s,
+          );
+          return { ...state, subtitles, history: nextHistory, isDirty: true };
+        }
+        case "subtitle_time": {
+          const subtitles = state.subtitles.map((s, i) =>
+            i === entry.index
+              ? { ...s, startMs: entry.startMs, endMs: entry.endMs }
+              : s,
+          );
+          return { ...state, subtitles, history: nextHistory, isDirty: true };
+        }
+        case "overlay_transform": {
+          const overlays = state.overlays.map((o) =>
+            o.id === entry.id ? ({ ...o, transform: entry.transform } as typeof o) : o,
+          );
+          return { ...state, overlays, history: nextHistory, isDirty: true };
+        }
+        case "overlay_font_size": {
+          const overlays = state.overlays.map((o) =>
+            o.id === entry.id && o.kind === "text"
+              ? ({ ...o, fontSizePx: entry.fontSizePx } as typeof o)
+              : o,
+          );
+          return { ...state, overlays, history: nextHistory, isDirty: true };
+        }
+      }
+      // Unknown entry kind — drop it and continue without mutating state.
+      return { ...state, history: nextHistory };
+    }
 
     default:
       return state;
@@ -860,6 +916,20 @@ export function useEditorState() {
     dispatch({ type: "MARK_CLEAN" });
   }, []);
 
+  // Push a "pre-gesture" snapshot onto the undo stack. Callers invoke
+  // this from pointerdown handlers (move / resize / rotate / time-drag)
+  // so that the very first pointermove already has a committed entry
+  // to roll back to. Repeated pointerdowns produce one entry each.
+  const pushHistory = useCallback((entry: HistoryEntry) => {
+    dispatch({ type: "PUSH_HISTORY", entry });
+  }, []);
+
+  // Pop the most recent history entry and apply its reverse. No-op
+  // when the stack is empty — Ctrl+Z at session start does nothing.
+  const undo = useCallback(() => {
+    dispatch({ type: "UNDO" });
+  }, []);
+
   return {
     state,
     dispatch,
@@ -891,5 +961,7 @@ export function useEditorState() {
     setPlaying,
     setZoom,
     markClean,
+    pushHistory,
+    undo,
   };
 }

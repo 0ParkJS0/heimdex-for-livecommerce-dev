@@ -1,4 +1,4 @@
-import type { EditorOverlay, WireOverlay } from "./overlay-types";
+import type { EditorOverlay, TransformProps, WireOverlay } from "./overlay-types";
 
 // ============================================================================
 // Shorts Editor Types
@@ -55,7 +55,21 @@ export interface EditorState {
   totalDurationMs: number;
   zoom: number;
   isDirty: boolean;
+  // Undo stack for transform/length changes. Only drag-style gestures
+  // push entries (move / resize / rotate / time-drag); text edits,
+  // adds, deletes are out of scope. Bounded to 50 entries so a long
+  // editor session doesn't grow the stack unboundedly.
+  history: HistoryEntry[];
 }
+
+// One reversible drag-style gesture. The reducer pushes the
+// pre-gesture state on pointerdown and pops + restores it when the
+// operator hits Ctrl+Z / Cmd+Z.
+export type HistoryEntry =
+  | { kind: "subtitle_style"; index: number; style: SubtitleStyle }
+  | { kind: "subtitle_time"; index: number; startMs: number; endMs: number }
+  | { kind: "overlay_transform"; id: string; transform: TransformProps }
+  | { kind: "overlay_font_size"; id: string; fontSizePx: number };
 
 // ============================================================================
 // Actions
@@ -83,7 +97,9 @@ export type EditorAction =
   | { type: "SET_PLAYHEAD"; ms: number }
   | { type: "SET_PLAYING"; playing: boolean }
   | { type: "SET_ZOOM"; zoom: number }
-  | { type: "MARK_CLEAN" };
+  | { type: "MARK_CLEAN" }
+  | { type: "PUSH_HISTORY"; entry: HistoryEntry }
+  | { type: "UNDO" };
 
 // ============================================================================
 // CompositionSpec output types (matches backend schema)

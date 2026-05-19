@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import type { EditorSubtitle } from "../lib/types";
+import type { EditorSubtitle, HistoryEntry } from "../lib/types";
 import { msToPixels, pixelsToMs } from "../lib/timeline-math";
 import { DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { generateSubtitleId } from "../hooks/useEditorState";
@@ -18,6 +18,9 @@ interface SubtitleTrackProps {
   onAddSubtitle: (subtitle: EditorSubtitle) => void;
   // Clicking a subtitle block snaps the playhead to its start (2026-05-18).
   onSeek?: (ms: number) => void;
+  // Undo plumbing — forwarded to SubtitleBlock so time-drag gestures
+  // push a history entry that Ctrl+Z can roll back.
+  onPushHistory?: (entry: HistoryEntry) => void;
   // figma: 1669:154010 (펼침) / 1669:49002 (접힘) — zoom 변동 시 자막 섹션 펼침/접힘
   expanded?: boolean;
 }
@@ -31,6 +34,7 @@ export function SubtitleTrack({
   onUpdateSubtitle,
   onAddSubtitle,
   onSeek,
+  onPushHistory,
 }: SubtitleTrackProps) {
   const totalWidth = msToPixels(totalDurationMs, zoom);
 
@@ -77,6 +81,7 @@ export function SubtitleTrack({
             onSelect={() => onSelectSubtitle(index)}
             onUpdate={onUpdateSubtitle}
             onSeek={onSeek}
+            onPushHistory={onPushHistory}
           />
         ))}
       </div>

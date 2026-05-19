@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { EditorClip, EditorSubtitle } from "../lib/types";
+import type { EditorClip, EditorSubtitle, HistoryEntry } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
 import { OverlayRenderer } from "./preview/OverlayRenderer";
 import { SubtitleCancelActionBar } from "./SubtitleCancelActionBar";
@@ -36,6 +36,11 @@ interface PreviewPanelProps {
   onSelectSubtitle: (index: number | null) => void;
   onUpdateSubtitlePosition: (index: number, positionX: number, positionY: number) => void;
   onUpdateSubtitleFontSize: (index: number, fontSizePx: number) => void;
+  // Undo plumbing — preview captures a pre-gesture snapshot on each
+  // drag/resize/rotate pointerdown so Ctrl+Z can roll one step back.
+  // Optional so existing callers (e.g. embedded preview tiles that
+  // don't surface dragging) don't break.
+  onPushHistory?: (entry: HistoryEntry) => void;
   // when true, the preview container expands to the 352×626 iPhone
   // mockup size used inside FullscreenOverlay. Layout/logic otherwise identical.
   fullscreen?: boolean;
@@ -77,6 +82,7 @@ export function PreviewPanel({
   onSelectSubtitle,
   onUpdateSubtitlePosition,
   onUpdateSubtitleFontSize,
+  onPushHistory,
   fullscreen = false,
   playbackRate,
 }: PreviewPanelProps) {
@@ -146,6 +152,12 @@ export function PreviewPanel({
     const idx = getSubtitleIndex(sub.id);
     if (idx < 0) return;
 
+    // Snapshot the pre-gesture style so Ctrl+Z can restore position
+    // (and any other style fields that incidentally changed) in one
+    // step. Pushed on pointerdown so the very first pointermove
+    // already has an entry to roll back to.
+    onPushHistory?.({ kind: "subtitle_style", index: idx, style: { ...sub.style } });
+
     onSelectSubtitle(idx);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
@@ -163,13 +175,18 @@ export function PreviewPanel({
       origFontSizePx: sub.style.fontSizePx,
       lockedWidth,
     };
-  }, [getSubtitleIndex, onSelectSubtitle]);
+  }, [getSubtitleIndex, onSelectSubtitle, onPushHistory]);
 
   const handleResizePointerDown = useCallback((e: React.PointerEvent, sub: EditorSubtitle) => {
     e.preventDefault();
     e.stopPropagation();
     const idx = getSubtitleIndex(sub.id);
     if (idx < 0) return;
+
+    // Snapshot the pre-gesture style so Ctrl+Z restores fontSizePx
+    // (and incidentally position) in one step. Pushed on pointerdown
+    // for the same reason as the move path above.
+    onPushHistory?.({ kind: "subtitle_style", index: idx, style: { ...sub.style } });
 
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
@@ -317,6 +334,14 @@ export function PreviewPanel({
     (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
       e.preventDefault();
       e.stopPropagation();
+      // Snapshot the pre-gesture transform so Ctrl+Z restores the
+      // overlay position in one step. Move only changes transform.x/y
+      // so an overlay_transform entry covers the gesture.
+      onPushHistory?.({
+        kind: "overlay_transform",
+        id: overlay.id,
+        transform: { ...overlay.transform },
+      });
       onSelectOverlay?.(overlay.id);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       overlayDragRef.current = {
@@ -335,13 +360,30 @@ export function PreviewPanel({
         startAngleRad: 0,
       };
     },
-    [onSelectOverlay],
+    [onSelectOverlay, onPushHistory],
   );
 
   const handleOverlayResizePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
       e.preventDefault();
       e.stopPropagation();
+      // Resize updates transform.widthPx/heightPx (background) AND
+      // fontSizePx (text). Push both kinds so a single Ctrl+Z reverts
+      // the whole gesture in one stroke. Pop order is LIFO so the
+      // font-size entry lands first when the operator hits Ctrl+Z
+      // (which matches the gesture's "first effect").
+      if (overlay.kind === "text") {
+        onPushHistory?.({
+          kind: "overlay_font_size",
+          id: overlay.id,
+          fontSizePx: overlay.fontSizePx,
+        });
+      }
+      onPushHistory?.({
+        kind: "overlay_transform",
+        id: overlay.id,
+        transform: { ...overlay.transform },
+      });
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       const container = containerRef.current;
       if (!container) return;
@@ -365,7 +407,7 @@ export function PreviewPanel({
         startAngleRad: 0,
       };
     },
-    [],
+    [onPushHistory],
   );
 
   // Corner-outer rotate: caller fires this when a pointerdown lands on
@@ -376,6 +418,14 @@ export function PreviewPanel({
     (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
       e.preventDefault();
       e.stopPropagation();
+      // Snapshot the pre-gesture transform — rotate only changes
+      // transform.rotationDeg but we snapshot the whole transform so
+      // the undo path is uniform with move/resize.
+      onPushHistory?.({
+        kind: "overlay_transform",
+        id: overlay.id,
+        transform: { ...overlay.transform },
+      });
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       const container = containerRef.current;
       if (!container) return;
@@ -402,7 +452,7 @@ export function PreviewPanel({
         startAngleRad,
       };
     },
-    [],
+    [onPushHistory],
   );
 
   return (

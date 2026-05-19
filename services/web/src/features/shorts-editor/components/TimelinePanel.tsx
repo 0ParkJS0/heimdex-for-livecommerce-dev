@@ -42,6 +42,10 @@ interface TimelinePanelProps {
   volume?: number;
   onVolumeChange?: (volume: number) => void;
   onToggleFullscreen?: () => void;
+  // Undo plumbing — forwarded to SubtitleTrack → SubtitleBlock so the
+  // subtitle time-drag (move / start-edge / end-edge) gestures push a
+  // history entry the editor's Ctrl+Z handler can roll back.
+  onPushHistory?: (entry: import("../lib/types").HistoryEntry) => void;
 }
 
 // figma: 1669:153949 — toolbar buttons are 32×32 r-8 bg neutral-50.
@@ -323,6 +327,7 @@ export function TimelinePanel({
   volume = 1.0,
   onVolumeChange,
   onToggleFullscreen,
+  onPushHistory,
 }: TimelinePanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Live track of the scroll viewport's clientWidth. Passed to the
@@ -504,6 +509,7 @@ export function TimelinePanel({
             onUpdateSubtitle={onUpdateSubtitle}
             onAddSubtitle={onAddSubtitle}
             onSeek={onSeek}
+            onPushHistory={onPushHistory}
             expanded={isSubtitleExpanded}
           />
 
