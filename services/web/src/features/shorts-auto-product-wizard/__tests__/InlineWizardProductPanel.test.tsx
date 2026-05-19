@@ -12,6 +12,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 const triggerEnumerationMock = vi.fn();
+const triggerRescanMock = vi.fn();
 const getProductCatalogMock = vi.fn();
 const createScanOrderMock = vi.fn();
 
@@ -23,6 +24,7 @@ vi.mock("@/lib/api/shorts-auto-product-wizard", async () => {
     ...actual,
     triggerEnumeration: (...args: unknown[]) =>
       triggerEnumerationMock(...args),
+    triggerRescan: (...args: unknown[]) => triggerRescanMock(...args),
     getProductCatalog: (...args: unknown[]) => getProductCatalogMock(...args),
     createScanOrder: (...args: unknown[]) => createScanOrderMock(...args),
   };
@@ -74,6 +76,7 @@ function renderPanel(
 describe("InlineWizardProductPanel", () => {
   beforeEach(() => {
     triggerEnumerationMock.mockReset();
+    triggerRescanMock.mockReset();
     getProductCatalogMock.mockReset();
     createScanOrderMock.mockReset();
     vi.restoreAllMocks();
@@ -365,6 +368,83 @@ describe("InlineWizardProductPanel", () => {
           time_range_start_ms: 60_000,
           time_range_end_ms: FIVE_MIN_MS,
         }),
+        expect.any(Function),
+      );
+    });
+  });
+
+  it("ignores stale catalog batch whose scan_job_id differs from the active trigger", async () => {
+    // Simulates the rescan race: backend hasn't soft-rejected the prior
+    // catalog yet, so GET /products still returns the old entries with
+    // the OLD scan_job_id. The panel should keep polling instead of
+    // flipping to ready with the stale batch.
+    triggerEnumerationMock.mockResolvedValue({
+      job_id: "job-new",
+      deduped: false,
+    });
+    // First call returns the prior batch (different job id) — panel
+    // must reject it. Second call returns the matching job's payload —
+    // panel accepts.
+    getProductCatalogMock
+      .mockResolvedValueOnce({
+        video_id: "gd_test",
+        scan_status: "in_progress",
+        scan_job_id: "job-old",
+        enumeration_version: null,
+        enumeration_prompt_version: null,
+        products: SAMPLE_ENTRIES,
+      })
+      .mockResolvedValue({
+        video_id: "gd_test",
+        scan_status: "complete",
+        scan_job_id: "job-new",
+        enumeration_version: null,
+        enumeration_prompt_version: null,
+        products: SAMPLE_ENTRIES,
+      });
+
+    renderPanel();
+
+    // The stale read should not have rendered the grid — the loader
+    // is still up until the next poll returns the matching job.
+    await waitFor(() => {
+      expect(getProductCatalogMock).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("inline-product-grid")).not.toBeInTheDocument();
+    expect(screen.getByTestId("inline-product-loading")).toBeInTheDocument();
+
+    // Subsequent poll (after POLL_INTERVAL_MS = 5s) would land the
+    // matching batch — but vitest's fake timers aren't enabled here
+    // and the existing tests rely on real timers, so we leave the
+    // "accept matching batch" assertion to the other tests. The
+    // guarantee tested here is the negative case: stale data does NOT
+    // flip pollState to ready.
+  });
+
+  it("timeout state exposes a rescan button that fires triggerRescan", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(901_000);
+    triggerEnumerationMock.mockResolvedValue({ job_id: "j1", deduped: false });
+    triggerRescanMock.mockResolvedValue({
+      job_id: "rescan-1",
+      invalidated_count: 0,
+    });
+    getProductCatalogMock.mockResolvedValue({
+      video_id: "gd_test",
+      products: [],
+      scan_status: "in_progress",
+    });
+
+    renderPanel();
+
+    const rescanBtn = await screen.findByTestId(
+      "inline-product-timeout-rescan",
+    );
+    fireEvent.click(rescanBtn);
+
+    await waitFor(() => {
+      expect(triggerRescanMock).toHaveBeenCalledWith(
+        "gd_test",
+        { duration_preset_sec: 60 },
         expect.any(Function),
       );
     });
