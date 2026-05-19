@@ -707,6 +707,16 @@ export function useEditorState() {
     [],
   );
 
+  // Hydration helper — drop a fully-formed overlay (already carrying
+  // its own timing + style) straight into state. Used by the composition
+  // loader to push saved/refined subtitles into the V2 overlays slice
+  // without round-tripping through the playhead-relative add helpers.
+  // The reducer's ADD_OVERLAY handler still rewrites layerIndex so
+  // callers don't need to manage stacking.
+  const addOverlayDirect = useCallback((overlay: EditorOverlay) => {
+    dispatch({ type: "ADD_OVERLAY", overlay });
+  }, []);
+
   // Starter caption templates (lib/starter-templates.ts) ship with a
   // full style payload (text + font + position + stroke/shadow). This
   // helper splices in the playhead-derived timing so the operator can
@@ -870,6 +880,7 @@ export function useEditorState() {
     addTextOverlay,
     addTextOverlayAtPlayhead,
     addStarterTextOverlay,
+    addOverlayDirect,
     addBackgroundOverlayAtPlayhead,
     addImageBackgroundOverlayAtPlayhead,
     updateOverlay,

@@ -15,6 +15,10 @@ import {
 import { cn } from "@/lib/utils";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
 import { STARTER_TEMPLATES } from "../lib/starter-templates";
+import {
+  wireSubtitleToEditorSubtitle,
+  wireSubtitleToEditorTextOverlay,
+} from "../lib/wire-to-editor";
 import { recomputeTimeline } from "../lib/timeline-math";
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import type { RenderStatus } from "../hooks/useCompositionExport";
@@ -599,16 +603,38 @@ export function ShortsEditorPage() {
             setMeta(scenesRes);
             if (!comp.title) setTitle(scenesRes.video_title ?? "");
 
-            // Auto-generate subtitles from each clip's source scene when
-            // the saved composition didn't carry any. Mirrors the scene-
-            // ids entry path so users landing from /export/shorts see
-            // editable subtitles instead of an empty panel. We skip
-            // generation when the composition already has subtitles
-            // (op-saved overrides should win).
+            // Subtitle hydration — two paths.
+            //
+            // 1) Composition already carries subtitles (Whisper refine
+            //    has run, or the operator previously saved cues): load
+            //    them verbatim via wire→editor converters so style
+            //    fidelity (font, color, position, pill background,
+            //    stroke, shadow) survives the round trip.
+            //
+            // 2) No saved subtitles: fall through to the legacy
+            //    speaker_transcript auto-generation so the operator
+            //    isn't dropped into an empty panel.
+            //
+            // 2026-05-19 — path (1) used to skip silently with a
+            // "skip auto-gen, but don't load either" branch, so AI
+            // shorts that DID have refined subtitles came up empty in
+            // the editor.
             const hasSavedSubtitles =
               (comp.subtitles?.length ?? 0) > 0;
-            if (!hasSavedSubtitles) {
-              const v2Active = isShortsEditorV2Enabled();
+            const v2Active = isShortsEditorV2Enabled();
+            if (hasSavedSubtitles) {
+              for (const wireSub of comp.subtitles ?? []) {
+                if (v2Active) {
+                  editor.addOverlayDirect(
+                    wireSubtitleToEditorTextOverlay(wireSub),
+                  );
+                } else {
+                  editor.addSubtitle(
+                    wireSubtitleToEditorSubtitle(wireSub),
+                  );
+                }
+              }
+            } else {
               for (let i = 0; i < clips.length; i++) {
                 const sceneId = clips[i].sceneId;
                 const scene = scenesRes.scenes.find(
