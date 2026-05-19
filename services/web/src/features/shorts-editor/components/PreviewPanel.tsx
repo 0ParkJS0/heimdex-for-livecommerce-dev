@@ -394,6 +394,14 @@ export function PreviewPanel({
                     color: sub.style.fontColor,
                     fontWeight: sub.style.fontWeight,
                     textAlign: "center",
+                    // Korean eojeol-aware wrapping: keep-all stops the
+                    // glyph-by-glyph split that the browser default
+                    // (break-all-ish behavior on CJK without explicit
+                    // word boundaries) produces, and break-word lets
+                    // truly oversized eojeols still wrap instead of
+                    // overflowing the preview pill.
+                    wordBreak: "keep-all",
+                    overflowWrap: "break-word",
                     padding: "2px 6px",
                     borderRadius: "2px",
                     ...(sub.style.backgroundColor
