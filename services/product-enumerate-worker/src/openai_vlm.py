@@ -53,9 +53,10 @@ from src.owlv2_prompts import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
+    import onnxruntime as ort
     import torch
     from PIL import Image
-    from transformers import Owlv2ForObjectDetection, Owlv2Processor
+    from transformers import Owlv2Processor
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,11 @@ class OpenAIVlmClient:
     # injected here so per-job dispatch doesn't pay the load cost on
     # every message.
     owlv2_processor: "Owlv2Processor"
-    owlv2_model: "Owlv2ForObjectDetection"
+    owlv2_session: "ort.InferenceSession"
     owlv2_device: "torch.device"
+    # Repo id from settings — surfaced in debug logs since the raw ORT
+    # session does not carry a transformers ``.config`` object.
+    owlv2_model_id: str
     queries: list[str] = field(default_factory=lambda: list(DEFAULT_OWLV2_QUERIES))
     model: str = "gpt-4o-mini"
     timeout_sec: float = 30.0
@@ -183,9 +187,7 @@ class OpenAIVlmClient:
 
         debug = {
             "model": self.model,
-            "owlv2_model": getattr(
-                self.owlv2_model.config, "_name_or_path", "owlv2"
-            ),
+            "owlv2_model": self.owlv2_model_id,
             "prompt_version": OWLV2_PROMPT_VERSION,
             "keyframes_in_batch": len(keyframes),
             "owl_detections_before_label": owl_detections_before_label,
@@ -205,6 +207,7 @@ class OpenAIVlmClient:
     ) -> list[tuple[int, int, int, int, str, float]]:
         """Return ``[(x, y, w, h, query_label, score), ...]`` in
         ORIGINAL-image pixel coordinates after class-agnostic NMS."""
+        import numpy as np
         import torch
 
         orig_w, orig_h = image.size
@@ -212,15 +215,34 @@ class OpenAIVlmClient:
         sent_w, sent_h = sent.size
 
         inputs = self.owlv2_processor(
-            text=[self.queries], images=sent, return_tensors="pt"
-        ).to(self.owlv2_device)
-
-        with torch.no_grad():
-            outputs = self.owlv2_model(**inputs)
-
-        target_sizes = torch.tensor(
-            [[sent_h, sent_w]], device=self.owlv2_device
+            text=[self.queries], images=sent, return_tensors="np",
         )
+        # fp32 is hard-coded because ``settings.owlv2_onnx_file`` pins
+        # ``onnx/model.onnx`` (fp32). Switching to fp16/quantized would
+        # require updating the pixel_values dtype here AND recalibrating
+        # ``owlv2_threshold`` against goldens.
+        ort_inputs = {
+            "input_ids": inputs["input_ids"].astype(np.int64),
+            "attention_mask": inputs["attention_mask"].astype(np.int64),
+            "pixel_values": inputs["pixel_values"].astype(np.float32),
+        }
+        logits_np, pred_boxes_np = self.owlv2_session.run(
+            ["logits", "pred_boxes"], ort_inputs,
+        )
+
+        # Owlv2Processor.post_process_grounded_object_detection expects
+        # an object with ``.logits`` and ``.pred_boxes`` as torch
+        # tensors. The ONNX session returned numpy because we drive it
+        # directly (no optimum wrapper — optimum does not yet support
+        # OWLv2, huggingface/optimum#1721), so wrap in a minimal
+        # adapter. target_sizes stays on CPU since logits/pred_boxes are
+        # CPU torch tensors after numpy round-trip.
+        class _Out:
+            pass
+        outputs = _Out()
+        outputs.logits = torch.from_numpy(logits_np)
+        outputs.pred_boxes = torch.from_numpy(pred_boxes_np)
+        target_sizes = torch.tensor([[sent_h, sent_w]])
         results = self.owlv2_processor.post_process_grounded_object_detection(
             outputs=outputs,
             target_sizes=target_sizes,
