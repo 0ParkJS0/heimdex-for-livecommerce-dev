@@ -7,24 +7,21 @@
  * template specs (text, font, position, stroke, shadow) come from the
  * design team's reference screenshots (Slack #team-uiux 2026-05-18).
  *
- * Position (transform.y) is normalized against the FullscreenOverlay
- * phone frame height (688px). At canvas height 720 (DEFAULT_OUTPUT)
- * the absolute top differs by ~5%, which the design team accepts as
- * a known minor drift until the preview/fullscreen frames are unified
- * against the output dimensions in a separate pass.
+ * Position (transform.y) is canvas-height-normalized (0 = top, 1 =
+ * bottom). The shared top-anchor lands every starter ~27% down from
+ * the top so applying one preset after another lines up visually
+ * instead of jumping around.
  */
 
 import type { EditorTextOverlay } from "./overlay-types";
 
-const FULLSCREEN_FRAME_HEIGHT_PX = 688;
-
-// 2026-05-19 — operator review on PR #232 asked for all three starter
-// templates to land at the same vertical slot so applying one preset
-// after another lines up visually instead of jumping around. The
-// original design specs (254 / 45 / 344) are preserved in the
-// references here for forensics, but every template uses the same
-// top-pinned offset now.
-const UNIFIED_TOP_PX = 27;
+// 2026-05-20 — operator review reverted from the previous absolute-px
+// anchor (27px against the 688px phone frame, which rendered ~4% from
+// the top) to a true 27% ratio so the title sits closer to the upper-
+// third focal point of the canvas. The original design specs
+// (254/45/344 px against the phone frame) are dropped in favor of one
+// shared ratio.
+const UNIFIED_TOP_RATIO = 0.27;
 
 /** Style + text payload for creating a new text overlay from a template. */
 export type StarterTemplateStyle = Omit<
@@ -41,9 +38,9 @@ export interface StarterTemplate {
   style: StarterTemplateStyle;
 }
 
-const CENTERED_TRANSFORM = (topPx: number) => ({
+const CENTERED_TRANSFORM = (topRatio: number) => ({
   x: 0.5,
-  y: topPx / FULLSCREEN_FRAME_HEIGHT_PX,
+  y: topRatio,
   rotationDeg: 0,
   widthPx: null,
   heightPx: null,
@@ -76,7 +73,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       fontSizePx: 38,
       fontWeight: 400,
       fontColor: "#FFFFFF",
-      transform: CENTERED_TRANSFORM(UNIFIED_TOP_PX),
+      transform: CENTERED_TRANSFORM(UNIFIED_TOP_RATIO),
       effects: {
         opacity: 1,
         stroke: { color: "#000000", widthPx: 1.5 },
@@ -106,7 +103,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       fontSizePx: 30,
       fontWeight: 600,
       fontColor: "#2D2007",
-      transform: CENTERED_TRANSFORM(UNIFIED_TOP_PX),
+      transform: CENTERED_TRANSFORM(UNIFIED_TOP_RATIO),
       effects: {
         opacity: 1,
         stroke: null,
@@ -126,7 +123,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
       fontSizePx: 32,
       fontWeight: 700,
       fontColor: "#FFFFFF",
-      transform: CENTERED_TRANSFORM(UNIFIED_TOP_PX),
+      transform: CENTERED_TRANSFORM(UNIFIED_TOP_RATIO),
       effects: {
         opacity: 1,
         stroke: null,
