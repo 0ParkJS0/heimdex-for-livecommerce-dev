@@ -325,6 +325,23 @@ export function TimelinePanel({
   onToggleFullscreen,
 }: TimelinePanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Live track of the scroll viewport's clientWidth. Passed to the
+  // TimelineRuler so it can extend its timecode labels past the content
+  // extent when the user zooms out far enough that the video occupies
+  // only a small fraction of the visible width.
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    setContainerWidth(el.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setContainerWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const SEEK_TOLERANCE_MS = 100;
 
@@ -473,6 +490,7 @@ export function TimelinePanel({
             totalDurationMs={totalDurationMs}
             zoom={zoom}
             onSeek={onSeek}
+            minWidthPx={containerWidth}
           />
 
           {/* Subtitle track — figma 1669:49003: subtitles row sits ABOVE clips */}
