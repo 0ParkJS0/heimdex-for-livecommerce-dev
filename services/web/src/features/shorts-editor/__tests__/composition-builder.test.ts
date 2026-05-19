@@ -108,8 +108,11 @@ describe("buildCompositionSpec", () => {
     expect(spec.subtitles).toHaveLength(1);
     expect(spec.subtitles[0].text).toBe("Hello World");
     expect(spec.subtitles[0].style.font_family).toBe("Pretendard");
-    expect(spec.subtitles[0].style.font_size_px).toBe(36);
-    expect(spec.subtitles[0].style.position_y).toBe(0.85);
+    // 2026-05-19 — DEFAULT_SUBTITLE_STYLE was aligned with the backend
+    // auto-shorts pill style: font_size_px=32 (720 * 0.045) and
+    // position_y=0.82 (clears safe-area on social reposts).
+    expect(spec.subtitles[0].style.font_size_px).toBe(32);
+    expect(spec.subtitles[0].style.position_y).toBe(0.82);
     expect(spec.title).toBeNull();
   });
 

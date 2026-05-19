@@ -8,17 +8,30 @@ export const DEFAULT_OUTPUT: CompositionOutputSpec = {
   background_color: "#000000",
 };
 
+// Mirrors services/api/app/modules/shorts_auto_product/subtitle_layout.py
+// ``build_auto_shorts_subtitle_style``. At canvas_height=720 (matches
+// ``DEFAULT_OUTPUT.height`` above) the backend formula resolves to
+// font_size_px=32, padding≈11, position_y=0.82 with a white pill
+// (#FFFFFF @ 0.95) over black bold text. We keep the editor default
+// here in lockstep so the operator sees the same visual whether the
+// composition came from an auto-rendered short (backend writes the
+// style) or from the fallback path that synthesizes subtitles in the
+// browser when ``comp.subtitles`` is empty.
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   fontFamily: "Pretendard",
-  fontSizePx: 36,
-  // Black default — livecommerce frames skew bright so a dark glyph
-  // reads better than the previous white default (2026-05-18 review).
+  // 720 * 0.045 = 32 — keeps the FE in step with the backend formula
+  // so AI-rendered and FE-synthesized subtitles read at the same size.
+  fontSizePx: 32,
   fontColor: "#000000",
   fontWeight: 700,
   positionX: 0.5,
-  positionY: 0.85,
-  backgroundColor: null,
-  backgroundOpacity: 0.6,
+  // Backend pins position_y=0.82 so the pill clears the iOS/Android
+  // safe-area bars when the short is reposted to social.
+  positionY: 0.82,
+  // White pill on black-text — matches the operator-target screenshot
+  // and stays legible against any livecommerce background.
+  backgroundColor: "#FFFFFF",
+  backgroundOpacity: 0.95,
 };
 
 export const ZOOM_PRESETS = [5, 25, 50, 100, 150, 200, 300] as const;
