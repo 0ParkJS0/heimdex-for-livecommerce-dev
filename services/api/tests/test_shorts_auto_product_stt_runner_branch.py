@@ -53,6 +53,10 @@ def _settings_stub(*, track_mode: str = "stt"):
     s.auto_shorts_product_v2_storyboard_detail_ms = 25_000
     s.auto_shorts_product_v2_storyboard_cta_ms = 8_000
     s.auto_shorts_product_v2_legacy_os_subtitles_enabled = False
+    # full_stt path default-off — same reason as storyboard above;
+    # bare MagicMock returns truthy, routing to assemble_full_stt_clip
+    # which the legacy STT path tests don't cover.
+    s.auto_shorts_product_v2_full_stt_enabled = False
     s.openai_api_key = "sk-test"
     s.opensearch_url = "http://localhost:9200"
     s.opensearch_index_prefix = "heimdex"
