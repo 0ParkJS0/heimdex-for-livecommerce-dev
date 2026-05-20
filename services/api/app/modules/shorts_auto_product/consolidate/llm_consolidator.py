@@ -36,8 +36,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass, field
+import unicodedata
+from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import UUID
 
@@ -57,6 +59,19 @@ _DEFAULT_TIMEOUT_S = 120.0
 # the worst case (50 rows, every row in its own group, plus rejection
 # reasoning).
 _DEFAULT_MAX_OUTPUT_TOKENS = 8192
+# Token-Jaccard floor for the deterministic post-LLM STT relabel pass
+# (see :func:`_apply_stt_relabel`). 0.4 catches '달심' ↔ '달심 콜라겐
+# 부스터' (containment shortcut bumps to 0.9) while keeping unrelated
+# brand collisions out. Re-derive against the consolidation golden set
+# if the cosmetic-variant relabel coverage drops.
+_DEFAULT_RELABEL_JACCARD = 0.4
+# Stamped on every result so the catalog row's persisted
+# ``aliases_prompt_version`` records which revision of the prompt /
+# relabel logic produced it. Bump in lockstep with material prompt or
+# relabel-rule changes; service.py overrides via the
+# ``auto_shorts_product_v2_consolidate_prompt_version`` setting when
+# the org needs to pin an older version.
+_DEFAULT_PROMPT_VERSION = "v2.0-stt-grounded"
 
 # Cost-per-million tokens (USD) for gpt-4o, 2026-04 pricing.
 _GPT_4O_INPUT_USD_PER_M = 2.50
@@ -71,6 +86,7 @@ _REJECTION_CATEGORIES: frozenset[str] = frozenset({
     "on_screen_graphic",  # caption / banner / overlay text the VLM read
     "generic_noun",       # bare "Bottle", "Box", "Cup" with no brand
     "placeholder",        # "Product 1", "Cosmetic A", numbered/disjunctive
+    "unspoken_visual",    # vision row in a category the host never mentioned
 })
 
 
@@ -145,6 +161,13 @@ _SYSTEM_PROMPT = (
     "and STT (labels heard from the host's speech). Your output must "
     "make TWO decisions for every input row.\n"
     "\n"
+    "To ground the catalog, you ALSO receive ``host_spoken_terms``: the "
+    "verbatim product names and aliases the broadcast host actually "
+    "said on-air, extracted from the transcript. Treat "
+    "host_spoken_terms as strong evidence for what the video is "
+    "actually selling — use it to pick canonical labels and to spot "
+    "vision rows that drifted into the wrong product category.\n"
+    "\n"
     "DECISION A — MERGE duplicates into groups.\n"
     "  • Rows that refer to the same physical product collapse into "
     "ONE group with a single canonical row.\n"
@@ -155,10 +178,13 @@ _SYSTEM_PROMPT = (
     "  • The canonical_entry_id MUST be one of the input entry_ids in "
     "that group. Prefer the input row whose llm_label is most "
     "specific and most branded.\n"
-    "  • canonical_label preference order: (1) Korean full product "
-    "name with brand, (2) brand + Korean product noun (크림, 세럼, "
-    "토너, 마스크, 클렌저, 부스터 등), (3) brand + specific English "
-    "model name. Avoid bare English category words.\n"
+    "  • canonical_label preference order: (1) the matching "
+    "host_spoken_terms entry verbatim, if any row in the group "
+    "plausibly refers to the same physical product as a spoken term, "
+    "(2) Korean full product name with brand, (3) brand + Korean "
+    "product noun (크림, 세럼, 토너, 마스크, 클렌저, 부스터 등), "
+    "(4) brand + specific English model name. Avoid bare English "
+    "category words.\n"
     "  • canonical_aliases is the UNION of all rows' spoken_aliases in "
     "the group, deduplicated. Keep the user-spoken forms — they power "
     "later transcript search.\n"
@@ -188,11 +214,23 @@ _SYSTEM_PROMPT = (
     "  • placeholder — numbered, lettered, or disjunctive labels that "
     "indicate the model couldn't identify the product: 'Bottle 1', "
     "'Product A', 'Body wash or lotion bottle'.\n"
+    "  • unspoken_visual — the vision row's label sits in a completely "
+    "different product category from EVERY host_spoken_terms entry "
+    "(e.g. host only sells 영양제/supplement, vision row says "
+    "'serum'/세럼) AND the row's visual confidence is not high enough "
+    "to override that domain mismatch. Use this category SPARINGLY — "
+    "only when the category gap is wide. A close domain mismatch "
+    "(e.g. STT mentions skincare cream, vision says skincare toner) "
+    "is NOT unspoken_visual — fold it into the most plausible group "
+    "or keep as its own group instead.\n"
     "\n"
     "CONSERVATIVE PRINCIPLE — when in doubt, KEEP. Emit the row as "
     "its own group rather than rejecting. A false rejection (real "
     "product disappears from the gallery) is more costly than a false "
-    "keep (an extra row the user can ignore).\n"
+    "keep (an extra row the user can ignore). host_spoken_terms is a "
+    "positive grounding signal (use it to relabel and anchor), NOT a "
+    "hard whitelist — if host_spoken_terms is empty, fall back to the "
+    "rules above without inventing unspoken_visual rejections.\n"
     "\n"
     "OUTPUT INVARIANT — every input entry_id MUST appear EXACTLY ONCE "
     "across the union of groups (canonical_entry_id or "
@@ -208,12 +246,21 @@ class ConsolidationGroup:
     ``member_entry_ids`` never includes ``canonical_entry_id``. An
     isolated row (its own canonical, no duplicates) has
     ``member_entry_ids == []``.
+
+    ``stt_match_term`` / ``stt_match_score`` are populated only when
+    the deterministic post-LLM STT relabel pass forced the canonical
+    label to a host-spoken term (see :func:`_apply_stt_relabel`). They
+    stay ``None`` when host_spoken_terms is empty, no term matched
+    above ``relabel_jaccard``, or the LLM's canonical_label already
+    matched a spoken term verbatim.
     """
 
     canonical_entry_id: UUID
     canonical_label: str
     canonical_aliases: list[str]
     member_entry_ids: list[UUID]
+    stt_match_term: str | None = None
+    stt_match_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -270,13 +317,15 @@ class CatalogConsolidator:
         model: str = _DEFAULT_MODEL,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         max_output_tokens: int = _DEFAULT_MAX_OUTPUT_TOKENS,
-        prompt_version: str = "v1.0",
+        prompt_version: str = _DEFAULT_PROMPT_VERSION,
+        relabel_jaccard: float = _DEFAULT_RELABEL_JACCARD,
     ) -> None:
         self._openai = openai_client
         self._model = model
         self._timeout_s = timeout_s
         self._max_output_tokens = max_output_tokens
         self._prompt_version = prompt_version
+        self._relabel_jaccard = relabel_jaccard
 
     @property
     def model(self) -> str:
@@ -290,8 +339,21 @@ class CatalogConsolidator:
         self,
         *,
         entries: list[CatalogConsolidatorInput],
+        host_spoken_terms: list[str] | None = None,
     ) -> ConsolidationResult:
         """Run the consolidation LLM call and validate the response.
+
+        ``host_spoken_terms`` is the union of verbatim product names
+        and aliases the broadcast host actually said on-air (typically
+        sourced from the STT enumeration side of the catalog). When
+        provided, the prompt uses it as a grounding anchor for
+        canonical labels and for the ``unspoken_visual`` rejection;
+        after the LLM response, a deterministic relabel pass forces
+        the canonical label to a host-spoken term when fuzzy-matched
+        above ``relabel_jaccard`` (catches '달심' ↔ '달심 콜라겐
+        부스터' that the LLM may not normalize). Passing ``None`` /
+        empty disables both effects — the prompt is explicit that an
+        empty list falls back to the original rules.
 
         Raises:
             :class:`ConsolidationLLMError`: timeout, OpenAI-side error,
@@ -300,6 +362,7 @@ class CatalogConsolidator:
                 referenced entry_ids that weren't in the input, or
                 violated the exactly-once invariant.
         """
+        terms = list(host_spoken_terms or [])
         if len(entries) <= 1:
             # Defensive — the orchestrator should skip the LLM entirely
             # for trivial catalogs. Returning an empty result lets us
@@ -314,7 +377,9 @@ class CatalogConsolidator:
                 raw_input_count=len(entries),
             )
 
-        messages = self._build_messages(entries=entries)
+        messages = self._build_messages(
+            entries=entries, host_spoken_terms=terms,
+        )
         input_id_set = {str(e.entry_id) for e in entries}
 
         start = time.monotonic()
@@ -369,6 +434,11 @@ class CatalogConsolidator:
             payload=payload,
             input_id_set=input_id_set,
         )
+        groups = _apply_stt_relabel(
+            groups=groups,
+            host_spoken_terms=terms,
+            relabel_jaccard=self._relabel_jaccard,
+        )
 
         return ConsolidationResult(
             groups=groups,
@@ -384,10 +454,15 @@ class CatalogConsolidator:
         self,
         *,
         entries: list[CatalogConsolidatorInput],
+        host_spoken_terms: list[str],
     ) -> list[dict[str, Any]]:
         # Pass only the fields the LLM needs to decide. example_quote
         # is included for STT rows so the model can disambiguate
         # "host mentioned a placeholder noun once" from "real product".
+        # ``host_spoken_terms`` rides on the payload even when empty —
+        # the prompt's CONSERVATIVE PRINCIPLE block is explicit that an
+        # empty list falls back to the original (non-grounded) rules,
+        # so we don't need to omit the key conditionally.
         rows = [
             {
                 "entry_id": str(e.entry_id),
@@ -400,7 +475,8 @@ class CatalogConsolidator:
             for e in entries
         ]
         user_payload = json.dumps(
-            {"rows": rows}, ensure_ascii=False,
+            {"host_spoken_terms": list(host_spoken_terms), "rows": rows},
+            ensure_ascii=False,
         )
         return [
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -535,6 +611,150 @@ def _validate_payload(
         )
 
     return groups, rejections
+
+
+# Aggressive split that also drops Korean/CJK punctuation and common
+# ASCII separators so '달심 콜라겐 부스터' and 'DALSIM, 콜라겐 부스터'
+# tokenize equivalently after NFKC + casefold. Wider than the simple
+# whitespace split used in :mod:`product_merge` — the consolidate path
+# compares LLM-emitted labels against host-spoken transcript terms,
+# which carry more punctuation drift.
+_STT_TOKEN_SPLIT_RE = re.compile(r"[\s\.,/\-_(){}\[\]:;~!?\"'`、。·]+")
+
+
+def _stt_tokens(label: str) -> set[str]:
+    """NFKC-normalized, casefolded token set for STT fuzzy matching.
+
+    NFKC collapses full-width / half-width variants so '달심' typed
+    via an IME on iOS matches '달심' typed elsewhere. Empty tokens
+    (from leading/trailing punctuation) are dropped.
+    """
+    norm = unicodedata.normalize("NFKC", label).casefold()
+    return {t for t in _STT_TOKEN_SPLIT_RE.split(norm) if t}
+
+
+def _best_stt_match(
+    label: str,
+    host_spoken_terms: list[str],
+) -> tuple[str | None, float]:
+    """Pick the highest token-Jaccard match from ``host_spoken_terms``.
+
+    INFORMATION-PRESERVING DIRECTION — matching is asymmetric on
+    purpose. We only return a term whose token set is at least as
+    rich as ``label``'s:
+
+    * Containment shortcut bumps to 0.9 only when ``label`` is a
+      STRICT subset of the term ('달심' ⊂ '달심 콜라겐 부스터') —
+      relabel will UP-grade the canonical label to the more complete
+      host-spoken form.
+    * Terms with fewer tokens than ``label`` are skipped entirely
+      (no pure-Jaccard match either) — relabeling DOWN would strip
+      specificity the LLM had already chosen ('달심 콜라겐 부스터
+      1.5L' → '달심' loses pack size + product type). The reverse
+      case (term ⊆ label) falls under this skip.
+
+    Returns ``(None, 0.0)`` when ``host_spoken_terms`` is empty,
+    ``label`` has no usable tokens (pure punctuation, whitespace),
+    or no term qualifies under the direction rule above.
+    """
+    if not host_spoken_terms or not label.strip():
+        return None, 0.0
+    label_tokens = _stt_tokens(label)
+    if not label_tokens:
+        return None, 0.0
+    best_term: str | None = None
+    best_score = 0.0
+    for term in host_spoken_terms:
+        term_tokens = _stt_tokens(term)
+        if not term_tokens:
+            continue
+        # Direction guard: reject terms whose token set is smaller
+        # than the label's. Without this, pure-Jaccard at 0.4+ would
+        # still strip tokens ('달심 콜라겐 부스터' → '달심 콜라겐').
+        # Equal-length terms are allowed so word-order/variant swaps
+        # ('핑크 세럼 병' ↔ '분홍 세럼 병') can still normalize to
+        # the host-spoken form without info loss.
+        if len(term_tokens) < len(label_tokens):
+            continue
+        inter = label_tokens & term_tokens
+        union = label_tokens | term_tokens
+        if not union:
+            continue
+        score = len(inter) / len(union)
+        # Containment bump only in the short → long direction. Strict
+        # subset (``label_tokens < term_tokens``) excludes the
+        # equal-set case (no relabel needed) and the reverse case
+        # (caught by the length guard above).
+        if label_tokens < term_tokens:
+            score = max(score, 0.9)
+        if score > best_score:
+            best_score = score
+            best_term = term
+    return best_term, best_score
+
+
+def _apply_stt_relabel(
+    *,
+    groups: list[ConsolidationGroup],
+    host_spoken_terms: list[str],
+    relabel_jaccard: float,
+) -> list[ConsolidationGroup]:
+    """Force each group's canonical_label to the matching host-spoken
+    term when fuzzy-match score >= ``relabel_jaccard``.
+
+    Direction is intentionally asymmetric — see :func:`_best_stt_match`.
+    Relabel only fires when the host-spoken term is at least as rich
+    as the current canonical_label (more tokens, or equal-length
+    variant swap like '핑크 세럼 병' ↔ '분홍 세럼 병'). Shorter
+    host terms never overwrite richer LLM labels, so '달심 콜라겐
+    부스터 1.5L' is never collapsed to '달심' even when the host
+    casually says just '달심'. Pre-relabel label is appended to
+    ``canonical_aliases`` so the original VLM-side form remains
+    searchable. ``stt_match_term`` / ``stt_match_score`` are recorded
+    on the group for observability — both stay ``None`` when no
+    relabel was applied.
+
+    No-op when ``host_spoken_terms`` is empty. Idempotent on a
+    re-run with the same inputs (already-matched labels score 1.0
+    against themselves and the term-vs-label casefold check skips).
+    """
+    if not host_spoken_terms:
+        return groups
+    out: list[ConsolidationGroup] = []
+    for group in groups:
+        best_term, best_score = _best_stt_match(
+            group.canonical_label, host_spoken_terms,
+        )
+        if (
+            best_term is None
+            or best_score < relabel_jaccard
+            or best_term.casefold() == group.canonical_label.casefold()
+        ):
+            out.append(group)
+            continue
+        # Final alias list = existing aliases + pre-relabel canonical
+        # label, with the NEW canonical label removed (the LLM often
+        # already lists the host-spoken form as an alias, which would
+        # leave the new canonical label duplicated in its own alias
+        # list). Dedupe is case-insensitive while preserving order, so
+        # the human-readable display remains stable across re-runs.
+        drop_key = best_term.casefold()
+        seen: set[str] = set()
+        new_aliases: list[str] = []
+        for alias in list(group.canonical_aliases) + [group.canonical_label]:
+            key = alias.casefold()
+            if key == drop_key or key in seen:
+                continue
+            seen.add(key)
+            new_aliases.append(alias)
+        out.append(replace(
+            group,
+            canonical_label=best_term,
+            canonical_aliases=new_aliases,
+            stt_match_term=best_term,
+            stt_match_score=best_score,
+        ))
+    return out
 
 
 def _estimate_cost_usd(usage: Any, model: str) -> float:

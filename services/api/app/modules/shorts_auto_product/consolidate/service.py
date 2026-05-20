@@ -53,6 +53,7 @@ from app.modules.shorts_auto_product.consolidate.llm_consolidator import (
     CatalogConsolidatorInput,
     ConsolidationResult,
 )
+from app.modules.shorts_auto_product.models import ProductCatalogEntry
 from app.modules.shorts_auto_product.repositories.catalog import (
     ProductCatalogRepository,
 )
@@ -74,6 +75,7 @@ async def run_consolidation(
     video_db_id: UUID,
     consolidator: CatalogConsolidator | None = None,
     prompt_version: str = "v1.0",
+    stt_grounding_enabled: bool = False,
 ) -> tuple[int, int, int]:
     """Run the consolidation pipeline end-to-end.
 
@@ -93,6 +95,14 @@ async def run_consolidation(
             ``aliases_prompt_version`` so the backfill CLI does not
             re-process them, and bumping it forces a fresh
             consolidation pass on the next scan.
+        stt_grounding_enabled: When True, the orchestrator builds a
+            ``host_spoken_terms`` anchor from the catalog's active
+            STT rows and passes it to the consolidator (unlocking
+            ``unspoken_visual`` rejections + deterministic STT
+            relabel inside the LLM call). Defaults to False — the
+            grounded behaviors haven't been validated against the
+            consolidation goldens yet, so they ride a separate flag
+            from the baseline consolidate enable.
 
     Returns ``(canonicals_updated, duplicates_rejected,
     non_sellables_rejected)`` for observability. ``(0, 0, 0)`` when the
@@ -172,8 +182,18 @@ async def run_consolidation(
         )
         for e in entries
     ]
+    # STT grounding (flag-gated). Build the anchor only when the flag
+    # is on — keeping the consolidator call shape identical (empty list
+    # is the documented "fall back to non-grounded rules" path inside
+    # the prompt) keeps the off-path indistinguishable from the v1.0
+    # behavior.
+    host_spoken_terms: list[str] = (
+        _build_host_spoken_terms(entries) if stt_grounding_enabled else []
+    )
     try:
-        result = await consolidator.consolidate(entries=inputs)
+        result = await consolidator.consolidate(
+            entries=inputs, host_spoken_terms=host_spoken_terms,
+        )
     except ConsolidationLLMError as e:
         logger.warning(
             "consolidate_llm_failed",
@@ -323,6 +343,37 @@ def _result_to_repo_payloads(
     return canonical_updates, duplicate_rejections, non_sellable_rejections
 
 
+def _build_host_spoken_terms(
+    entries: list[ProductCatalogEntry],
+) -> list[str]:
+    """Union of ``llm_label`` and ``spoken_aliases`` from active
+    ``enumeration_source='stt'`` rows.
+
+    Quote-fidelity filtering happens upstream in
+    :mod:`enumerate_stt.service` — rows that failed fidelity never
+    reach the catalog, so any STT row visible here was deemed grounded.
+    Vision-side rows are skipped (they're the ones being relabeled,
+    not the anchors). Case-insensitive dedupe preserves first-seen
+    casing so the LLM sees the host's actual spelling.
+    """
+    seen: set[str] = set()
+    terms: list[str] = []
+    for entry in entries:
+        if entry.enumeration_source != "stt":
+            continue
+        candidates = [entry.llm_label, *(entry.spoken_aliases or [])]
+        for cand in candidates:
+            text = str(cand or "").strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            terms.append(text)
+    return terms
+
+
 def schedule_consolidation_task(
     *,
     settings: Any,
@@ -373,6 +424,11 @@ def schedule_consolidation_task(
         "auto_shorts_product_v2_consolidate_prompt_version",
         "v1.0",
     )
+    stt_grounding_enabled = bool(getattr(
+        settings,
+        "auto_shorts_product_v2_consolidate_stt_grounding_enabled",
+        False,
+    ))
 
     async def _runner() -> None:
         try:
@@ -401,6 +457,7 @@ def schedule_consolidation_task(
                         video_db_id=video_db_id,
                         consolidator=consolidator,
                         prompt_version=prompt_version,
+                        stt_grounding_enabled=stt_grounding_enabled,
                     )
                     if any(counts):
                         await session.commit()

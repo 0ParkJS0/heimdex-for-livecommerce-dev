@@ -578,7 +578,7 @@ class Settings(BaseSettings):
     # ``non_sellable:<category>``. Fire-and-forget from the vision
     # ``/complete`` callback after an STT grace sleep so the consolidate
     # pass sees both sources.
-    auto_shorts_product_v2_consolidate_enabled: bool = False
+    auto_shorts_product_v2_consolidate_enabled: bool = True
     # gpt-4o (not mini) recommended — the classification is more
     # nuanced than enumeration; gpt-4o-mini sometimes drops branded
     # Korean labels because the prompt has more rules to balance.
@@ -597,6 +597,27 @@ class Settings(BaseSettings):
     # on the next scan even when the catalog set hasn't changed.
     # Goldens-eval gate, same shape as the STT enum prompt version.
     auto_shorts_product_v2_consolidate_prompt_version: str = "v1.0"
+    # STT-grounded consolidation. When ON, the orchestrator builds a
+    # ``host_spoken_terms`` anchor (the union of ``llm_label`` and
+    # ``spoken_aliases`` from active ``enumeration_source='stt'``
+    # rows) and passes it to the LLM. This unlocks two new behaviors
+    # inside :class:`CatalogConsolidator`:
+    #   * ``unspoken_visual`` rejections — vision rows whose category
+    #     sits far from every spoken term may be soft-rejected (the
+    #     prompt is told to use this SPARINGLY, only when the gap is
+    #     wide; ``when in doubt, KEEP``);
+    #   * deterministic post-LLM relabel — canonical labels are
+    #     force-rewritten to the matching host-spoken term when token-
+    #     Jaccard >= ``_DEFAULT_RELABEL_JACCARD`` (containment
+    #     shortcut at 0.9), catching short-form / suffix variants the
+    #     LLM may not normalize.
+    # Default ON — STT grounding rides along with the baseline
+    # ``auto_shorts_product_v2_consolidate_enabled``. Validate against
+    # the consolidation goldens after rollout; if false-rejects or
+    # incorrect relabels surface, set this env var to ``false`` as a
+    # kill-switch (no code change needed; the consolidator's empty-
+    # host_spoken_terms path is the documented fallback).
+    auto_shorts_product_v2_consolidate_stt_grounding_enabled: bool = True
 
     # --- Auto-shorts: caption-source switch ---
     # Decoupled from OS speaker_transcript on 2026-05-07: Whisper
