@@ -37,14 +37,24 @@ from app.lib.whisper_transcribe.budget import (
 from app.lib.whisper_transcribe.budget import BudgetTracker as _BudgetTracker
 from app.logging_config import get_logger
 from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
-    PROMPT_VERSION as _MODULE_PROMPT_VERSION,
+    _MULTI_SYSTEM_PROMPT,
     _SYSTEM_PROMPT,
+    build_multi_user_prompt,
     build_user_prompt,
     select_scenes_for_prompt,
+)
+from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
+    MULTI_PROMPT_VERSION as _MODULE_MULTI_PROMPT_VERSION,
+)
+from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
+    PROMPT_VERSION as _MODULE_PROMPT_VERSION,
 )
 from app.modules.shorts_auto_product.track_stt.full_stt.schemas import (
     _RESPONSE_JSON_SCHEMA,
     FullSttClipResponse,
+    FullSttMultiClipResponse,
+    FullSttShort,
+    build_multi_response_schema,
 )
 from app.modules.shorts_auto_product.track_stt.full_stt.types import (
     FullSttClipPlan,
@@ -66,6 +76,20 @@ _MODEL_PRICING_USD_PER_M: dict[str, dict[str, float]] = {
 
 # Positional anchors for the fallback plan (fractions of scene list length).
 _FALLBACK_POSITIONS = (0.1, 0.35, 0.6, 0.85)
+
+# Distinct positional anchor patterns for the multi-short fallback. When the
+# shared LLM call fails (or returns duplicates), each short falls back to a
+# different pattern so we never emit N identical positional clones. Patterns
+# cycle if N exceeds the list length. Distinctness is best-effort for very
+# short scene lists (you cannot draw N disjoint subsets from a handful of
+# scenes); realistic inputs (hundreds of scenes) satisfy it trivially.
+_FALLBACK_PATTERNS: tuple[tuple[float, ...], ...] = (
+    (0.1, 0.35, 0.6, 0.85),    # spread (matches single-short default)
+    (0.05, 0.2, 0.4, 0.55),    # early-weighted
+    (0.45, 0.6, 0.75, 0.9),    # late-weighted
+    (0.15, 0.4, 0.55, 0.8),    # centered
+    (0.0, 0.3, 0.65, 0.95),    # wide
+)
 
 # Duration validation bounds (fractions of target_duration_ms).
 _DURATION_LOWER_FRAC = 0.30
@@ -184,7 +208,7 @@ class FullSttExplainerPicker:
                 ),
                 timeout=self.timeout_s,
             )
-        except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
             # Catch-all so an unrecognised SDK exception class doesn't bypass
             # the fallback. Loud structured log is the diagnostic.
             self.budget_tracker.release_reservation(self._reservation_usd)
@@ -244,19 +268,170 @@ class FullSttExplainerPicker:
             fallback_used=False,
         )
 
+    async def pick_many(
+        self,
+        *,
+        scenes: list[FullSttScene],
+        target_duration_ms: int,
+        llm_label: str,
+        spoken_aliases: list[str],
+        n: int,
+        org_id: UUID | None = None,
+    ) -> list[FullSttClipPlan]:
+        """Pick ``n`` distinct shorts in ONE LLM call. NEVER raises.
+
+        Whole-call defects (timeout, budget, parse failure) degrade to ``n``
+        distinct positional fallback plans. Per-short defects (out-of-range
+        index, non-chronological, overlap, duration out of bounds, or a
+        duplicate of an already-accepted short) degrade only that short to a
+        distinct positional cut — valid LLM shorts are preserved. Always
+        returns exactly ``n`` plans.
+        """
+        if n <= 0:
+            return []
+
+        # ── 0. PROMPT_VERSION drift check (multi prompt) ──
+        if self.prompt_version != _MODULE_MULTI_PROMPT_VERSION:
+            logger.warning(
+                "full_stt_multi_prompt_version_drift",
+                env_version=self.prompt_version,
+                module_version=_MODULE_MULTI_PROMPT_VERSION,
+                resolution="using module value at runtime",
+            )
+
+        # ── 1. Select scenes with temporal coverage ──
+        active_scenes = select_scenes_for_prompt(scenes, max_scenes=self.max_scenes)
+        if not active_scenes:
+            logger.info("full_stt_pick_skipped", reason="empty_scenes")
+            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+
+        # ── 2. Budget reservation (one for the whole call) ──
+        try:
+            self.budget_tracker.check_and_reserve(self._reservation_usd)
+        except _BudgetExceededError as exc:
+            logger.info(
+                "full_stt_pick_skipped", reason="budget_exceeded", error=str(exc),
+            )
+            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+
+        # ── 3. Build prompt + call OpenAI once ──
+        user_prompt = build_multi_user_prompt(
+            scenes=active_scenes,
+            target_duration_ms=target_duration_ms,
+            llm_label=llm_label,
+            spoken_aliases=spoken_aliases,
+            n=n,
+        )
+        seed = _stable_seed(llm_label=llm_label, prompt_version=self.prompt_version)
+
+        logger.info(
+            "full_stt_multi_pick_request",
+            scene_count=len(active_scenes),
+            scene_count_pre_cap=len(scenes),
+            target_duration_ms=target_duration_ms,
+            requested_shorts=n,
+            model=self.model,
+            prompt_version=self.prompt_version,
+        )
+
+        try:
+            response = await asyncio.wait_for(
+                self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": _MULTI_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": build_multi_response_schema(n),
+                    },
+                    temperature=0.0,
+                    seed=seed,
+                ),
+                timeout=self.timeout_s,
+            )
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
+            self.budget_tracker.release_reservation(self._reservation_usd)
+            logger.warning(
+                "full_stt_pick_skipped",
+                reason="api_failure",
+                error_class=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+
+        # ── 4. Parse top-level shape ──
+        try:
+            content = response.choices[0].message.content
+            multi = FullSttMultiClipResponse.model_validate_json(content)
+        except (ValidationError, ValueError, KeyError, AttributeError) as exc:
+            self.budget_tracker.release_reservation(self._reservation_usd)
+            logger.warning(
+                "full_stt_pick_skipped",
+                reason="validation_failed",
+                error_class=type(exc).__name__,
+                error=str(exc)[:300],
+            )
+            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+
+        # ── 5. Record cost ──
+        cost_usd = _cost_from_usage(response, model=self.model)
+        self.budget_tracker.record(cost_usd)
+
+        # ── 6. Build N plans: per-short validate + distinctness dedup ──
+        plans: list[FullSttClipPlan] = []
+        seen_signatures: set[tuple[int, ...]] = set()
+        fallback_cursor = 0
+        llm_short_count = 0
+
+        for i in range(n):
+            short = multi.shorts[i] if i < len(multi.shorts) else None
+            plan: FullSttClipPlan | None = None
+            if short is not None:
+                signature = tuple(p.segment_index for p in short.segments)
+                try:
+                    self._validate(short, active_scenes, target_duration_ms)
+                    if signature in seen_signatures:
+                        raise ValueError("duplicate short (identical segment set)")
+                    plan = self._build_plan_from_short(short, active_scenes)
+                    seen_signatures.add(signature)
+                    llm_short_count += 1
+                except (ValueError, KeyError, IndexError):
+                    plan = None
+            if plan is None:
+                pattern = _FALLBACK_PATTERNS[fallback_cursor % len(_FALLBACK_PATTERNS)]
+                fallback_cursor += 1
+                plan = self._positional_fallback(
+                    active_scenes, target_duration_ms, positions=pattern,
+                )
+            plans.append(plan)
+
+        logger.info(
+            "full_stt_multi_pick_response",
+            cost_usd=cost_usd,
+            requested_shorts=n,
+            llm_shorts=llm_short_count,
+            fallback_shorts=n - llm_short_count,
+            prompt_version=self.prompt_version,
+        )
+        return plans
+
     # ──────────────────────── private helpers ────────────────────────
 
     def _validate(
         self,
-        response: FullSttClipResponse,
+        response: FullSttClipResponse | FullSttShort,
         scenes: list[FullSttScene],
         target_duration_ms: int,
     ) -> None:
         """Raise ValueError on any semantic violation.
 
-        Called after Pydantic parsing passes, so basic type / uniqueness
-        constraints are already satisfied. This layer checks context-dependent
-        constraints that require the original scene list.
+        Accepts either a single-short ``FullSttClipResponse`` or one
+        ``FullSttShort`` from a multi-short response — both expose
+        ``.segments``. Called after Pydantic parsing passes, so basic type /
+        uniqueness constraints are already satisfied. This layer checks
+        context-dependent constraints that require the original scene list.
         """
         n = len(scenes)
 
@@ -299,14 +474,43 @@ class FullSttExplainerPicker:
                 f"[{lower:.0f}, {upper:.0f}] for target={target_duration_ms}"
             )
 
+    def _build_plan_from_short(
+        self,
+        short: FullSttShort,
+        scenes: list[FullSttScene],
+    ) -> FullSttClipPlan:
+        """Build a plan from one validated short. Call only after
+        ``_validate`` passes (indices are guaranteed in range).
+        """
+        segments = [
+            FullSttSegment(
+                scene_id=scenes[pick.segment_index].scene_id,
+                source_start_ms=scenes[pick.segment_index].start_ms,
+                source_end_ms=scenes[pick.segment_index].end_ms,
+                rationale=pick.rationale,
+            )
+            for pick in short.segments
+        ]
+        total_duration_ms = sum(s.duration_ms for s in segments)
+        return FullSttClipPlan(
+            segments=segments,
+            total_duration_ms=total_duration_ms,
+            global_rationale=short.global_rationale,
+            fallback_used=False,
+        )
+
     def _positional_fallback(
         self,
         scenes: list[FullSttScene],
         target_duration_ms: int,
+        *,
+        positions: tuple[float, ...] = _FALLBACK_POSITIONS,
     ) -> FullSttClipPlan:
-        """Select 4 scenes at fixed positional anchors. No external calls.
+        """Select scenes at fixed positional anchors. No external calls.
 
         Always succeeds. Returns FullSttClipPlan(fallback_used=True).
+        ``positions`` lets the multi-short fallback vary the anchors per
+        short so the N plans differ.
         """
         if not scenes:
             return FullSttClipPlan(
@@ -320,7 +524,7 @@ class FullSttExplainerPicker:
         seen: set[int] = set()
         segments: list[FullSttSegment] = []
 
-        for frac in _FALLBACK_POSITIONS:
+        for frac in positions:
             idx = min(int(frac * n), n - 1)
             # Advance past already-used indices (handles very small scene lists)
             while idx in seen and idx + 1 < n:
@@ -354,3 +558,23 @@ class FullSttExplainerPicker:
             global_rationale="positional fallback — LLM pick unavailable",
             fallback_used=True,
         )
+
+    def _positional_fallback_many(
+        self,
+        scenes: list[FullSttScene],
+        target_duration_ms: int,
+        n: int,
+    ) -> list[FullSttClipPlan]:
+        """Produce ``n`` positional fallback plans using distinct anchor
+        patterns so the N shorts differ. Best-effort distinctness for very
+        short scene lists. Always returns exactly ``n`` plans.
+        """
+        plans: list[FullSttClipPlan] = []
+        for i in range(n):
+            pattern = _FALLBACK_PATTERNS[i % len(_FALLBACK_PATTERNS)]
+            plans.append(
+                self._positional_fallback(
+                    scenes, target_duration_ms, positions=pattern
+                )
+            )
+        return plans

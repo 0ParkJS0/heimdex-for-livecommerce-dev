@@ -18,19 +18,16 @@ Mocks the OpenAI SDK at the call boundary. Verifies:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.lib.whisper_transcribe.budget import BudgetExceededError, InMemoryBudgetTracker
+from app.lib.whisper_transcribe.budget import InMemoryBudgetTracker
 from app.modules.shorts_auto_product.track_stt.full_stt.picker import FullSttExplainerPicker
 from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
-
 
 # ----- fixtures -----
 
@@ -302,7 +299,7 @@ class TestTimeoutFallback:
     async def test_timeout_triggers_fallback_and_releases_reservation(self):
         scenes = _scenes_5()
         client = AsyncMock()
-        client.chat.completions.create = AsyncMock(side_effect=asyncio.TimeoutError())
+        client.chat.completions.create = AsyncMock(side_effect=TimeoutError())
         budget = InMemoryBudgetTracker(daily_budget_usd=10.0)
         picker = FullSttExplainerPicker(
             openai_client=client,
@@ -328,3 +325,147 @@ class TestSdkExceptionFallback:
             scenes=scenes, target_duration_ms=60_000, llm_label="X", spoken_aliases=[]
         )
         assert plan.fallback_used
+
+
+# ----- pick_many (shared planner) -----
+
+
+def _multi_response_json(index_lists: list[list[int]]) -> str:
+    shorts = [
+        {
+            "segments": [
+                {"segment_index": i, "rationale": f"r{i}"} for i in idxs
+            ],
+            "global_rationale": "explains the product",
+            "differentiation_note": "differs by angle",
+        }
+        for idxs in index_lists
+    ]
+    return json.dumps({"shorts": shorts})
+
+
+def _sigs(plans) -> set:
+    return {tuple(s.scene_id for s in p.segments) for p in plans}
+
+
+class TestPickManyHappyPath:
+    @pytest.mark.asyncio
+    async def test_three_distinct_shorts(self):
+        scenes = _scenes_5()
+        content = _multi_response_json([[0, 1, 2], [1, 2, 3], [2, 3, 4]])
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(
+            return_value=_make_openai_response(content)
+        )
+        picker = _make_picker(client)
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="P",
+            spoken_aliases=["제품"], n=3,
+        )
+        assert len(plans) == 3
+        assert all(not p.fallback_used for p in plans)
+        assert len(_sigs(plans)) == 3  # all distinct
+        # one LLM call for all three
+        assert client.chat.completions.create.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_exactly_n_plans(self):
+        scenes = _scenes_5()
+        content = _multi_response_json([[0, 1, 2], [2, 3, 4]])
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(
+            return_value=_make_openai_response(content)
+        )
+        picker = _make_picker(client)
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X",
+            spoken_aliases=[], n=2,
+        )
+        assert len(plans) == 2
+
+
+class TestPickManyPartialDefect:
+    @pytest.mark.asyncio
+    async def test_one_bad_short_falls_back_others_preserved(self):
+        scenes = _scenes_5()
+        # middle short has an out-of-range index → only it falls back
+        content = _multi_response_json([[0, 1, 2], [999, 1, 2], [2, 3, 4]])
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(
+            return_value=_make_openai_response(content)
+        )
+        picker = _make_picker(client)
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X",
+            spoken_aliases=[], n=3,
+        )
+        assert [p.fallback_used for p in plans] == [False, True, False]
+        assert len(_sigs(plans)) == 3
+
+
+class TestPickManyDistinctness:
+    @pytest.mark.asyncio
+    async def test_duplicate_short_is_replaced(self):
+        scenes = _scenes_5()
+        # short 2 duplicates short 1 → deduped to a distinct positional cut
+        content = _multi_response_json([[0, 1, 2], [0, 1, 2], [2, 3, 4]])
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(
+            return_value=_make_openai_response(content)
+        )
+        picker = _make_picker(client)
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X",
+            spoken_aliases=[], n=3,
+        )
+        assert plans[1].fallback_used is True
+        assert len(_sigs(plans)) == 3
+
+
+class TestPickManyWholeCallFallback:
+    @pytest.mark.asyncio
+    async def test_timeout_yields_n_distinct_positional_and_releases_budget(self):
+        scenes = _scenes_5()
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(side_effect=TimeoutError())
+        budget = InMemoryBudgetTracker(daily_budget_usd=10.0)
+        picker = FullSttExplainerPicker(
+            openai_client=client, budget_tracker=budget,
+            model="gpt-4o-mini", timeout_s=5.0, max_scenes=300,
+        )
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X",
+            spoken_aliases=[], n=3,
+        )
+        assert len(plans) == 3
+        assert all(p.fallback_used for p in plans)
+        assert len(_sigs(plans)) == 3
+        assert budget.spent_today_usd() < 0.001  # reservation released
+
+    @pytest.mark.asyncio
+    async def test_budget_exceeded_yields_positional_no_llm_call(self):
+        scenes = _scenes_5()
+        client = AsyncMock()
+        picker = FullSttExplainerPicker(
+            openai_client=client,
+            budget_tracker=InMemoryBudgetTracker(daily_budget_usd=0.0),
+        )
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X",
+            spoken_aliases=[], n=3,
+        )
+        assert len(plans) == 3
+        assert all(p.fallback_used for p in plans)
+        client.chat.completions.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zero_n_returns_empty(self):
+        scenes = _scenes_5()
+        client = AsyncMock()
+        picker = _make_picker(client)
+        plans = await picker.pick_many(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X",
+            spoken_aliases=[], n=0,
+        )
+        assert plans == []
+        client.chat.completions.create.assert_not_called()

@@ -15,6 +15,12 @@ Public API:
 from app.modules.shorts_auto_product.track_stt.full_stt.picker import (
     FullSttExplainerPicker,
 )
+from app.modules.shorts_auto_product.track_stt.full_stt.serialization import (
+    PLAN_SCHEMA_VERSION,
+    PlanSchemaVersionError,
+    deserialize_plan,
+    serialize_plan,
+)
 from app.modules.shorts_auto_product.track_stt.full_stt.types import (
     FullSttClipPlan,
     FullSttScene,
@@ -26,4 +32,8 @@ __all__ = [
     "FullSttClipPlan",
     "FullSttScene",
     "FullSttSegment",
+    "serialize_plan",
+    "deserialize_plan",
+    "PLAN_SCHEMA_VERSION",
+    "PlanSchemaVersionError",
 ]

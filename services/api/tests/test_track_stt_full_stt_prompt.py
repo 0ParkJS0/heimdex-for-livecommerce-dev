@@ -5,11 +5,12 @@ Plan: ``.claude/plans/storyboard-full-stt-picker-2026-05-20.md``
 
 from __future__ import annotations
 
-import pytest
-
 from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
-    PROMPT_VERSION,
+    _MULTI_SYSTEM_PROMPT,
     _SYSTEM_PROMPT,
+    MULTI_PROMPT_VERSION,
+    PROMPT_VERSION,
+    build_multi_user_prompt,
     build_user_prompt,
     select_scenes_for_prompt,
 )
@@ -142,6 +143,43 @@ class TestCap:
         # Indices are 0-based — should have 5 entries ([0] through [4])
         assert "[4]" in out
         assert "[5]" not in out
+
+
+class TestMultiPrompt:
+    def test_multi_prompt_version_is_v3(self):
+        assert MULTI_PROMPT_VERSION == "v3"
+
+    def test_multi_system_prompt_non_empty(self):
+        assert len(_MULTI_SYSTEM_PROMPT) > 100
+
+    def test_multi_system_prompt_has_no_slot_keywords(self):
+        low = _MULTI_SYSTEM_PROMPT.lower()
+        assert "hook" not in low
+        assert "intro" not in low
+        assert "cta" not in low
+
+    def test_multi_system_prompt_asks_for_difference(self):
+        # The variety constraint is the whole point of the shared planner.
+        assert "different" in _MULTI_SYSTEM_PROMPT.lower()
+
+    def test_multi_user_prompt_states_count(self):
+        scenes = [_scene(0, start_ms=0, end_ms=10_000, text="t")]
+        out = build_multi_user_prompt(
+            scenes=scenes, target_duration_ms=60_000,
+            llm_label="X", spoken_aliases=[], n=3,
+        )
+        assert "3 shorts" in out
+
+    def test_multi_user_prompt_includes_transcript_block(self):
+        # Reuses build_user_prompt for the transcript — product + scenes present.
+        scenes = [_scene(0, start_ms=0, end_ms=14_000, text="hello")]
+        out = build_multi_user_prompt(
+            scenes=scenes, target_duration_ms=60_000,
+            llm_label="DysonV11", spoken_aliases=["다이슨"], n=2,
+        )
+        assert "DysonV11" in out
+        assert "다이슨" in out
+        assert "[0] 00:00-00:14" in out
 
 
 class TestCapTemporalCoverage:

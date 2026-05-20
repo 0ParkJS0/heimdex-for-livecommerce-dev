@@ -35,15 +35,44 @@ _SYSTEM_PROMPT = (
 )
 
 
+# ── Multi-short (shared planner) prompt ──────────────────────────────
+# Parallel to the single-short prompt above. The shared planner asks for
+# N meaningfully-different shorts in ONE call. The legacy single-short
+# prompt is left byte-stable so the flag-off path is an exact rollback.
+MULTI_PROMPT_VERSION = "v3"
+
+_MULTI_SYSTEM_PROMPT = (
+    "You are a video editor. Given a live commerce video transcript, produce "
+    "several distinct short video edits that each explain the product clearly "
+    "to someone who was not present at the live stream.\n\n"
+    "Guidelines:\n"
+    "- Produce exactly the requested number of shorts\n"
+    "- Each short selects 3-8 segments whose combined length is approximately "
+    "the target duration\n"
+    "- Every segment must explain, demonstrate, or describe the product "
+    "(what it does, who it is for, why it matters)\n"
+    "- Within a short, avoid redundancy and keep segments in chronological order\n"
+    "- Make the shorts MEANINGFULLY DIFFERENT from one another: vary the angle, "
+    "the aspect of the product emphasized, the pacing, or which moments you "
+    "feature. Do not return the same selection twice.\n"
+    "- Avoid time-sensitive language (\"today only\", \"limited stock\", "
+    "\"right now\") — these clips will be watched weeks or months later\n\n"
+    "For each short return: the segment_index of each chosen scene with a short "
+    "per-segment rationale, a global_rationale for the short, and a "
+    "differentiation_note saying how this short differs from the others. "
+    "Segments within each short must be in chronological order."
+)
+
+
 def _ms_to_mmss(ms: int) -> str:
     total_s = ms // 1000
     return f"{total_s // 60:02d}:{total_s % 60:02d}"
 
 
 def select_scenes_for_prompt(
-    scenes: list["FullSttScene"],
+    scenes: list[FullSttScene],
     max_scenes: int,
-) -> list["FullSttScene"]:
+) -> list[FullSttScene]:
     """Cap scenes to max_scenes with temporal coverage across thirds.
 
     Divides the source into 3 equal thirds by list position and samples up
@@ -67,7 +96,7 @@ def select_scenes_for_prompt(
     middle = sorted_scenes[third : 2 * third]
     last = sorted_scenes[2 * third :]
 
-    def _evenly_sample(src: list["FullSttScene"], count: int) -> list["FullSttScene"]:
+    def _evenly_sample(src: list[FullSttScene], count: int) -> list[FullSttScene]:
         if not src or count <= 0:
             return []
         if len(src) <= count:
@@ -84,7 +113,7 @@ def select_scenes_for_prompt(
 
 def build_user_prompt(
     *,
-    scenes: list["FullSttScene"],
+    scenes: list[FullSttScene],
     target_duration_ms: int,
     llm_label: str,
     spoken_aliases: list[str],
@@ -97,7 +126,6 @@ def build_user_prompt(
     """
     target_s = target_duration_ms // 1000
     total_ms = scenes[-1].end_ms if scenes else 0
-    total_s = total_ms // 1000
 
     clean_aliases = [a for a in (spoken_aliases or []) if a and a != llm_label]
     alias_str = ", ".join(clean_aliases) if clean_aliases else "(no aliases)"
@@ -116,3 +144,31 @@ def build_user_prompt(
         lines.append(f'[{idx}] {start_str}-{end_str} "{text}"')
 
     return "\n".join(lines)
+
+
+def build_multi_user_prompt(
+    *,
+    scenes: list[FullSttScene],
+    target_duration_ms: int,
+    llm_label: str,
+    spoken_aliases: list[str],
+    n: int,
+) -> str:
+    """User-turn prompt for the shared planner: ask for ``n`` distinct shorts.
+
+    Reuses ``build_user_prompt`` for the product header + transcript block
+    (single source of truth for the scene formatting) and prepends the
+    N-shorts instruction. Callers cap + sort scenes upstream.
+    """
+    target_s = target_duration_ms // 1000
+    header = (
+        f"Produce exactly {n} shorts, each approximately {target_s}s, that are "
+        f"meaningfully different from one another.\n"
+    )
+    base = build_user_prompt(
+        scenes=scenes,
+        target_duration_ms=target_duration_ms,
+        llm_label=llm_label,
+        spoken_aliases=spoken_aliases,
+    )
+    return header + "\n" + base
