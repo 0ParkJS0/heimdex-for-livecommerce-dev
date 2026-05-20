@@ -13,6 +13,10 @@ who has read that repo's pipeline can read ours without re-mapping.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttClipPlan
 from typing import Literal
 from uuid import UUID
 
@@ -169,3 +173,6 @@ class SttClipResult:
     mentioned_scene_count: int
     matched_aliases: list[str]
     fallback_used: Literal["none", "coreference", "visual"] = "none"
+    # Populated on the full_stt path; None on the storyboard/legacy path.
+    # Surfaces LLM rationale in the operator debug UI (?debug=1).
+    full_stt_plan: FullSttClipPlan | None = None

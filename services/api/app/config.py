@@ -704,6 +704,23 @@ class Settings(BaseSettings):
     # further (toward 0.4) before considering full removal.
     auto_shorts_product_v2_storyboard_cta_min_position: float = 0.5
 
+    # --- Auto-shorts: full-STT product explainer path ---
+    # When True, bypasses the 4-stage storyboard pipeline and calls the
+    # LLM once over the full video transcript.  The LLM picks whichever
+    # scenes best explain the product — no HOOK/INTRO/DETAIL/CTA slots.
+    # Default False; flip per-environment after staging smoke validation.
+    # See plan: ``.claude/plans/storyboard-full-stt-picker-2026-05-20.md``
+    auto_shorts_product_v2_full_stt_enabled: bool = False
+    auto_shorts_product_v2_full_stt_max_scenes: int = 300
+    auto_shorts_product_v2_full_stt_prompt_version: str = "v1"
+    auto_shorts_product_v2_full_stt_timeout_s: float = 15.0
+    auto_shorts_product_v2_full_stt_daily_budget_usd: float = 5.0
+    auto_shorts_product_v2_full_stt_model: str = "gpt-4o-mini"
+    # When True, restricts source scenes to live blocks (host actively
+    # talking) before passing to the LLM.  Default True — reduces token
+    # count and improves pick quality by excluding silent b-roll.
+    auto_shorts_product_v2_full_stt_live_only: bool = True
+
     # --- Auto-shorts: Phase 1 live-only segmentation filter ---
     # When True, the STT pipeline partitions a video's scenes into
     # "live blocks" (contiguous runs with STT speech signal) and

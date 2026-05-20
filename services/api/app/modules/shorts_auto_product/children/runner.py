@@ -911,23 +911,92 @@ class ChildRunner:
         # ── 4. Run the pipeline ────────────────────────────────────
         try:
             try:
-                # Lazy import to avoid loading the storyboard
-                # submodule (and its enum + Protocol machinery)
-                # on the hot SAM2 path where it's not used.
-                from app.modules.shorts_auto_product.track_stt.storyboard import (
-                    build_storyboard_picker_from_settings,
-                )
-
-                storyboard_picker = build_storyboard_picker_from_settings(
+                if getattr(
                     self.settings,
-                )
-                # build other catalog names for chunk-level LLM judgment
-                other_catalog_names = [
-                    aliases[0]  # first element = llm_label 
-                    for ce_id, aliases in catalog_aliases_lookup.items()
-                    if ce_id != chosen_catalog_id and aliases
-                ]
-                result = await stt_service.assemble_stt_clip(
+                    "auto_shorts_product_v2_full_stt_enabled",
+                    False,
+                ):
+                    # ── Full-STT product explainer path ──────────────
+                    # Lazy imports — not loaded on the storyboard/SAM2 path.
+                    from app.lib.whisper_transcribe.budget import (
+                        InMemoryBudgetTracker as _FullSttBudgetTracker,
+                    )
+                    from app.modules.shorts_auto_product.track_stt.full_stt import (
+                        FullSttExplainerPicker,
+                    )
+
+                    _full_stt_picker = FullSttExplainerPicker(
+                        openai_client=openai_client,
+                        budget_tracker=_FullSttBudgetTracker(
+                            daily_budget_usd=getattr(
+                                self.settings,
+                                "auto_shorts_product_v2_full_stt_daily_budget_usd",
+                                5.0,
+                            ),
+                        ),
+                        model=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_model",
+                            "gpt-4o-mini",
+                        ),
+                        prompt_version=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_prompt_version",
+                            "v1",
+                        ),
+                        timeout_s=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_timeout_s",
+                            15.0,
+                        ),
+                        max_scenes=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_max_scenes",
+                            300,
+                        ),
+                    )
+                    result = await stt_service.assemble_full_stt_clip(
+                        org_id=parent.org_id,
+                        catalog_entry_id=chosen_catalog_id,
+                        llm_label=llm_label,
+                        spoken_aliases=list(spoken_aliases or []),
+                        os_video_id=os_video_id,
+                        target_duration_ms=target_duration_ms,
+                        title=catalog_label,
+                        os_client=os_client,
+                        openai_client=openai_client,
+                        enqueue_render=_enqueue_render,
+                        picker=_full_stt_picker,
+                        live_only=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_live_only",
+                            True,
+                        ),
+                        max_scenes=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_max_scenes",
+                            300,
+                        ),
+                    )
+                else:
+                    # ── Storyboard / legacy path ──────────────────────
+                    # Lazy import to avoid loading the storyboard
+                    # submodule (and its enum + Protocol machinery)
+                    # on the hot SAM2 path where it's not used.
+                    from app.modules.shorts_auto_product.track_stt.storyboard import (
+                        build_storyboard_picker_from_settings,
+                    )
+
+                    storyboard_picker = build_storyboard_picker_from_settings(
+                        self.settings,
+                    )
+                    # build other catalog names for chunk-level LLM judgment
+                    other_catalog_names = [
+                        aliases[0]  # first element = llm_label
+                        for ce_id, aliases in catalog_aliases_lookup.items()
+                        if ce_id != chosen_catalog_id and aliases
+                    ]
+                    result = await stt_service.assemble_stt_clip(
                     org_id=parent.org_id,
                     catalog_entry_id=chosen_catalog_id,
                     llm_label=llm_label,
