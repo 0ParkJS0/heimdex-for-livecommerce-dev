@@ -695,3 +695,59 @@ class TestSeedDeterminism:
         seed_a = ma.chat.completions.create.call_args.kwargs["seed"]
         seed_b = mb.chat.completions.create.call_args.kwargs["seed"]
         assert seed_a != seed_b
+
+
+class TestSourceDurationInPrompt:
+    """v5: picker forwards source_duration_ms to build_user_prompt so
+    the LLM receives an explicit HOOK/CTA cutoff line.
+    """
+
+    @pytest.mark.asyncio
+    async def test_source_duration_line_in_user_message(self):
+        # _chunks_with_temporal_spread() → max end_ms = 170_000ms = 02:50
+        chunks = _chunks_with_temporal_spread()
+        picker, mock_client, _ = _make_picker(
+            create_returns=_mock_openai_response(_well_formed_llm_response()),
+        )
+        await picker.assemble(
+            all_chunks=chunks,
+            segments=_segments_for(chunks),
+            target_duration_ms=60_000,
+            llm_label="test",
+            spoken_aliases=[],
+        )
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        # Total source 170s = 02:50; first-third cutoff 56s = 00:56
+        assert "Source:" in user_content
+        assert "02:50" in user_content
+        assert "00:56" in user_content
+
+    @pytest.mark.asyncio
+    async def test_hook_validation_still_rejects_despite_prompt_fix(self):
+        # Regression: the prompt improvement is informational — it does
+        # NOT remove the validation layer. If the LLM still returns a
+        # HOOK in the last third, the picker must fall back to heuristic.
+        chunks = _chunks_with_temporal_spread()
+        # Force LLM to return a HOOK at chunk index 5 (start_ms=130_000,
+        # last-third of a 170s source).
+        bad_response = {
+            "fragments": [
+                {"role": "hook",   "chunk_index": 5, "rationale": "bad hook"},
+                {"role": "intro",  "chunk_index": 1, "rationale": "intro"},
+                {"role": "detail", "chunk_index": 2, "rationale": "detail"},
+                {"role": "cta",    "chunk_index": 5, "rationale": "cta"},
+            ],
+            "global_rationale": "bad",
+        }
+        picker, _, spied_fallback = _make_picker(
+            create_returns=_mock_openai_response(bad_response),
+        )
+        await picker.assemble(
+            all_chunks=chunks,
+            segments=_segments_for(chunks),
+            target_duration_ms=60_000,
+            llm_label="test",
+            spoken_aliases=[],
+        )
+        spied_fallback.assemble.assert_called_once()

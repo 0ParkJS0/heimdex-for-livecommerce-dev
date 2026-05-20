@@ -242,6 +242,7 @@ class LlmStoryboardPicker:
         )
         small_hint = len(chronological) < _SMALL_CHUNK_HINT_BELOW
 
+        source_duration_ms = max(c.end_ms for c in chronological) if chronological else 0
         user_prompt = build_user_prompt(
             all_chunks=chronological,
             target_duration_ms=target_duration_ms,
@@ -249,6 +250,8 @@ class LlmStoryboardPicker:
             spoken_aliases=spoken_aliases,
             slot_budgets=self.budgets,
             small_chunk_hint=small_hint,
+            source_duration_ms=source_duration_ms,
+            cta_min_position=self.cta_min_position,
         )
         seed = _stable_seed(llm_label=llm_label, prompt_version=self.prompt_version)
 

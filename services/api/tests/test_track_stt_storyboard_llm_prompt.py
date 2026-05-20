@@ -40,7 +40,10 @@ class TestPromptVersion:
         # Bumped v3 → v4 2026-05-13 (CTA slot redefined as evergreen
         # CLOSER — verdict/demo result/use case; live-only urgency
         # avoided).
-        assert PROMPT_VERSION == "v4"
+        # Bumped v4 → v5 2026-05-20 (explicit Source/HOOK/CTA cutoff
+        # line — LLM was picking HOOK at 28:45 into a 54-min video
+        # because it had to infer the first-third boundary itself).
+        assert PROMPT_VERSION == "v5"
 
     def test_system_prompt_non_empty(self):
         assert len(_SYSTEM_PROMPT) > 100
@@ -250,3 +253,84 @@ class TestSmallChunkHint:
         hint_idx = out.find("Use exactly 1 DETAIL")
         chunks_idx = out.find("Chunks (chronological")
         assert 0 <= hint_idx < chunks_idx
+
+
+class TestCutoffLine:
+    """v5: explicit Source/HOOK/CTA cutoff line in the prompt.
+
+    Root cause of the 2026-05-20 staging incident: the LLM picked
+    HOOK at 28:45 into a 54-min video because it had to infer the
+    first-third boundary from timestamps — and got it wrong.
+    """
+
+    # 54m45s source (matches the real staging incident video).
+    _SOURCE_MS = 3_285_000
+
+    def _chunks_spanning_source(self) -> list:
+        return [
+            _make_chunk(0, 30_000),
+            _make_chunk(1_000_000, 1_030_000),
+            _make_chunk(3_255_000, self._SOURCE_MS),
+        ]
+
+    def test_cutoff_line_present(self):
+        out = build_user_prompt(
+            all_chunks=self._chunks_spanning_source(),
+            target_duration_ms=60_000,
+            llm_label="X",
+            spoken_aliases=[],
+            slot_budgets=SlotBudgets(),
+            source_duration_ms=self._SOURCE_MS,
+        )
+        assert "Source:" in out
+
+    def test_cutoff_line_correct_values(self):
+        # 3_285_000ms → total 54:45, HOOK before 18:15, CTA after 27:22
+        out = build_user_prompt(
+            all_chunks=self._chunks_spanning_source(),
+            target_duration_ms=60_000,
+            llm_label="X",
+            spoken_aliases=[],
+            slot_budgets=SlotBudgets(),
+            source_duration_ms=self._SOURCE_MS,
+            cta_min_position=0.5,
+        )
+        assert "54:45" in out
+        assert "18:15" in out
+        assert "27:22" in out
+
+    def test_cutoff_line_mm_ss_not_raw_ms(self):
+        out = build_user_prompt(
+            all_chunks=self._chunks_spanning_source(),
+            target_duration_ms=60_000,
+            llm_label="X",
+            spoken_aliases=[],
+            slot_budgets=SlotBudgets(),
+            source_duration_ms=self._SOURCE_MS,
+        )
+        assert "3285000" not in out
+        assert "1095000" not in out
+
+    def test_cutoff_line_omitted_when_source_duration_zero(self):
+        # Default source_duration_ms=0 → no cutoff line (backward compat).
+        out = build_user_prompt(
+            all_chunks=[_make_chunk(0, 1000)],
+            target_duration_ms=60_000,
+            llm_label="X",
+            spoken_aliases=[],
+            slot_budgets=SlotBudgets(),
+        )
+        assert "Source:" not in out
+
+    def test_cutoff_line_appears_before_chunk_listing(self):
+        out = build_user_prompt(
+            all_chunks=self._chunks_spanning_source(),
+            target_duration_ms=60_000,
+            llm_label="X",
+            spoken_aliases=[],
+            slot_budgets=SlotBudgets(),
+            source_duration_ms=self._SOURCE_MS,
+        )
+        source_idx = out.find("Source:")
+        chunks_idx = out.find("Chunks (chronological")
+        assert 0 <= source_idx < chunks_idx
