@@ -713,7 +713,7 @@ class Settings(BaseSettings):
     auto_shorts_product_v2_full_stt_enabled: bool = False
     auto_shorts_product_v2_full_stt_max_scenes: int = 300
     auto_shorts_product_v2_full_stt_prompt_version: str = "v2"
-    auto_shorts_product_v2_full_stt_timeout_s: float = 15.0
+    auto_shorts_product_v2_full_stt_timeout_s: float = 30.0
     auto_shorts_product_v2_full_stt_daily_budget_usd: float = 5.0
     auto_shorts_product_v2_full_stt_model: str = "gpt-4o-mini"
     # When True, restricts source scenes to live blocks (host actively
