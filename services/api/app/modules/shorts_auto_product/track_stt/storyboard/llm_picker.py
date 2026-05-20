@@ -615,7 +615,7 @@ def _validate_semantic_constraints(
             f"={last_third_cutoff}ms (source_duration={source_duration}ms)"
         )
 
-    # Loose temporal ordering: HOOK < INTRO < CTA on chunk start_ms.
+    # Full temporal ordering: HOOK < INTRO < CTA on chunk start_ms.
     if not (hook_start < intro_start < cta_start):
         raise ValueError(
             f"role temporal order broken: hook_start={hook_start} "
@@ -625,6 +625,16 @@ def _validate_semantic_constraints(
 
     # DETAIL fragments must be chronologically ordered if there are 2.
     detail_picks = by_role.get("detail", [])
+
+    # INTRO must precede every DETAIL fragment (v6: full chain check).
+    for dp in detail_picks:
+        detail_start = chronological[dp.chunk_index].start_ms
+        if intro_start > detail_start:
+            raise ValueError(
+                f"INTRO chunk start_ms={intro_start} is after DETAIL "
+                f"chunk start_ms={detail_start} — temporal order broken "
+                f"(must satisfy intro < detail)"
+            )
     if len(detail_picks) == 2:
         d0 = chronological[detail_picks[0].chunk_index].start_ms
         d1 = chronological[detail_picks[1].chunk_index].start_ms
