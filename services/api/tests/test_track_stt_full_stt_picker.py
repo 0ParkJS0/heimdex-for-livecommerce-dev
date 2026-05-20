@@ -60,8 +60,6 @@ def _valid_response_json(scenes: list[FullSttScene], indices: list[int]) -> str:
     segments = [
         {
             "segment_index": idx,
-            "start_ms": scenes[idx].start_ms,
-            "end_ms": scenes[idx].end_ms,
             "rationale": f"rationale for {idx}",
         }
         for idx in indices
@@ -121,41 +119,6 @@ class TestValidResponse:
         assert plan.segments[0].rationale == "rationale for 0"
 
 
-class TestHallucinatedTimestamp:
-    @pytest.mark.asyncio
-    async def test_mismatched_start_ms_triggers_fallback(self):
-        scenes = _scenes_5()
-        content = json.dumps({
-            "segments": [
-                {
-                    "segment_index": 0,
-                    "start_ms": 99999,  # wrong — should be 0
-                    "end_ms": scenes[0].end_ms,
-                    "rationale": "",
-                },
-                {
-                    "segment_index": 2,
-                    "start_ms": scenes[2].start_ms,
-                    "end_ms": scenes[2].end_ms,
-                    "rationale": "",
-                },
-                {
-                    "segment_index": 4,
-                    "start_ms": scenes[4].start_ms,
-                    "end_ms": scenes[4].end_ms,
-                    "rationale": "",
-                },
-            ],
-            "global_rationale": "",
-        })
-        client = AsyncMock()
-        client.chat.completions.create = AsyncMock(return_value=_make_openai_response(content))
-        picker = _make_picker(client)
-        plan = await picker.pick(
-            scenes=scenes, target_duration_ms=60_000, llm_label="X", spoken_aliases=[]
-        )
-        assert plan.fallback_used
-
 
 class TestOutOfRangeIndex:
     @pytest.mark.asyncio
@@ -163,9 +126,9 @@ class TestOutOfRangeIndex:
         scenes = _scenes_5()
         content = json.dumps({
             "segments": [
-                {"segment_index": 999, "start_ms": 0, "end_ms": 10_000, "rationale": ""},
-                {"segment_index": 1, "start_ms": scenes[1].start_ms, "end_ms": scenes[1].end_ms, "rationale": ""},
-                {"segment_index": 2, "start_ms": scenes[2].start_ms, "end_ms": scenes[2].end_ms, "rationale": ""},
+                {"segment_index": 999, "rationale": ""},
+                {"segment_index": 1, "rationale": ""},
+                {"segment_index": 2, "rationale": ""},
             ],
             "global_rationale": "",
         })
@@ -191,9 +154,9 @@ class TestOverlappingSegments:
         ]
         content = json.dumps({
             "segments": [
-                {"segment_index": 0, "start_ms": 0, "end_ms": 30_000, "rationale": ""},
-                {"segment_index": 1, "start_ms": 20_000, "end_ms": 50_000, "rationale": ""},
-                {"segment_index": 2, "start_ms": 50_000, "end_ms": 80_000, "rationale": ""},
+                {"segment_index": 0, "rationale": ""},
+                {"segment_index": 1, "rationale": ""},
+                {"segment_index": 2, "rationale": ""},
             ],
             "global_rationale": "",
         })
@@ -213,9 +176,9 @@ class TestNonChronologicalSegments:
         # Return scenes 4, 2, 0 — backwards
         content = json.dumps({
             "segments": [
-                {"segment_index": 4, "start_ms": scenes[4].start_ms, "end_ms": scenes[4].end_ms, "rationale": ""},
-                {"segment_index": 2, "start_ms": scenes[2].start_ms, "end_ms": scenes[2].end_ms, "rationale": ""},
-                {"segment_index": 0, "start_ms": scenes[0].start_ms, "end_ms": scenes[0].end_ms, "rationale": ""},
+                {"segment_index": 4, "rationale": ""},
+                {"segment_index": 2, "rationale": ""},
+                {"segment_index": 0, "rationale": ""},
             ],
             "global_rationale": "",
         })
@@ -231,22 +194,21 @@ class TestNonChronologicalSegments:
 class TestDurationTooShort:
     @pytest.mark.asyncio
     async def test_total_below_30pct_triggers_fallback(self):
-        # target=60s, lower bound=18s. Pick one 5s scene → 5s < 18s → fallback.
+        # target=60s, lower bound=18s. 3 scenes of 3s each → total 9s < 18s → fallback.
         scenes = [
-            _scene(0, start_ms=0, end_ms=5_000),
-            _scene(1, start_ms=20_000, end_ms=40_000),
-            _scene(2, start_ms=50_000, end_ms=70_000),
+            _scene(0, start_ms=0, end_ms=3_000),
+            _scene(1, start_ms=20_000, end_ms=23_000),
+            _scene(2, start_ms=50_000, end_ms=53_000),
         ]
-        # One pick of 5s vs target 60000ms → 5000 < 18000 → fallback
         content = json.dumps({
             "segments": [
-                {"segment_index": 0, "start_ms": 0, "end_ms": 5_000, "rationale": ""},
-                {"segment_index": 1, "start_ms": 20_000, "end_ms": 23_000, "rationale": ""},
-                {"segment_index": 2, "start_ms": 50_000, "end_ms": 53_000, "rationale": ""},
+                {"segment_index": 0, "rationale": ""},
+                {"segment_index": 1, "rationale": ""},
+                {"segment_index": 2, "rationale": ""},
             ],
             "global_rationale": "",
         })
-        # total = 5000 + 3000 + 3000 = 11000 < 30% of 60000=18000 → fallback
+        # total = 3000 + 3000 + 3000 = 9000 < 30% of 60000=18000 → fallback
         client = AsyncMock()
         client.chat.completions.create = AsyncMock(return_value=_make_openai_response(content))
         picker = _make_picker(client)
@@ -267,9 +229,9 @@ class TestDurationTooLong:
         ]
         content = json.dumps({
             "segments": [
-                {"segment_index": 0, "start_ms": 0, "end_ms": 50_000, "rationale": ""},
-                {"segment_index": 1, "start_ms": 50_000, "end_ms": 100_000, "rationale": ""},
-                {"segment_index": 2, "start_ms": 100_000, "end_ms": 150_000, "rationale": ""},
+                {"segment_index": 0, "rationale": ""},
+                {"segment_index": 1, "rationale": ""},
+                {"segment_index": 2, "rationale": ""},
             ],
             "global_rationale": "",
         })
@@ -352,7 +314,7 @@ class TestTimeoutFallback:
         assert plan.fallback_used
         # Reservation was released — daily budget should still be available
         # (no cost was charged)
-        assert budget.spent_today_usd < 0.001
+        assert budget.spent_today_usd() < 0.001
 
 
 class TestSdkExceptionFallback:

@@ -267,18 +267,7 @@ class FullSttExplainerPicker:
                     f"segment_index {pick.segment_index} out of range [0, {n})"
                 )
 
-        # 2. Timestamps match scene exactly (hallucination check — the LLM
-        #    was given exact timestamps; any deviation is fabrication)
-        for pick in response.segments:
-            scene = scenes[pick.segment_index]
-            if pick.start_ms != scene.start_ms or pick.end_ms != scene.end_ms:
-                raise ValueError(
-                    f"segment_index={pick.segment_index}: timestamps "
-                    f"{pick.start_ms}-{pick.end_ms} do not match scene "
-                    f"{scene.start_ms}-{scene.end_ms}"
-                )
-
-        # 3. Chronological order (segments must be in ascending start_ms order)
+        # 2. Chronological order (segments must be in ascending start_ms order)
         for i in range(len(response.segments) - 1):
             curr_start = scenes[response.segments[i].segment_index].start_ms
             next_start = scenes[response.segments[i + 1].segment_index].start_ms
@@ -288,7 +277,7 @@ class FullSttExplainerPicker:
                     f"{curr_start} >= {next_start}"
                 )
 
-        # 4. No overlapping segments
+        # 3. No overlapping segments
         for i in range(len(response.segments) - 1):
             curr_end = scenes[response.segments[i].segment_index].end_ms
             next_start = scenes[response.segments[i + 1].segment_index].start_ms
@@ -297,7 +286,7 @@ class FullSttExplainerPicker:
                     f"segments {i} and {i+1} overlap: end={curr_end} > start={next_start}"
                 )
 
-        # 5. Total duration within bounds
+        # 4. Total duration within bounds
         total_ms = sum(
             scenes[pick.segment_index].end_ms - scenes[pick.segment_index].start_ms
             for pick in response.segments

@@ -31,17 +31,9 @@ _RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["segment_index", "start_ms", "end_ms", "rationale"],
+                    "required": ["segment_index", "rationale"],
                     "properties": {
                         "segment_index": {
-                            "type": "integer",
-                            "minimum": 0,
-                        },
-                        "start_ms": {
-                            "type": "integer",
-                            "minimum": 0,
-                        },
-                        "end_ms": {
                             "type": "integer",
                             "minimum": 0,
                         },
@@ -63,8 +55,6 @@ _RESPONSE_JSON_SCHEMA: dict[str, Any] = {
 
 class FullSttSegmentPick(BaseModel):
     segment_index: int = Field(ge=0)
-    start_ms: int = Field(ge=0)
-    end_ms: int = Field(ge=0)
     rationale: str = Field(default="", max_length=200)
 
     @field_validator("rationale", mode="before")

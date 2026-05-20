@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
 
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 _SYSTEM_PROMPT = (
     "You are a video editor. Given a live commerce video transcript, select "
@@ -30,8 +30,8 @@ _SYSTEM_PROMPT = (
     "- Avoid time-sensitive language (\"today only\", \"limited stock\", \"right now\") "
     "— this clip will be watched weeks or months after the live stream\n"
     "- Segments must be in chronological order\n\n"
-    "Return the segment_index, start_ms, and end_ms from the provided list "
-    "exactly as shown — do not modify the timestamps."
+    "Return the segment_index of each chosen scene and a short rationale. "
+    "Segments must be in chronological order."
 )
 
 
@@ -53,17 +53,19 @@ def select_scenes_for_prompt(
 
     Returns the input unchanged when len(scenes) <= max_scenes.
     """
-    if len(scenes) <= max_scenes:
-        return list(scenes)
+    sorted_scenes = sorted(scenes, key=lambda s: s.start_ms)
 
-    n = len(scenes)
+    if len(sorted_scenes) <= max_scenes:
+        return sorted_scenes
+
+    n = len(sorted_scenes)
     per_third = max_scenes // 3
     extra = max_scenes - per_third * 3  # distribute remainder to last third
 
     third = n // 3
-    first = scenes[:third]
-    middle = scenes[third : 2 * third]
-    last = scenes[2 * third :]
+    first = sorted_scenes[:third]
+    middle = sorted_scenes[third : 2 * third]
+    last = sorted_scenes[2 * third :]
 
     def _evenly_sample(src: list["FullSttScene"], count: int) -> list["FullSttScene"]:
         if not src or count <= 0:

@@ -292,10 +292,10 @@ class TestLiveBlockAllowlistRespected:
         # 4 scenes: only sc_1 and sc_2 have speech (speech_segment_count > 0)
         # live_only=True should filter out sc_0 and sc_3
         hits = [
-            _scene_hit("sc_0", start_ms=0, end_ms=10_000, text="silent", speech_segment_count=0),
+            _scene_hit("sc_0", start_ms=0, end_ms=10_000, text="", speech_segment_count=0),
             _scene_hit("sc_1", start_ms=10_000, end_ms=30_000, text="live content", speech_segment_count=5),
             _scene_hit("sc_2", start_ms=30_000, end_ms=60_000, text="more live", speech_segment_count=3),
-            _scene_hit("sc_3", start_ms=60_000, end_ms=70_000, text="outro", speech_segment_count=0),
+            _scene_hit("sc_3", start_ms=60_000, end_ms=70_000, text="", speech_segment_count=0),
         ]
         os_client = _FakeOSClient(hits)
         received_scenes: list[Any] = []

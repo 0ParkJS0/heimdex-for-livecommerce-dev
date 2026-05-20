@@ -21,8 +21,8 @@ def _scene(idx: int, *, start_ms: int, end_ms: int, text: str = "hello") -> Full
 
 
 class TestPromptVersion:
-    def test_constant_is_v1(self):
-        assert PROMPT_VERSION == "v1"
+    def test_constant_is_v2(self):
+        assert PROMPT_VERSION == "v2"
 
     def test_system_prompt_non_empty(self):
         assert len(_SYSTEM_PROMPT) > 100
@@ -110,8 +110,10 @@ class TestChronologicalOrder:
             _scene(0, start_ms=30_000, end_ms=45_000, text="later"),
             _scene(1, start_ms=0, end_ms=15_000, text="earlier"),
         ]
+        # select_scenes_for_prompt sorts; build_user_prompt receives sorted input
+        capped = select_scenes_for_prompt(scenes, max_scenes=10)
         out = build_user_prompt(
-            scenes=scenes, target_duration_ms=60_000,
+            scenes=capped, target_duration_ms=60_000,
             llm_label="X", spoken_aliases=[],
         )
         idx_00 = out.index("[0] 00:00")
