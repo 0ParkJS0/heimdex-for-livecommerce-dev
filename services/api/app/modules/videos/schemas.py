@@ -6,6 +6,7 @@ All data is derived from OpenSearch scene aggregations — no Postgres table.
 from pydantic import BaseModel, Field
 
 from heimdex_media_contracts.ingest import SourceType
+from app.modules.ingest.schemas import TranscriptWord
 from app.modules.people.schemas import PersonResponse
 
 
@@ -80,6 +81,12 @@ class VideoScene(BaseModel):
     keyframe_timestamp_ms: int = 0
     is_edited: bool = False
     edited_fields: list[str] = Field(default_factory=list)
+    # Word-level transcript from Whisper. ``drive-stt-worker`` populates
+    # this via ``EnrichSceneUpdate.transcript_words``; scenes ingested
+    # before the worker rollout (or by a worker that doesn't emit word
+    # data) come back with an empty list so consumers can always assume
+    # ``list[TranscriptWord]`` and skip None-checks.
+    transcript_words: list[TranscriptWord] = Field(default_factory=list)
 
 
 class VideoScenesResponse(BaseModel):

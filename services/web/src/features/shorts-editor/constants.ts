@@ -17,26 +17,31 @@ export const DEFAULT_OUTPUT: CompositionOutputSpec = {
   background_color: "#000000",
 };
 
-// Mirrors services/api/app/modules/shorts_auto_product/subtitle_layout.py
-// ``build_auto_shorts_subtitle_style``. At canvas_height=720 (matches
-// ``DEFAULT_OUTPUT.height`` above) the backend formula resolves to
-// font_size_px=32, padding≈11, position_y=0.82 with a white pill
-// (#FFFFFF @ 0.95) over black bold text. We keep the editor default
-// here in lockstep so the operator sees the same visual whether the
-// composition came from an auto-rendered short (backend writes the
-// style) or from the fallback path that synthesizes subtitles in the
-// browser when ``comp.subtitles`` is empty.
+// FE default for an operator-added subtitle in the editor. AI-shorts
+// captions still come through ``build_auto_shorts_subtitle_style``
+// (backend formula at canvas_height=720 → 32px / y=0.82) — this
+// constant only controls the "add subtitle" affordance and the fall-
+// back synthesis path when ``comp.subtitles`` is empty.
+//
+// 2026-05-20 — operator review: the editor's manual-add subtitle now
+// targets a smaller visual footprint that reads as ~16px in the 1440
+// viewport editor preview (preview height ~626). Storage stays in
+// output (720h) reference coords so the backend PIL renderer keeps
+// using the value verbatim; the editor + fullscreen previews scale
+// down via CSS container queries (see PreviewPanel + OverlayRenderer):
+//
+//   displayed_px = stored_px × (preview_height / 720)
+//
+// stored 18 → 18 × (626/720) ≈ 15.65 px in the 1440-anchor editor
+// preview, which rounds to the requested 16 px target. y=0.80
+// matches the new lower-third position the operator picked.
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   fontFamily: "Pretendard",
-  // 720 * 0.045 = 32 — keeps the FE in step with the backend formula
-  // so AI-rendered and FE-synthesized subtitles read at the same size.
-  fontSizePx: 32,
+  fontSizePx: 18,
   fontColor: "#000000",
   fontWeight: 700,
   positionX: 0.5,
-  // Backend pins position_y=0.82 so the pill clears the iOS/Android
-  // safe-area bars when the short is reposted to social.
-  positionY: 0.82,
+  positionY: 0.8,
   // White pill on black-text — matches the operator-target screenshot
   // and stays legible against any livecommerce background.
   backgroundColor: "#FFFFFF",

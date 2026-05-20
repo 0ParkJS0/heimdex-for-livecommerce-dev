@@ -39,6 +39,30 @@ from app.modules.shorts_auto_product.track_stt.storyboard.types import (
 # on this. Mirror the bump in
 # ``app.config.Settings.auto_shorts_product_v2_storyboard_llm_prompt_version``.
 #
+# v6 (2026-05-20, explicit slot temporal ordering):
+#   * System prompt gains Rule 7: chunk_index values must be in
+#     STRICTLY ASCENDING order across slots (hook < intro < detail(s)
+#     < cta). Without this the LLM optimises each slot independently
+#     and can pick INTRO at 12:15 before HOOK at 15:00 — then the
+#     validator rejects and falls back to heuristic.
+#   * `build_user_prompt` appends a "Required index order" reminder
+#     line directly before the chunk listing so the constraint is
+#     visible at the point of data.
+#   * Staging incident 2026-05-20: 2/3 children failed with
+#     "hook_start=900000 intro_start=735000" (HOOK at 15:00, INTRO
+#     at 12:15); v6 makes the ordering rule explicit to prevent this.
+#
+# v5 (2026-05-20, explicit temporal cutoffs):
+#   * `build_user_prompt` now accepts ``source_duration_ms`` and
+#     ``cta_min_position`` and emits a "Source: HH:MM. HOOK before
+#     MM:SS. CTA after MM:SS." line before the chunk listing.
+#   * Removes the ambiguity that caused the LLM to pick a HOOK at
+#     28:45 into a 54-min video — the model was told "first third"
+#     but had to infer the boundary from timestamps with no anchor.
+#     Staging log 2026-05-20: validation_failed 2/3 children.
+#   * ``source_duration_ms`` defaults to 0 (line omitted) so
+#     existing test call-sites that don't pass it are unaffected.
+#
 # v4 (2026-05-13, evergreen CLOSER):
 #   * CTA slot definition rewritten — no longer "purchase prompt
 #     / urgency". Now an EVERGREEN closing beat: verdict / demo
@@ -62,7 +86,7 @@ from app.modules.shorts_auto_product.track_stt.storyboard.types import (
 #     the prompt no longer scales with source-video duration.
 # v1: initial.
 # ====================================================================
-PROMPT_VERSION = "v4"
+PROMPT_VERSION = "v6"
 
 
 _SYSTEM_PROMPT = """You are a livecommerce shorts director. Pick chunks \
@@ -107,6 +131,11 @@ isolation.
 6. Avoid repetition. HOOK should not echo INTRO. The CTA chunk must \
 deliver NEW information (a verdict, a result, or a use-case framing) \
 — it must NOT merely restate the INTRO.
+7. Slot order: the chunk_index values MUST be in STRICTLY ASCENDING \
+ORDER across narrative slots: hook < intro < each detail < cta. \
+The chunk list is sorted chronologically — a higher index means later \
+in the source. Picking in index order ensures the assembled short flows \
+forward in time without backward jumps.
 
 Return exactly one HOOK, one INTRO, one CTA, and 1-2 DETAIL fragments. \
 For each fragment provide a one-sentence rationale in English explaining \
@@ -125,6 +154,8 @@ def build_user_prompt(
     spoken_aliases: list[str],
     slot_budgets: SlotBudgets,
     small_chunk_hint: bool = False,
+    source_duration_ms: int = 0,
+    cta_min_position: float = 0.5,
 ) -> str:
     """Compose the user-message content for one OpenAI call.
 
@@ -193,6 +224,24 @@ def build_user_prompt(
         )
 
     sections: list[str] = [product_line, target_line, budget_line]
+    if source_duration_ms > 0:
+        total_s = source_duration_ms // 1000
+        hook_cutoff_s = (source_duration_ms // 3) // 1000
+        cta_cutoff_s = int(source_duration_ms * cta_min_position) // 1000
+        total_mm, total_ss = divmod(total_s, 60)
+        hook_mm, hook_ss = divmod(hook_cutoff_s, 60)
+        cta_mm, cta_ss = divmod(cta_cutoff_s, 60)
+        sections.append(
+            f"Source: {total_mm:02d}:{total_ss:02d}.  "
+            f"HOOK before {hook_mm:02d}:{hook_ss:02d}.  "
+            f"CTA after {cta_mm:02d}:{cta_ss:02d}."
+        )
+    # v6: restate the slot ordering rule close to the data so the LLM
+    # sees it immediately before scanning the chunk list.
+    sections.append(
+        "Required index order: HOOK < INTRO < each DETAIL < CTA "
+        "(chunks are chronological — higher index = later in source)."
+    )
     if small_chunk_hint:
         # v2: when chunk_count is just-enough for 4 unique slots,
         # the schema is satisfied only with 1× DETAIL. Without this

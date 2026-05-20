@@ -18,6 +18,7 @@ function makeState(overrides: Partial<EditorState> = {}): EditorState {
     totalDurationMs: 0,
     zoom: 100,
     isDirty: false,
+    history: [],
     ...overrides,
   };
 }
@@ -111,11 +112,14 @@ describe("buildCompositionSpec", () => {
     expect(spec.subtitles).toHaveLength(1);
     expect(spec.subtitles[0].text).toBe("Hello World");
     expect(spec.subtitles[0].style.font_family).toBe("Pretendard");
-    // 2026-05-19 — DEFAULT_SUBTITLE_STYLE was aligned with the backend
-    // auto-shorts pill style: font_size_px=32 (720 * 0.045) and
-    // position_y=0.82 (clears safe-area on social reposts).
-    expect(spec.subtitles[0].style.font_size_px).toBe(32);
-    expect(spec.subtitles[0].style.position_y).toBe(0.82);
+    // 2026-05-20 — DEFAULT_SUBTITLE_STYLE was retargeted for the editor
+    // manual-add flow: font_size_px=18 (renders as ~16px in the 1440-
+    // anchor editor preview via container-query scaling) and position_y
+    // =0.80 (operator-picked lower-third placement). AI-shorts captions
+    // still come through the backend formula at 32px so this constant
+    // diverges from build_auto_shorts_subtitle_style.
+    expect(spec.subtitles[0].style.font_size_px).toBe(18);
+    expect(spec.subtitles[0].style.position_y).toBe(0.8);
     expect(spec.title).toBeNull();
   });
 

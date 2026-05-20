@@ -695,3 +695,162 @@ class TestSeedDeterminism:
         seed_a = ma.chat.completions.create.call_args.kwargs["seed"]
         seed_b = mb.chat.completions.create.call_args.kwargs["seed"]
         assert seed_a != seed_b
+
+
+class TestSourceDurationInPrompt:
+    """v5: picker forwards source_duration_ms to build_user_prompt so
+    the LLM receives an explicit HOOK/CTA cutoff line.
+    """
+
+    @pytest.mark.asyncio
+    async def test_source_duration_line_in_user_message(self):
+        # _chunks_with_temporal_spread() → max end_ms = 170_000ms = 02:50
+        chunks = _chunks_with_temporal_spread()
+        picker, mock_client, _ = _make_picker(
+            create_returns=_mock_openai_response(_well_formed_llm_response()),
+        )
+        await picker.assemble(
+            all_chunks=chunks,
+            segments=_segments_for(chunks),
+            target_duration_ms=60_000,
+            llm_label="test",
+            spoken_aliases=[],
+        )
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        # Total source 170s = 02:50; first-third cutoff 56s = 00:56
+        assert "Source:" in user_content
+        assert "02:50" in user_content
+        assert "00:56" in user_content
+
+    @pytest.mark.asyncio
+    async def test_hook_validation_still_rejects_despite_prompt_fix(self):
+        # Regression: the prompt improvement is informational — it does
+        # NOT remove the validation layer. If the LLM still returns a
+        # HOOK in the last third, the picker must fall back to heuristic.
+        chunks = _chunks_with_temporal_spread()
+        # Force LLM to return a HOOK at chunk index 5 (start_ms=130_000,
+        # last-third of a 170s source).
+        bad_response = {
+            "fragments": [
+                {"role": "hook",   "chunk_index": 5, "rationale": "bad hook"},
+                {"role": "intro",  "chunk_index": 1, "rationale": "intro"},
+                {"role": "detail", "chunk_index": 2, "rationale": "detail"},
+                {"role": "cta",    "chunk_index": 5, "rationale": "cta"},
+            ],
+            "global_rationale": "bad",
+        }
+        picker, _, spied_fallback = _make_picker(
+            create_returns=_mock_openai_response(bad_response),
+        )
+        await picker.assemble(
+            all_chunks=chunks,
+            segments=_segments_for(chunks),
+            target_duration_ms=60_000,
+            llm_label="test",
+            spoken_aliases=[],
+        )
+        spied_fallback.assemble.assert_called_once()
+
+
+class TestTemporalOrderValidation:
+    """v6: validator enforces full HOOK < INTRO < DETAIL(s) < CTA chain.
+
+    Staging incident 2026-05-20: 2/3 children failed with
+    hook_start=900000 (15:00) > intro_start=735000 (12:15).
+    _chunks_with_temporal_spread() layout (indices / start_ms):
+      [0]=0ms  [1]=15_000ms  [2]=30_000ms  [3]=60_000ms
+      [4]=90_000ms  [5]=130_000ms
+    Source = 170_000ms; first-third cutoff = ~56_666ms; CTA floor = 85_000ms.
+    """
+
+    @pytest.mark.asyncio
+    async def test_intro_before_hook_rejected(self):
+        # Regression for the 2026-05-20 staging incident.
+        # LLM picks hook at chunk[2] (30_000ms) and intro at chunk[1]
+        # (15_000ms).  hook_start > intro_start → validator rejects →
+        # heuristic fires.
+        chunks = _chunks_with_temporal_spread()
+        bad = {
+            "fragments": [
+                {"role": "hook",   "chunk_index": 2, "rationale": "hook"},
+                {"role": "intro",  "chunk_index": 1, "rationale": "intro"},
+                {"role": "detail", "chunk_index": 3, "rationale": "detail"},
+                {"role": "cta",    "chunk_index": 5, "rationale": "cta"},
+            ],
+            "global_rationale": "bad",
+        }
+        picker, _, spied_fallback = _make_picker(
+            create_returns=_mock_openai_response(bad),
+        )
+        await picker.assemble(
+            all_chunks=chunks, segments=_segments_for(chunks),
+            target_duration_ms=60_000, llm_label="test", spoken_aliases=[],
+        )
+        spied_fallback.assemble.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_detail_before_intro_rejected(self):
+        # New v6 validator check: intro at chunk[2] (30_000ms), detail at
+        # chunk[1] (15_000ms).  intro_start > detail_start → rejected.
+        chunks = _chunks_with_temporal_spread()
+        bad = {
+            "fragments": [
+                {"role": "hook",   "chunk_index": 0, "rationale": "hook"},
+                {"role": "intro",  "chunk_index": 2, "rationale": "intro"},
+                {"role": "detail", "chunk_index": 1, "rationale": "detail"},
+                {"role": "cta",    "chunk_index": 5, "rationale": "cta"},
+            ],
+            "global_rationale": "bad",
+        }
+        picker, _, spied_fallback = _make_picker(
+            create_returns=_mock_openai_response(bad),
+        )
+        await picker.assemble(
+            all_chunks=chunks, segments=_segments_for(chunks),
+            target_duration_ms=60_000, llm_label="test", spoken_aliases=[],
+        )
+        spied_fallback.assemble.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_valid_full_ascending_chain_accepted(self):
+        # hook[0]=0ms < intro[1]=15_000ms < detail[2]=30_000ms
+        # < cta[5]=130_000ms — full chain passes; LLM response used.
+        chunks = _chunks_with_temporal_spread()
+        picker, _, spied_fallback = _make_picker(
+            create_returns=_mock_openai_response(_well_formed_llm_response()),
+        )
+        plan = await picker.assemble(
+            all_chunks=chunks, segments=_segments_for(chunks),
+            target_duration_ms=60_000, llm_label="test", spoken_aliases=[],
+        )
+        spied_fallback.assemble.assert_not_called()
+        roles = [f.role for f in plan.fragments]
+        assert SlotRole.HOOK in roles
+        assert SlotRole.INTRO in roles
+        assert SlotRole.CTA in roles
+
+    @pytest.mark.asyncio
+    async def test_two_details_one_before_intro_rejected(self):
+        # Two DETAIL picks: chunk[3] (60_000ms) is valid (after intro at
+        # chunk[2]=30_000ms), but chunk[1] (15_000ms) is before intro →
+        # the whole response is rejected.
+        chunks = _chunks_with_temporal_spread()
+        bad = {
+            "fragments": [
+                {"role": "hook",   "chunk_index": 0, "rationale": "hook"},
+                {"role": "intro",  "chunk_index": 2, "rationale": "intro"},
+                {"role": "detail", "chunk_index": 3, "rationale": "detail ok"},
+                {"role": "detail", "chunk_index": 1, "rationale": "detail bad"},
+                {"role": "cta",    "chunk_index": 5, "rationale": "cta"},
+            ],
+            "global_rationale": "bad",
+        }
+        picker, _, spied_fallback = _make_picker(
+            create_returns=_mock_openai_response(bad),
+        )
+        await picker.assemble(
+            all_chunks=chunks, segments=_segments_for(chunks),
+            target_duration_ms=60_000, llm_label="test", spoken_aliases=[],
+        )
+        spied_fallback.assemble.assert_called_once()

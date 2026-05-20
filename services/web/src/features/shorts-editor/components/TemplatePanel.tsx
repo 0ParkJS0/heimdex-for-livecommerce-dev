@@ -145,7 +145,14 @@ function StarterTemplateCard({
         aria-label={`${template.name} 템플릿 추가`}
       >
         <CheckerPattern />
-        <div className="absolute inset-0 flex items-center justify-center px-2">
+        {/* Preview text sits at the same 27% top ratio the editor uses
+            for starter overlays (see UNIFIED_TOP_RATIO in
+            starter-templates.ts) so the card preview matches where the
+            caption will actually land after the operator clicks. */}
+        <div
+          className="absolute inset-x-0 flex justify-center px-2"
+          style={{ top: "27%", transform: "translateY(-50%)" }}
+        >
           <span
             className="whitespace-pre-line text-center leading-tight"
             style={{
@@ -296,11 +303,17 @@ function TemplateCard({
 function CheckerPattern() {
   // 격자(체커) 패턴 — figma 1602:41198 카드 배경. svg 패턴(id 충돌 방지용
   // useId) 으로 표현.
+  //
+  // 2026-05-20 — operator wanted the grid to read as a "transparent
+  // background" hint rather than a foreground element competing with
+  // the preview text, so we dim it via opacity-30. text-grayscale-100
+  // is already light; the extra alpha lets the caption read cleanly
+  // while the checker pattern is still discernible.
   const id = useId();
   const patternId = `checker-${id}`;
   return (
     <svg
-      className="pointer-events-none absolute inset-0 h-full w-full text-grayscale-100"
+      className="pointer-events-none absolute inset-0 h-full w-full text-grayscale-100 opacity-30"
       aria-hidden
       preserveAspectRatio="none"
     >

@@ -119,7 +119,14 @@ function TextOverlayBox({
 
   const textStyle: CSSProperties = {
     fontFamily: resolveFontFamily(overlay.fontFamily),
-    fontSize: `${Math.max(8, overlay.fontSizePx * 0.5)}px`,
+    // 2026-05-20 — container-query scale. ``fontSizePx`` is stored in
+    // 720-tall output coords; ``100cqh / 720`` resolves to a fraction
+    // of px on whatever preview canvas this overlay lands on (preview,
+    // fullscreen modal, etc — each surface must set ``container-type:
+    // size`` on its canvas wrapper). Math.max floor keeps tiny stored
+    // sizes legible at 8px minimum. Replaces the prior static 0.5
+    // multiplier which only matched one specific surface size.
+    fontSize: `max(8px, calc(${overlay.fontSizePx} * 100cqh / 720))`,
     fontWeight: overlay.fontWeight,
     fontStyle: overlay.italic ? "italic" : "normal",
     textDecoration: overlay.underline ? "underline" : "none",
@@ -235,8 +242,13 @@ function BackgroundOverlayBox({
   // so transparent fills produce a clean image overlay and solid fills
   // still tint underneath if the operator picked a colour.
   const boxStyle: CSSProperties = {
-    width: `${overlay.transform.widthPx ?? 100}px`,
-    height: `${overlay.transform.heightPx ?? 60}px`,
+    // 2026-05-20 — widthPx/heightPx are stored in 405×720 output coords;
+    // re-scale to the actual preview canvas via container queries so a
+    // 200px-wide background stays at the same proportion on every
+    // surface (inline preview, fullscreen modal, exported MP4). Same
+    // pattern as the text fontSize handling in TextOverlayBox above.
+    width: `calc(${overlay.transform.widthPx ?? 100} * 100cqw / 405)`,
+    height: `calc(${overlay.transform.heightPx ?? 60} * 100cqh / 720)`,
     backgroundColor: overlay.fillColor,
     ...(overlay.imageUrl
       ? {

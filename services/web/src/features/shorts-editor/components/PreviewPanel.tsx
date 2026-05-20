@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import type { EditorClip, EditorSubtitle } from "../lib/types";
+import type { EditorClip, EditorSubtitle, HistoryEntry } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
 import { OverlayRenderer } from "./preview/OverlayRenderer";
 import { SubtitleCancelActionBar } from "./SubtitleCancelActionBar";
@@ -36,6 +36,11 @@ interface PreviewPanelProps {
   onSelectSubtitle: (index: number | null) => void;
   onUpdateSubtitlePosition: (index: number, positionX: number, positionY: number) => void;
   onUpdateSubtitleFontSize: (index: number, fontSizePx: number) => void;
+  // Undo plumbing — preview captures a pre-gesture snapshot on each
+  // drag/resize/rotate pointerdown so Ctrl+Z can roll one step back.
+  // Optional so existing callers (e.g. embedded preview tiles that
+  // don't surface dragging) don't break.
+  onPushHistory?: (entry: HistoryEntry) => void;
   // when true, the preview container expands to the 352×626 iPhone
   // mockup size used inside FullscreenOverlay. Layout/logic otherwise identical.
   fullscreen?: boolean;
@@ -77,6 +82,7 @@ export function PreviewPanel({
   onSelectSubtitle,
   onUpdateSubtitlePosition,
   onUpdateSubtitleFontSize,
+  onPushHistory,
   fullscreen = false,
   playbackRate,
 }: PreviewPanelProps) {
@@ -146,6 +152,12 @@ export function PreviewPanel({
     const idx = getSubtitleIndex(sub.id);
     if (idx < 0) return;
 
+    // Snapshot the pre-gesture style so Ctrl+Z can restore position
+    // (and any other style fields that incidentally changed) in one
+    // step. Pushed on pointerdown so the very first pointermove
+    // already has an entry to roll back to.
+    onPushHistory?.({ kind: "subtitle_style", index: idx, style: { ...sub.style } });
+
     onSelectSubtitle(idx);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
@@ -163,13 +175,18 @@ export function PreviewPanel({
       origFontSizePx: sub.style.fontSizePx,
       lockedWidth,
     };
-  }, [getSubtitleIndex, onSelectSubtitle]);
+  }, [getSubtitleIndex, onSelectSubtitle, onPushHistory]);
 
   const handleResizePointerDown = useCallback((e: React.PointerEvent, sub: EditorSubtitle) => {
     e.preventDefault();
     e.stopPropagation();
     const idx = getSubtitleIndex(sub.id);
     if (idx < 0) return;
+
+    // Snapshot the pre-gesture style so Ctrl+Z restores fontSizePx
+    // (and incidentally position) in one step. Pushed on pointerdown
+    // for the same reason as the move path above.
+    onPushHistory?.({ kind: "subtitle_style", index: idx, style: { ...sub.style } });
 
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
@@ -201,8 +218,20 @@ export function PreviewPanel({
     const drag = dragRef.current;
     if (drag) {
       if (drag.mode === "move") {
-        const deltaX = (e.clientX - drag.startX) / rect.width;
-        const deltaY = (e.clientY - drag.startY) / rect.height;
+        let deltaX = (e.clientX - drag.startX) / rect.width;
+        let deltaY = (e.clientY - drag.startY) / rect.height;
+        // Shift-drag axis lock: when the user holds Shift while
+        // moving, keep the motion on whichever axis they're currently
+        // pushing harder on. Computed per-frame (not at gesture
+        // start) so the lock can flip mid-drag if the user releases
+        // Shift, swings the other direction, and re-presses Shift.
+        if (e.shiftKey) {
+          if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+            deltaY = 0;
+          } else {
+            deltaX = 0;
+          }
+        }
         const newX = Math.max(0, Math.min(1, drag.origX + deltaX));
         const newY = Math.max(0, Math.min(1, drag.origY + deltaY));
         onUpdateSubtitlePosition(drag.subtitleIndex, newX, newY);
@@ -226,8 +255,16 @@ export function PreviewPanel({
       if (!overlay || !onUpdateOverlay) return;
 
       if (ovDrag.mode === "move") {
-        const deltaX = (e.clientX - ovDrag.startX) / rect.width;
-        const deltaY = (e.clientY - ovDrag.startY) / rect.height;
+        let deltaX = (e.clientX - ovDrag.startX) / rect.width;
+        let deltaY = (e.clientY - ovDrag.startY) / rect.height;
+        // Shift-drag axis lock — see the V1 path above for rationale.
+        if (e.shiftKey) {
+          if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+            deltaY = 0;
+          } else {
+            deltaX = 0;
+          }
+        }
         const newX = Math.max(0, Math.min(1, ovDrag.origX + deltaX));
         const newY = Math.max(0, Math.min(1, ovDrag.origY + deltaY));
         onUpdateOverlay(ovDrag.overlayId, {
@@ -297,6 +334,14 @@ export function PreviewPanel({
     (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
       e.preventDefault();
       e.stopPropagation();
+      // Snapshot the pre-gesture transform so Ctrl+Z restores the
+      // overlay position in one step. Move only changes transform.x/y
+      // so an overlay_transform entry covers the gesture.
+      onPushHistory?.({
+        kind: "overlay_transform",
+        id: overlay.id,
+        transform: { ...overlay.transform },
+      });
       onSelectOverlay?.(overlay.id);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       overlayDragRef.current = {
@@ -315,13 +360,30 @@ export function PreviewPanel({
         startAngleRad: 0,
       };
     },
-    [onSelectOverlay],
+    [onSelectOverlay, onPushHistory],
   );
 
   const handleOverlayResizePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
       e.preventDefault();
       e.stopPropagation();
+      // Resize updates transform.widthPx/heightPx (background) AND
+      // fontSizePx (text). Push both kinds so a single Ctrl+Z reverts
+      // the whole gesture in one stroke. Pop order is LIFO so the
+      // font-size entry lands first when the operator hits Ctrl+Z
+      // (which matches the gesture's "first effect").
+      if (overlay.kind === "text") {
+        onPushHistory?.({
+          kind: "overlay_font_size",
+          id: overlay.id,
+          fontSizePx: overlay.fontSizePx,
+        });
+      }
+      onPushHistory?.({
+        kind: "overlay_transform",
+        id: overlay.id,
+        transform: { ...overlay.transform },
+      });
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       const container = containerRef.current;
       if (!container) return;
@@ -345,7 +407,7 @@ export function PreviewPanel({
         startAngleRad: 0,
       };
     },
-    [],
+    [onPushHistory],
   );
 
   // Corner-outer rotate: caller fires this when a pointerdown lands on
@@ -356,6 +418,14 @@ export function PreviewPanel({
     (e: React.PointerEvent<HTMLDivElement>, overlay: EditorOverlay) => {
       e.preventDefault();
       e.stopPropagation();
+      // Snapshot the pre-gesture transform — rotate only changes
+      // transform.rotationDeg but we snapshot the whole transform so
+      // the undo path is uniform with move/resize.
+      onPushHistory?.({
+        kind: "overlay_transform",
+        id: overlay.id,
+        transform: { ...overlay.transform },
+      });
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       const container = containerRef.current;
       if (!container) return;
@@ -382,7 +452,7 @@ export function PreviewPanel({
         startAngleRad,
       };
     },
-    [],
+    [onPushHistory],
   );
 
   return (
@@ -395,6 +465,13 @@ export function PreviewPanel({
           surface so the editor center is the 9:16 stage with no padding. */}
       <div
         ref={containerRef}
+        // ``container-type: size`` opts this surface into CSS
+        // container queries so overlays inside can size themselves
+        // with ``cqw`` / ``cqh`` units relative to the actual preview
+        // dimensions. Overlay fontSize / width / height are stored in
+        // 720-tall output coords and re-scaled at render time —
+        // see OverlayRenderer + the V1 subtitle span below.
+        style={{ containerType: "size" }}
         className={cn(
           "relative overflow-hidden bg-black",
           aspectRatio === "9:16"
@@ -463,15 +540,16 @@ export function PreviewPanel({
                   )}
                   style={{
                     fontFamily: resolveFontFamily(sub.style.fontFamily),
-                    // 2026-05-19 — bumped from 0.5 → 0.55 so the inline
-                    // preview matches the fullscreen modal's subtitle
-                    // scale (FullscreenOverlay.tsx uses 0.55). Both
-                    // surfaces render the same composition; their on-
-                    // screen pill sizes should agree relative to the
-                    // host canvas. Fullscreen is the reference (it
-                    // mirrors the figma 9:16 phone frame); the inline
-                    // preview now follows.
-                    fontSize: `${Math.max(8, sub.style.fontSizePx * 0.55)}px`,
+                    // 2026-05-20 — switched from a static 0.55 multiplier
+                    // to a container-query scale. ``fontSizePx`` is stored
+                    // in 720-tall output coords; the preview canvas
+                    // (containerType: size set above) varies with viewport,
+                    // so ``100cqh / 720`` resolves to whatever fraction of
+                    // a px the current canvas height implies. The Math.max
+                    // floor keeps tiny stored sizes legible (8px minimum
+                    // displayed). Same formula used by OverlayRenderer +
+                    // FullscreenOverlay so all three surfaces agree.
+                    fontSize: `max(8px, calc(${sub.style.fontSizePx} * 100cqh / 720))`,
                     color: sub.style.fontColor,
                     fontWeight: sub.style.fontWeight,
                     textAlign: "center",

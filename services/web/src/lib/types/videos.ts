@@ -42,6 +42,18 @@ export interface VideoListResponse {
   facets: VideoFacets;
 }
 
+/**
+ * Word-level transcript entry from a Whisper-style STT pass. Populated
+ * by ``drive-stt-worker`` (cross-repo) at enrichment time; older scenes
+ * without word-grain data come back with an empty array on the parent
+ * scene so callers can always assume ``TranscriptWord[]``.
+ */
+export interface TranscriptWord {
+  word: string;
+  start_ms: number;
+  end_ms: number;
+}
+
 export interface VideoScene {
   scene_id: string;
   start_ms: number;
@@ -63,6 +75,11 @@ export interface VideoScene {
   keyframe_timestamp_ms: number;
   is_edited?: boolean;
   edited_fields?: string[];
+  // Word-level transcript. Empty array for scenes ingested before the
+  // drive-stt-worker rollout (or by a worker that doesn't emit word
+  // data); future editor work can rely on each entry's start_ms/end_ms
+  // for precise caption sync.
+  transcript_words?: TranscriptWord[];
 }
 
 export interface SceneOverrideResponse {
