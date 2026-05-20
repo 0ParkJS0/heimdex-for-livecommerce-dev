@@ -72,7 +72,7 @@ import os
 import socket
 from datetime import datetime
 from decimal import Decimal
-from typing import AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -400,6 +400,22 @@ class ChildRunner:
                 # before retrying so we don't hot-loop on a persistent
                 # error (e.g. DB outage).
 
+            # Full-STT shared planner poll. Only runs when the flag is on —
+            # the marker is never set otherwise, so this is a pure no-op for
+            # every other path (SAM2 / storyboard / per-child full-STT).
+            if getattr(
+                self.settings,
+                "auto_shorts_product_v2_full_stt_shared_plan_enabled",
+                False,
+            ):
+                try:
+                    await self._poll_and_plan()
+                except Exception:
+                    logger.exception(
+                        "child_runner_plan_iteration_failed",
+                        extra={"instance_id": self.instance_id},
+                    )
+
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(), timeout=poll_seconds,
@@ -477,6 +493,308 @@ class ChildRunner:
                     child_id=child_id,
                     error_message="child runner crashed mid-process",
                 )
+
+    # ── Full-STT shared planner poll (PR3) ───────────────────────────
+
+    async def _poll_and_plan(self) -> None:
+        """Planner poll for the shared-plan path.
+
+        Claims scan_order parents awaiting the shared plan, makes ONE LLM
+        call per product (``pick_many`` → N distinct shorts), persists each
+        child's plan, and clears the gate marker so the child poll can pick
+        them up. Only invoked when the shared-plan flag is on (the marker is
+        never set otherwise, so this would no-op anyway — but skipping the
+        query keeps the flag-off hot path clean).
+        """
+        max_concurrency = (
+            self.settings.auto_shorts_product_v2_child_runner_max_concurrency
+        )
+        async with self.session_factory() as session:
+            repo = ProductScanJobRepository(session)
+            parent_ids = await repo.find_claimable_planning_parents(
+                limit=max_concurrency,
+            )
+        for parent_id in parent_ids:
+            task = asyncio.create_task(self._run_one_planning_parent(parent_id))
+            self._inflight.add(task)
+            task.add_done_callback(self._inflight.discard)
+
+    async def _run_one_planning_parent(self, parent_id: UUID) -> None:
+        """Semaphore-bounded wrapper around ``_plan_parent``.
+
+        On an UNEXPECTED error the marker is intentionally NOT cleared — the
+        planning lease expires and another poll re-claims (self-healing,
+        same pattern as orphaned children). Legitimate "no short possible"
+        cases (no transcript / live block too short) are handled inside
+        ``_plan_parent`` (children left with NULL plan, marker cleared) so
+        they don't retry. This prefers retry-on-transient over turning a
+        blip into N no-render shorts, while never permanently hanging.
+        """
+        async with self._semaphore:
+            try:
+                await self._plan_parent(parent_id)
+            except Exception:
+                logger.exception(
+                    "planner_run_failed",
+                    extra={
+                        "parent_id": str(parent_id),
+                        "instance_id": self.instance_id,
+                    },
+                )
+
+    async def _plan_parent(self, parent_id: UUID) -> None:
+        planning_lease = self.settings.auto_shorts_product_v2_child_lease_seconds
+
+        # ── 1. Claim the parent for planning (atomic; one planner wins) ──
+        async with self.session_factory() as session:
+            repo = ProductScanJobRepository(session)
+            claimed = await repo.claim_planning_parent(
+                job_id=parent_id,
+                claimed_by=self.claimed_by,
+                lease_seconds=planning_lease,
+            )
+            if claimed is None:
+                return  # lost race / already planned / terminal
+            await session.commit()
+
+        # ── 2. Load parent + children + catalog ──────────────────────
+        loaded = await self._load_planning_context(parent_id)
+        if loaded is None:
+            # No children/catalog to plan — clear the marker so we don't
+            # retry forever. Any children present will no_render on NULL plan.
+            await self._clear_planning_marker(parent_id)
+            return
+        parent, children, catalog_label_lookup = loaded
+
+        # ── 3. Group children by resolved catalog (one LLM call/group) ──
+        groups: dict[UUID, list[ProductScanJob]] = {}
+        for child in children:
+            cat_id = self._resolve_catalog_for_child(
+                child=child, catalog_label_lookup=catalog_label_lookup,
+            )
+            if cat_id is None:
+                continue  # unresolvable → leave NULL plan → no_render
+            groups.setdefault(cat_id, []).append(child)
+
+        # ── 4. Plan each group ───────────────────────────────────────
+        length_seconds = (
+            parent.length_seconds or parent.duration_preset_sec or 60
+        )
+        target_duration_ms = int(length_seconds) * 1000
+
+        from openai import AsyncOpenAI
+
+        os_client = self._build_os_client()
+        openai_client = AsyncOpenAI(
+            api_key=getattr(self.settings, "openai_api_key", "") or "",
+            timeout=getattr(
+                self.settings,
+                "auto_shorts_product_v2_full_stt_timeout_s",
+                30.0,
+            )
+            + 5.0,
+        )
+        try:
+            for cat_id, group in groups.items():
+                await self._plan_one_group(
+                    parent=parent,
+                    catalog_entry_id=cat_id,
+                    group=group,
+                    target_duration_ms=target_duration_ms,
+                    os_client=os_client,
+                    openai_client=openai_client,
+                )
+        finally:
+            for client in (os_client, openai_client):
+                close = getattr(client, "close", None)
+                if close is None:
+                    continue
+                try:
+                    maybe_awaitable = close()
+                    if hasattr(maybe_awaitable, "__await__"):
+                        await maybe_awaitable
+                except Exception:  # noqa: BLE001 — teardown best-effort
+                    pass
+
+        # ── 5. Success: clear marker → unlock children for the child poll ──
+        await self._clear_planning_marker(parent_id)
+
+    async def _plan_one_group(
+        self,
+        *,
+        parent: ProductScanJob,
+        catalog_entry_id: UUID,
+        group: list[ProductScanJob],
+        target_duration_ms: int,
+        os_client: Any,
+        openai_client: Any,
+    ) -> None:
+        """One LLM call (``pick_many``) for one product → ``len(group)``
+        distinct plans, persisted to the group's children.
+
+        Domain "no short possible" (TranscriptUnavailable / LiveBlockTooShort)
+        leaves the group's children with NULL plan → they no_render. Never
+        raises those out — only unexpected errors propagate (→ retry).
+        """
+        from app.lib.whisper_transcribe.budget import InMemoryBudgetTracker
+        from app.modules.shorts_auto_product.track_stt import service as stt_service
+        from app.modules.shorts_auto_product.track_stt.errors import (
+            LiveBlockTooShortError,
+            TranscriptUnavailableError,
+        )
+        from app.modules.shorts_auto_product.track_stt.full_stt import (
+            FullSttExplainerPicker,
+            serialize_plan,
+        )
+        from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
+            MULTI_PROMPT_VERSION,
+        )
+
+        os_video_id, llm_label, spoken_aliases = await self._load_stt_inputs(
+            org_id=parent.org_id,
+            catalog_entry_id=catalog_entry_id,
+            drive_file_id=parent.video_id,
+        )
+        if os_video_id is None or llm_label is None:
+            logger.info(
+                "planner_group_inputs_missing",
+                extra={
+                    "parent_id": str(parent.id),
+                    "catalog_entry_id": str(catalog_entry_id),
+                },
+            )
+            return  # leave NULL → children no_render
+
+        picker = FullSttExplainerPicker(
+            openai_client=openai_client,
+            budget_tracker=InMemoryBudgetTracker(
+                daily_budget_usd=getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_full_stt_daily_budget_usd",
+                    5.0,
+                ),
+            ),
+            model=getattr(
+                self.settings, "auto_shorts_product_v2_full_stt_model", "gpt-4o-mini",
+            ),
+            # The multi-short prompt version is code-intrinsic (a bump is a
+            # deploy), so read it from the module, not env.
+            prompt_version=MULTI_PROMPT_VERSION,
+            timeout_s=getattr(
+                self.settings, "auto_shorts_product_v2_full_stt_timeout_s", 30.0,
+            ),
+            max_scenes=getattr(
+                self.settings, "auto_shorts_product_v2_full_stt_max_scenes", 300,
+            ),
+        )
+
+        try:
+            plans = await stt_service.plan_full_stt_clips(
+                org_id=parent.org_id,
+                catalog_entry_id=catalog_entry_id,
+                llm_label=llm_label,
+                spoken_aliases=list(spoken_aliases or []),
+                os_video_id=os_video_id,
+                target_duration_ms=target_duration_ms,
+                os_client=os_client,
+                picker=picker,
+                n=len(group),
+                live_only=getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_full_stt_live_only",
+                    True,
+                ),
+                max_scenes=getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_full_stt_max_scenes",
+                    300,
+                ),
+            )
+        except (TranscriptUnavailableError, LiveBlockTooShortError) as e:
+            logger.info(
+                "planner_group_no_shorts",
+                extra={
+                    "parent_id": str(parent.id),
+                    "catalog_entry_id": str(catalog_entry_id),
+                    "video_id": os_video_id,
+                    "reason": type(e).__name__,
+                },
+            )
+            return  # leave NULL → children no_render
+
+        async with self.session_factory() as session:
+            repo = ProductScanJobRepository(session)
+            for child, plan in zip(group, plans, strict=False):
+                await repo.set_child_full_stt_plan(
+                    child_id=child.id, plan=serialize_plan(plan),
+                )
+            await session.commit()
+        logger.info(
+            "planner_group_planned",
+            extra={
+                "parent_id": str(parent.id),
+                "catalog_entry_id": str(catalog_entry_id),
+                "video_id": os_video_id,
+                "shorts": len(group),
+                "llm_shorts": sum(1 for p in plans if not p.fallback_used),
+                "fallback_shorts": sum(1 for p in plans if p.fallback_used),
+            },
+        )
+
+    async def _load_planning_context(
+        self, parent_id: UUID,
+    ) -> tuple[ProductScanJob, list[ProductScanJob], dict[UUID, str]] | None:
+        """Read parent + its render children + catalog (id → label) for the
+        planner. Returns None when parent/children/catalog is missing.
+        """
+        async with self.session_factory() as session:
+            job_repo = ProductScanJobRepository(session)
+            parent = await job_repo.get_internal(job_id=parent_id)
+            if parent is None:
+                return None
+            children = await job_repo.find_children_for_parent(
+                org_id=parent.org_id, parent_job_id=parent_id,
+            )
+            if not children:
+                return None
+            catalog_repo = ProductCatalogRepository(session)
+            catalog_entries = await catalog_repo.list_active_by_video(
+                org_id=parent.org_id, video_id=parent.video_id,
+            )
+            if not catalog_entries:
+                return None
+            catalog_label_lookup = {
+                c.id: (c.user_label or c.llm_label) for c in catalog_entries
+            }
+            return parent, children, catalog_label_lookup
+
+    async def _clear_planning_marker(self, parent_id: UUID) -> None:
+        """Clear the parent's shared-plan marker + release the planning
+        lease. Guarded on ``claimed_by`` so a planner whose lease expired
+        (and was re-claimed) can't clobber the new owner.
+        """
+        async with self.session_factory() as session:
+            repo = ProductScanJobRepository(session)
+            cleared = await repo.clear_shared_plan_pending(
+                job_id=parent_id, claimed_by=self.claimed_by,
+            )
+            if cleared is None:
+                logger.warning(
+                    "planner_clear_marker_lease_lost",
+                    extra={
+                        "parent_id": str(parent_id),
+                        "instance_id": self.instance_id,
+                    },
+                )
+                return
+            await session.commit()
+        logger.info(
+            "planner_parent_planned",
+            extra={
+                "parent_id": str(parent_id),
+                "instance_id": self.instance_id,
+            },
+        )
 
     async def _process_child_payload(self, child_id: UUID) -> None:
         """The actual child-processing step (Phase 4 PR #6).
@@ -622,39 +940,15 @@ class ChildRunner:
         #     soft-rejected since fan-out; revert to picker so the user
         #     gets *some* short instead of no_render.
         # See ``.claude/plans/wizard-multi-product-select.md`` (PR 1 of 3).
-        chosen_catalog_id: UUID
-        if (
-            child.catalog_entry_id is not None
-            and child.catalog_entry_id in catalog_label_lookup
-        ):
-            chosen_catalog_id = child.catalog_entry_id
-        else:
-            if (
-                child.catalog_entry_id is not None
-                and child.catalog_entry_id not in catalog_label_lookup
-            ):
-                # Pre-assigned but stale — log for observability so we
-                # can quantify how often this happens in prod.
-                logger.warning(
-                    "child_pre_assigned_catalog_entry_unavailable",
-                    extra={
-                        "child_id": str(child_id),
-                        "pre_assigned": str(child.catalog_entry_id),
-                        "instance_id": self.instance_id,
-                    },
-                )
-            try:
-                catalog_pick = SingleProductSubsetPicker().pick_catalog(
-                    catalog_ids=list(catalog_label_lookup.keys()),
-                    shorts_index=child.shorts_index or 1,
-                )
-            except ValueError:
-                await self._complete_no_render(
-                    child_id=child_id,
-                    reason="picker_value_error",
-                )
-                return
-            chosen_catalog_id = catalog_pick.catalog_entry_id
+        chosen_catalog_id = self._resolve_catalog_for_child(
+            child=child, catalog_label_lookup=catalog_label_lookup,
+        )
+        if chosen_catalog_id is None:
+            await self._complete_no_render(
+                child_id=child_id,
+                reason="picker_value_error",
+            )
+            return
 
         catalog_label = catalog_label_lookup.get(chosen_catalog_id)
 
@@ -808,6 +1102,50 @@ class ChildRunner:
             child_id=child_id, parent_id_hint=parent.id,
         )
 
+    def _resolve_catalog_for_child(
+        self,
+        *,
+        child: ProductScanJob,
+        catalog_label_lookup: dict[UUID, str],
+    ) -> UUID | None:
+        """Resolve which catalog a child renders.
+
+        Honors a pre-assigned ``child.catalog_entry_id`` (multi-product
+        wizard) when it's still in the active catalog, else round-robins by
+        ``shorts_index``. Returns ``None`` when no catalog is pickable
+        (empty catalog) — caller routes to ``_complete_no_render``.
+
+        Shared by the legacy child path and the shared-plan planner so
+        catalog resolution has one owner.
+        """
+        if (
+            child.catalog_entry_id is not None
+            and child.catalog_entry_id in catalog_label_lookup
+        ):
+            return child.catalog_entry_id
+        if (
+            child.catalog_entry_id is not None
+            and child.catalog_entry_id not in catalog_label_lookup
+        ):
+            # Pre-assigned but stale — log for observability so we can
+            # quantify how often this happens in prod.
+            logger.warning(
+                "child_pre_assigned_catalog_entry_unavailable",
+                extra={
+                    "child_id": str(child.id),
+                    "pre_assigned": str(child.catalog_entry_id),
+                    "instance_id": self.instance_id,
+                },
+            )
+        try:
+            catalog_pick = SingleProductSubsetPicker().pick_catalog(
+                catalog_ids=list(catalog_label_lookup.keys()),
+                shorts_index=child.shorts_index or 1,
+            )
+        except ValueError:
+            return None
+        return catalog_pick.catalog_entry_id
+
     # ── STT track (PR 2.5) ───────────────────────────────────────────
 
     async def _process_child_stt(
@@ -845,6 +1183,25 @@ class ChildRunner:
         Imports the STT module lazily so the SAM2 path doesn't pay
         the import cost when track_mode='sam2'.
         """
+        # ── Shared-planner path ────────────────────────────────────
+        # When the shared-plan flag is on, the planner poll already made
+        # the LLM call and persisted this child's plan. Render straight
+        # from it — no catalog load, no OS fetch, no LLM call. Children
+        # only reach here once their parent's marker is cleared (the
+        # claimable gate), so the plan is committed and visible.
+        if getattr(
+            self.settings,
+            "auto_shorts_product_v2_full_stt_shared_plan_enabled",
+            False,
+        ):
+            await self._render_child_from_shared_plan(
+                child=child,
+                parent=parent,
+                catalog_label=catalog_label,
+                lease=lease,
+            )
+            return
+
         from openai import AsyncOpenAI
 
         from app.modules.shorts_auto_product.track_stt import service as stt_service
@@ -911,23 +1268,92 @@ class ChildRunner:
         # ── 4. Run the pipeline ────────────────────────────────────
         try:
             try:
-                # Lazy import to avoid loading the storyboard
-                # submodule (and its enum + Protocol machinery)
-                # on the hot SAM2 path where it's not used.
-                from app.modules.shorts_auto_product.track_stt.storyboard import (
-                    build_storyboard_picker_from_settings,
-                )
-
-                storyboard_picker = build_storyboard_picker_from_settings(
+                if getattr(
                     self.settings,
-                )
-                # build other catalog names for chunk-level LLM judgment
-                other_catalog_names = [
-                    aliases[0]  # first element = llm_label 
-                    for ce_id, aliases in catalog_aliases_lookup.items()
-                    if ce_id != chosen_catalog_id and aliases
-                ]
-                result = await stt_service.assemble_stt_clip(
+                    "auto_shorts_product_v2_full_stt_enabled",
+                    False,
+                ):
+                    # ── Full-STT product explainer path ──────────────
+                    # Lazy imports — not loaded on the storyboard/SAM2 path.
+                    from app.lib.whisper_transcribe.budget import (
+                        InMemoryBudgetTracker as _FullSttBudgetTracker,
+                    )
+                    from app.modules.shorts_auto_product.track_stt.full_stt import (
+                        FullSttExplainerPicker,
+                    )
+
+                    _full_stt_picker = FullSttExplainerPicker(
+                        openai_client=openai_client,
+                        budget_tracker=_FullSttBudgetTracker(
+                            daily_budget_usd=getattr(
+                                self.settings,
+                                "auto_shorts_product_v2_full_stt_daily_budget_usd",
+                                5.0,
+                            ),
+                        ),
+                        model=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_model",
+                            "gpt-4o-mini",
+                        ),
+                        prompt_version=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_prompt_version",
+                            "v1",
+                        ),
+                        timeout_s=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_timeout_s",
+                            15.0,
+                        ),
+                        max_scenes=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_max_scenes",
+                            300,
+                        ),
+                    )
+                    result = await stt_service.assemble_full_stt_clip(
+                        org_id=parent.org_id,
+                        catalog_entry_id=chosen_catalog_id,
+                        llm_label=llm_label,
+                        spoken_aliases=list(spoken_aliases or []),
+                        os_video_id=os_video_id,
+                        target_duration_ms=target_duration_ms,
+                        title=catalog_label,
+                        os_client=os_client,
+                        openai_client=openai_client,
+                        enqueue_render=_enqueue_render,
+                        picker=_full_stt_picker,
+                        live_only=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_live_only",
+                            True,
+                        ),
+                        max_scenes=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_full_stt_max_scenes",
+                            300,
+                        ),
+                    )
+                else:
+                    # ── Storyboard / legacy path ──────────────────────
+                    # Lazy import to avoid loading the storyboard
+                    # submodule (and its enum + Protocol machinery)
+                    # on the hot SAM2 path where it's not used.
+                    from app.modules.shorts_auto_product.track_stt.storyboard import (
+                        build_storyboard_picker_from_settings,
+                    )
+
+                    storyboard_picker = build_storyboard_picker_from_settings(
+                        self.settings,
+                    )
+                    # build other catalog names for chunk-level LLM judgment
+                    other_catalog_names = [
+                        aliases[0]  # first element = llm_label
+                        for ce_id, aliases in catalog_aliases_lookup.items()
+                        if ce_id != chosen_catalog_id and aliases
+                    ]
+                    result = await stt_service.assemble_stt_clip(
                     org_id=parent.org_id,
                     catalog_entry_id=chosen_catalog_id,
                     llm_label=llm_label,
@@ -1112,6 +1538,127 @@ class ChildRunner:
             },
         )
         # PR 2: eager parent promotion (same shape as SAM2 path).
+        await self._try_promote_parent_for_child(
+            child_id=child.id, parent_id_hint=parent.id,
+        )
+
+    async def _render_child_from_shared_plan(
+        self,
+        *,
+        child: ProductScanJob,
+        parent: ProductScanJob,
+        catalog_label: str | None,
+        lease: _ChildLeaseRenewer,
+    ) -> None:
+        """Render one child from its planner-persisted ``full_stt_plan``.
+
+        The shared planner already did the OS fetch + the single LLM call
+        (``pick_many``) and wrote each child's plan. This path just builds
+        the composition and enqueues the render — no catalog load, no OS
+        fetch, no OpenAI call, no per-child budget.
+
+        A NULL / empty plan means the planner found no short was possible
+        (no transcript, live block too short) → ``_complete_no_render``,
+        the same DB shape the legacy no-render paths use. An unsupported
+        plan schema version is a defect → also no-render (never render
+        garbage).
+        """
+        from app.modules.shorts_auto_product.track_stt import service as stt_service
+        from app.modules.shorts_auto_product.track_stt.full_stt import (
+            PlanSchemaVersionError,
+            deserialize_plan,
+        )
+
+        raw_plan = child.full_stt_plan
+        if not raw_plan:
+            await self._complete_no_render(
+                child_id=child.id, reason="stt_no_plan",
+            )
+            return
+        try:
+            plan = deserialize_plan(raw_plan)
+        except PlanSchemaVersionError as e:
+            logger.warning(
+                "stt_shared_plan_version_unsupported",
+                extra={
+                    "child_id": str(child.id),
+                    "instance_id": self.instance_id,
+                    "error": str(e)[:200],
+                },
+            )
+            await self._complete_no_render(
+                child_id=child.id, reason="stt_plan_version_unsupported",
+            )
+            return
+        if not plan.segments:
+            await self._complete_no_render(
+                child_id=child.id, reason="stt_no_plan",
+            )
+            return
+
+        os_video_id = os_video_id_from_scene_id(plan.segments[0].scene_id)
+
+        # Guard against a lost lease creating an orphan render (mirrors the
+        # SAM2 + legacy STT paths: heartbeat immediately before enqueue).
+        lease.set_stage(
+            stage=SCAN_STAGE_RENDERING, progress_pct=75, progress_label="rendering",
+        )
+        if not await lease.heartbeat_now():
+            logger.warning(
+                "stt_shared_plan_render_skipped_lease_lost",
+                extra={
+                    "child_id": str(child.id),
+                    "instance_id": self.instance_id,
+                },
+            )
+            return
+
+        async def _enqueue(spec) -> UUID:
+            return await self._create_render_job(
+                org_id=parent.org_id,
+                user_id=parent.requested_by_user_id,
+                os_video_id=os_video_id,
+                title=catalog_label,
+                composition_spec=spec,
+                scan_job_id=child.id,
+            )
+
+        render_job_id = await stt_service.render_full_stt_clip(
+            plan=plan,
+            os_video_id=os_video_id,
+            title=catalog_label,
+            enqueue_render=_enqueue,
+        )
+
+        async with self.session_factory() as session:
+            repo = ProductScanJobRepository(session)
+            completed = await repo.complete_tracking(
+                job_id=child.id,
+                claimed_by=self.claimed_by,
+                cost_delta_usd=Decimal("0"),
+                render_job_id=render_job_id,
+            )
+            if completed is None:
+                logger.warning(
+                    "stt_shared_plan_complete_lease_lost",
+                    extra={
+                        "child_id": str(child.id),
+                        "instance_id": self.instance_id,
+                        "render_job_id": str(render_job_id),
+                    },
+                )
+                return
+            await session.commit()
+        logger.info(
+            "stt_shared_plan_rendered_child",
+            extra={
+                "child_id": str(child.id),
+                "render_job_id": str(render_job_id),
+                "shorts_index": child.shorts_index,
+                "segment_count": len(plan.segments),
+                "fallback_used": plan.fallback_used,
+            },
+        )
         await self._try_promote_parent_for_child(
             child_id=child.id, parent_id_hint=parent.id,
         )

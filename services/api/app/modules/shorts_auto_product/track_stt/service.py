@@ -499,3 +499,251 @@ async def assemble_stt_clip(
         matched_aliases=matched_aliases,
         fallback_used="none",
     )
+
+
+async def _load_active_full_stt_scenes(
+    *,
+    org_id: UUID,
+    catalog_entry_id: UUID,
+    os_video_id: str,
+    target_duration_ms: int,
+    os_client: Any,
+    index_alias: str,
+    live_only: bool,
+    max_scenes: int,
+) -> list[Any]:
+    """Fetch + live-filter + flatten + temporally cap the transcript scenes.
+
+    Shared by ``assemble_full_stt_clip`` (legacy per-child) and
+    ``plan_full_stt_clips`` (shared planner) so scene loading has ONE owner.
+    Returns the capped ``list[FullSttScene]`` the picker consumes.
+
+    Raises:
+        TranscriptUnavailableError: every fetched scene has empty text.
+        LiveBlockTooShortError: live_only and live-block duration < target.
+    """
+    from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
+        select_scenes_for_prompt,
+    )
+    from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
+
+    # ---- 0. Fetch all scenes (one round trip for both live-block
+    #         partitioning and transcript building) ----
+    raw_scenes = await _fetch_scenes_for_segmentation(
+        os_client=os_client,
+        index_alias=index_alias,
+        org_id=org_id,
+        video_id=os_video_id,
+    )
+
+    # ---- 0b. Live-block segmentation (optional) ----
+    scene_id_allowlist: frozenset[str] | None = None
+    if live_only:
+        blocks = partition_live_blocks(raw_scenes)
+        summary = summarize(raw_scenes, blocks)
+        logger.info(
+            "full_stt_live_block_partition",
+            extra={
+                "org_id": str(org_id),
+                "catalog_entry_id": str(catalog_entry_id),
+                "video_id": os_video_id,
+                "total_scenes": summary.total_scenes,
+                "live_scenes": summary.live_scenes,
+                "excluded_scenes": summary.excluded_scenes,
+                "live_block_count": summary.live_block_count,
+                "live_total_ms": summary.live_total_ms,
+                "exclusion_pct": round(summary.exclusion_pct, 2),
+            },
+        )
+        if summary.live_total_ms < target_duration_ms:
+            raise LiveBlockTooShortError(
+                f"video {os_video_id} has only {summary.live_total_ms}ms of "
+                f"host commentary; requested clip is {target_duration_ms}ms"
+            )
+        scene_id_allowlist = scene_ids_in_live_blocks(blocks)
+
+    # ---- 1. Build FullSttScene list ----
+    all_scenes: list[FullSttScene] = []
+    for hit in raw_scenes:
+        sid = hit.get("scene_id", "")
+        if not sid:
+            continue
+        if scene_id_allowlist is not None and sid not in scene_id_allowlist:
+            continue
+        text = hit.get("transcript_raw") or hit.get("speaker_transcript") or ""
+        all_scenes.append(
+            FullSttScene(
+                scene_id=sid,
+                start_ms=int(hit.get("start_ms", 0)),
+                end_ms=int(hit.get("end_ms", 0)),
+                text=text,
+            )
+        )
+
+    all_scenes.sort(key=lambda s: s.start_ms)
+
+    if not any(s.text for s in all_scenes):
+        raise TranscriptUnavailableError(
+            f"video {os_video_id} has no transcript text in any scene "
+            f"(live_only={live_only})"
+        )
+
+    # ---- 2. Temporal-coverage cap ----
+    active_scenes = select_scenes_for_prompt(all_scenes, max_scenes=max_scenes)
+
+    logger.info(
+        "full_stt_pipeline_scenes_ready",
+        extra={
+            "org_id": str(org_id),
+            "catalog_entry_id": str(catalog_entry_id),
+            "video_id": os_video_id,
+            "total_scenes": len(all_scenes),
+            "active_scenes": len(active_scenes),
+            "live_only": live_only,
+            "max_scenes": max_scenes,
+        },
+    )
+    return active_scenes
+
+
+async def assemble_full_stt_clip(
+    *,
+    org_id: UUID,
+    catalog_entry_id: UUID,
+    llm_label: str,
+    spoken_aliases: list[str],
+    os_video_id: str,
+    target_duration_ms: int,
+    title: str | None,
+    os_client: Any,
+    openai_client: Any,
+    enqueue_render: RenderEnqueuer,
+    picker: Any,  # FullSttExplainerPicker — typed as Any to avoid eager import
+    index_alias: str = "heimdex_scenes",
+    live_only: bool = True,
+    max_scenes: int = 300,
+) -> SttClipResult:
+    """Full-STT product explainer pipeline (legacy per-child path).
+
+    Single LLM call over the complete transcript; no mention extraction,
+    chunk scoring, or slot structure. Used when the shared-plan flag is OFF.
+
+    Raises:
+        TranscriptUnavailableError: all fetched scenes have empty transcript text.
+        LiveBlockTooShortError: live_only=True and live-block duration < target.
+    """
+    active_scenes = await _load_active_full_stt_scenes(
+        org_id=org_id,
+        catalog_entry_id=catalog_entry_id,
+        os_video_id=os_video_id,
+        target_duration_ms=target_duration_ms,
+        os_client=os_client,
+        index_alias=index_alias,
+        live_only=live_only,
+        max_scenes=max_scenes,
+    )
+
+    # ---- 3. LLM pick ----
+    plan = await picker.pick(
+        scenes=active_scenes,
+        target_duration_ms=target_duration_ms,
+        llm_label=llm_label,
+        spoken_aliases=spoken_aliases,
+        org_id=org_id,
+    )
+
+    # ---- 4. Build CompositionSpec ----
+    spec = composition_builder.build_composition_spec_from_full_stt(
+        plan=plan,
+        os_video_id=os_video_id,
+        title=title,
+    )
+
+    # ---- 5. Enqueue render ----
+    render_job_id = await enqueue_render(spec)
+
+    logger.info(
+        "full_stt_pipeline_completed",
+        extra={
+            "org_id": str(org_id),
+            "catalog_entry_id": str(catalog_entry_id),
+            "video_id": os_video_id,
+            "render_job_id": str(render_job_id),
+            "segment_count": len(plan.segments),
+            "total_duration_ms": plan.total_duration_ms,
+            "fallback_used": plan.fallback_used,
+        },
+    )
+
+    return SttClipResult(
+        render_job_id=render_job_id,
+        selected_chunks=[],
+        mentioned_scene_count=len(active_scenes),
+        matched_aliases=[],
+        fallback_used="none",
+        full_stt_plan=plan,
+    )
+
+
+async def plan_full_stt_clips(
+    *,
+    org_id: UUID,
+    catalog_entry_id: UUID,
+    llm_label: str,
+    spoken_aliases: list[str],
+    os_video_id: str,
+    target_duration_ms: int,
+    os_client: Any,
+    picker: Any,  # FullSttExplainerPicker — typed as Any to avoid eager import
+    n: int,
+    index_alias: str = "heimdex_scenes",
+    live_only: bool = True,
+    max_scenes: int = 300,
+) -> list[Any]:
+    """Planner side of the shared-plan path: fetch transcript once, then ONE
+    LLM call returning ``n`` distinct ``FullSttClipPlan``.
+
+    No composition, no render — that's ``render_full_stt_clip`` per child.
+    ``picker.pick_many`` never raises (returns positional fallbacks on any
+    defect), so the only exceptions here come from scene loading.
+
+    Raises:
+        TranscriptUnavailableError: all fetched scenes have empty transcript text.
+        LiveBlockTooShortError: live_only=True and live-block duration < target.
+    """
+    active_scenes = await _load_active_full_stt_scenes(
+        org_id=org_id,
+        catalog_entry_id=catalog_entry_id,
+        os_video_id=os_video_id,
+        target_duration_ms=target_duration_ms,
+        os_client=os_client,
+        index_alias=index_alias,
+        live_only=live_only,
+        max_scenes=max_scenes,
+    )
+    return await picker.pick_many(
+        scenes=active_scenes,
+        target_duration_ms=target_duration_ms,
+        llm_label=llm_label,
+        spoken_aliases=spoken_aliases,
+        n=n,
+        org_id=org_id,
+    )
+
+
+async def render_full_stt_clip(
+    *,
+    plan: Any,  # FullSttClipPlan
+    os_video_id: str,
+    title: str | None,
+    enqueue_render: RenderEnqueuer,
+) -> UUID:
+    """Child side of the shared-plan path: build the composition from a
+    pre-computed plan and enqueue the render. No OS fetch, no LLM call.
+    """
+    spec = composition_builder.build_composition_spec_from_full_stt(
+        plan=plan,
+        os_video_id=os_video_id,
+        title=title,
+    )
+    return await enqueue_render(spec)

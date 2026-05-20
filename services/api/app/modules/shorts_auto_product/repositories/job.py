@@ -22,6 +22,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.modules.shorts_auto_product.models import (
     ACTIVE_SCAN_STAGES,
@@ -758,6 +759,7 @@ class ProductScanJobRepository:
         intent: str,
         settings_hash: str,
         catalog_entry_id: UUID | None = None,
+        full_stt_shared_plan_pending: bool = False,
     ) -> ProductScanJob:
         """Insert a wizard parent row.
 
@@ -788,6 +790,7 @@ class ProductScanJobRepository:
             language=language,
             intent=intent,
             settings_hash=settings_hash,
+            full_stt_shared_plan_pending=full_stt_shared_plan_pending,
         )
         self.session.add(job)
         await self.session.flush()
@@ -934,11 +937,27 @@ class ProductScanJobRepository:
             .where(
                 ProductScanJob.mode == SCAN_MODE_RENDER_CHILD,
                 ProductScanJob.stage == SCAN_STAGE_QUEUED,
+                ProductScanJob.parent_job_id.notin_(
+                    self._shared_plan_pending_parent_ids()
+                ),
             )
             .order_by(ProductScanJob.created_at.asc())
             .limit(limit)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    @staticmethod
+    def _shared_plan_pending_parent_ids():
+        """Subquery: ids of scan_order parents still awaiting the shared
+        planner. Render children of these parents are NOT yet claimable —
+        their ``full_stt_plan`` hasn't been written. An aliased entity
+        keeps this an uncorrelated subselect over the same table.
+        """
+        parent = aliased(ProductScanJob)
+        return select(parent.id).where(
+            parent.mode == SCAN_MODE_SCAN_ORDER,
+            parent.full_stt_shared_plan_pending.is_(True),
+        )
 
     async def find_claimable_render_children(
         self,
@@ -989,11 +1008,142 @@ class ProductScanJobRepository:
                         ProductScanJob.lease_expires_at < cutoff,
                     ),
                 ),
+                # Shared-planner gate: skip children whose parent hasn't been
+                # planned yet (full_stt_plan not written). Non-shared-plan
+                # parents are never pending, so SAM2 / storyboard / flag-off
+                # children match trivially.
+                ProductScanJob.parent_job_id.notin_(
+                    self._shared_plan_pending_parent_ids()
+                ),
             )
             .order_by(ProductScanJob.created_at.asc())
             .limit(limit)
         )
         return list((await self.session.execute(stmt)).scalars().all())
+
+    # ---------- Full-STT shared planner (migration 060) ----------
+
+    async def find_claimable_planning_parents(
+        self,
+        *,
+        limit: int,
+        grace_seconds: int = LEASE_RECLAIM_GRACE_SECONDS,
+    ) -> list[UUID]:
+        """Runner planner poll: scan_order parents awaiting the shared
+        plan (``full_stt_shared_plan_pending = true``) that are unclaimed
+        or whose planning lease has expired past ``grace_seconds``.
+
+        Terminal parents (cancelled/failed mid-flight) are excluded so we
+        never plan a dead scan. Id-only, FIFO by created_at; the atomic
+        ``claim_planning_parent`` is the race resolver between replicas.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=grace_seconds)
+        stmt = (
+            select(ProductScanJob.id)
+            .where(
+                ProductScanJob.mode == SCAN_MODE_SCAN_ORDER,
+                ProductScanJob.full_stt_shared_plan_pending.is_(True),
+                ProductScanJob.stage.notin_(list(TERMINAL_SCAN_STAGES)),
+                or_(
+                    ProductScanJob.claimed_by.is_(None),
+                    ProductScanJob.lease_expires_at < cutoff,
+                ),
+            )
+            .order_by(ProductScanJob.created_at.asc())
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def claim_planning_parent(
+        self,
+        *,
+        job_id: UUID,
+        claimed_by: str,
+        lease_seconds: int,
+        grace_seconds: int = LEASE_RECLAIM_GRACE_SECONDS,
+    ) -> ProductScanJob | None:
+        """Atomically claim a scan_order parent for shared planning.
+
+        Does NOT change ``stage`` — the parent stays in its pre-fanout
+        stage; the marker ``full_stt_shared_plan_pending`` is the gate, not
+        the stage. Guarded on still-pending + (unclaimed OR lease expired)
+        so only one planner wins. Returns the claimed row, or ``None`` on
+        race-loss / already-planned / terminal.
+        """
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=grace_seconds)
+        lease_expires = now + timedelta(seconds=lease_seconds)
+        stmt = (
+            update(ProductScanJob)
+            .where(
+                ProductScanJob.id == job_id,
+                ProductScanJob.mode == SCAN_MODE_SCAN_ORDER,
+                ProductScanJob.full_stt_shared_plan_pending.is_(True),
+                ProductScanJob.stage.notin_(list(TERMINAL_SCAN_STAGES)),
+                or_(
+                    ProductScanJob.claimed_by.is_(None),
+                    ProductScanJob.lease_expires_at < cutoff,
+                ),
+            )
+            .values(
+                claimed_by=claimed_by,
+                claimed_at=now,
+                lease_expires_at=lease_expires,
+                last_heartbeat_at=now,
+            )
+            .returning(ProductScanJob)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def set_child_full_stt_plan(
+        self,
+        *,
+        child_id: UUID,
+        plan: dict[str, Any],
+    ) -> None:
+        """Persist one render child's serialized FullSttClipPlan.
+
+        Written by the planner before it clears the parent marker; read by
+        the runner's child path instead of calling the picker.
+        """
+        stmt = (
+            update(ProductScanJob)
+            .where(
+                ProductScanJob.id == child_id,
+                ProductScanJob.mode == SCAN_MODE_RENDER_CHILD,
+            )
+            .values(full_stt_plan=plan)
+        )
+        await self.session.execute(stmt)
+
+    async def clear_shared_plan_pending(
+        self,
+        *,
+        job_id: UUID,
+        claimed_by: str,
+    ) -> ProductScanJob | None:
+        """Clear a parent's planning marker and release the planning lease.
+
+        MUST be called by the planner after writing all child plans —
+        success OR failure — so children never stay locked. Guarded on
+        ``claimed_by`` so a planner whose lease expired (and was re-claimed
+        by another) does not clobber the new owner's state.
+        """
+        stmt = (
+            update(ProductScanJob)
+            .where(
+                ProductScanJob.id == job_id,
+                ProductScanJob.mode == SCAN_MODE_SCAN_ORDER,
+                ProductScanJob.claimed_by == claimed_by,
+            )
+            .values(
+                full_stt_shared_plan_pending=False,
+                claimed_by=None,
+                lease_expires_at=None,
+            )
+            .returning(ProductScanJob)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def cancel_scan_order(
         self,

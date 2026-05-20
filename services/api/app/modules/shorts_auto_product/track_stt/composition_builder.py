@@ -41,6 +41,11 @@ after a 2-week soak.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttClipPlan
+
 from heimdex_media_contracts.composition.schemas import (
     CompositionSpec,
     SceneClipSpec,
@@ -460,3 +465,72 @@ def _attach_scene_id(
         best_scene_id = segments[0].scenes[0].scene_id
 
     return best_scene_id
+
+
+def build_composition_spec_from_full_stt(
+    *,
+    plan: "FullSttClipPlan",
+    os_video_id: str,
+    title: str | None = None,
+) -> CompositionSpec:
+    """Build a CompositionSpec directly from a FullSttClipPlan.
+
+    Each FullSttSegment already carries scene_id + exact scene
+    boundaries from the OS fetch, so no scene-boundary splitting is
+    needed. One SceneClipSpec per segment.
+
+    Whisper captions run post-render, same as the storyboard path —
+    this builder emits empty subtitles.
+
+    Raises:
+        ValueError: plan is empty (no segments).
+    """
+    if plan.is_empty:
+        raise ValueError(
+            "build_composition_spec_from_full_stt requires a non-empty FullSttClipPlan"
+        )
+
+    timeline_cursor_ms = 0
+    clips: list[SceneClipSpec] = []
+
+    for segment in plan.segments:
+        duration_ms = segment.source_end_ms - segment.source_start_ms
+        if duration_ms <= 0:
+            logger.warning(
+                "full_stt_composition_zero_duration_skipped",
+                scene_id=segment.scene_id,
+                source_start_ms=segment.source_start_ms,
+                source_end_ms=segment.source_end_ms,
+            )
+            continue
+        clips.append(
+            SceneClipSpec(
+                scene_id=segment.scene_id,
+                video_id=os_video_id,
+                source_type="gdrive",
+                start_ms=segment.source_start_ms,
+                end_ms=segment.source_end_ms,
+                timeline_start_ms=timeline_cursor_ms,
+                volume=1.0,
+            )
+        )
+        timeline_cursor_ms += duration_ms
+
+    if not clips:
+        raise ValueError(
+            "build_composition_spec_from_full_stt produced 0 clips "
+            f"from {len(plan.segments)} segments (all zero-duration?)"
+        )
+
+    logger.info(
+        "full_stt_composition_built",
+        clip_count=len(clips),
+        total_duration_ms=timeline_cursor_ms,
+        fallback_used=plan.fallback_used,
+    )
+
+    return CompositionSpec(
+        scene_clips=clips,
+        subtitles=[],
+        title=title,
+    )

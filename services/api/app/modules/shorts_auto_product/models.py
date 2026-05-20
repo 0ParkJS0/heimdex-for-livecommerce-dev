@@ -37,7 +37,7 @@ from sqlalchemy import Date as SADate
 from sqlalchemy import (
     Enum as SAEnum,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, REAL
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, REAL
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -513,6 +513,23 @@ class ProductScanJob(Base, UUIDMixin):
     # Drives idempotency lookups via ix_product_scan_jobs_settings_hash.
     # Required when mode='scan_order', NULL everywhere else.
     settings_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ---------- Full-STT shared planner (migration 060) ----------
+    #
+    # Shared planner: one LLM call → N distinct shorts, persisted per child.
+    #   mode='render_child' → full_stt_plan holds this child's serialized
+    #     FullSttClipPlan (see track_stt/full_stt/serialization.py); read by
+    #     the runner instead of calling the picker.
+    #   mode='scan_order'   → full_stt_shared_plan_pending gates child pickup.
+    #     Set true at fan-out when the shared-plan flag is on; the planner
+    #     clears it once all N plans are persisted. find_claimable_render_children
+    #     excludes children whose parent is still pending.
+    full_stt_plan: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True,
+    )
+    full_stt_shared_plan_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
