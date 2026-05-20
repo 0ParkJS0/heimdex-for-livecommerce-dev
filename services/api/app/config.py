@@ -720,6 +720,13 @@ class Settings(BaseSettings):
     # talking) before passing to the LLM.  Default True — reduces token
     # count and improves pick quality by excluding silent b-roll.
     auto_shorts_product_v2_full_stt_live_only: bool = True
+    # When True, one shared LLM call per scan (per product) returns N
+    # *distinct* shorts, planned once and persisted per child — instead of
+    # N independent per-child calls that rate-limit each other and (being
+    # deterministic) produce identical shorts. Default False; flip per-env
+    # after staging smoke. See
+    # ``.claude/plans/full-stt-shared-planner-2026-05-20.md``.
+    auto_shorts_product_v2_full_stt_shared_plan_enabled: bool = False
 
     # --- Auto-shorts: Phase 1 live-only segmentation filter ---
     # When True, the STT pipeline partitions a video's scenes into

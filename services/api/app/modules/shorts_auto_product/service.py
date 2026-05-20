@@ -772,6 +772,20 @@ class ProductScanService:
             selected_ids[0] if len(selected_ids) == 1 else None
         )
 
+        # Full-STT shared planner: when the STT track + shared-plan flag are
+        # both on, mark the parent so the runner's planner poll claims it and
+        # makes ONE LLM call → N distinct shorts. The marker also gates the
+        # children (find_claimable_render_children) until the plans are
+        # persisted. Off → children are immediately claimable (legacy path).
+        _track_mode = getattr(
+            self.settings, "auto_shorts_product_v2_track_mode", "sam2",
+        )
+        _shared_plan_pending = _track_mode == "stt" and getattr(
+            self.settings,
+            "auto_shorts_product_v2_full_stt_shared_plan_enabled",
+            False,
+        )
+
         parent = await self.job_repo.create_scan_order_parent(
             org_id=org_id,
             video_id=video_id,
@@ -785,6 +799,7 @@ class ProductScanService:
             intent=body.intent,
             settings_hash=settings_hash,
             catalog_entry_id=parent_legacy_pick,
+            full_stt_shared_plan_pending=_shared_plan_pending,
         )
         await self.session.flush()
 

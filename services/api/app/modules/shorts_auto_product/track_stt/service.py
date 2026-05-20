@@ -501,42 +501,31 @@ async def assemble_stt_clip(
     )
 
 
-async def assemble_full_stt_clip(
+async def _load_active_full_stt_scenes(
     *,
     org_id: UUID,
     catalog_entry_id: UUID,
-    llm_label: str,
-    spoken_aliases: list[str],
     os_video_id: str,
     target_duration_ms: int,
-    title: str | None,
     os_client: Any,
-    openai_client: Any,
-    enqueue_render: RenderEnqueuer,
-    picker: Any,  # FullSttExplainerPicker — typed as Any to avoid eager import
-    index_alias: str = "heimdex_scenes",
-    live_only: bool = True,
-    max_scenes: int = 300,
-) -> SttClipResult:
-    """Full-STT product explainer pipeline. Single LLM call over the
-    complete transcript; no mention extraction, chunk scoring, or slot structure.
+    index_alias: str,
+    live_only: bool,
+    max_scenes: int,
+) -> list[Any]:
+    """Fetch + live-filter + flatten + temporally cap the transcript scenes.
 
-    Pipeline:
-        0. Live-block segmentation (optional, default ON for full_stt path)
-        1. Fetch all scenes STT + build list[FullSttScene]
-        2. Temporal-coverage cap at max_scenes
-        3. picker.pick() → FullSttClipPlan
-        4. build_composition_spec_from_full_stt() → CompositionSpec
-        5. enqueue_render() → render_job_id
+    Shared by ``assemble_full_stt_clip`` (legacy per-child) and
+    ``plan_full_stt_clips`` (shared planner) so scene loading has ONE owner.
+    Returns the capped ``list[FullSttScene]`` the picker consumes.
 
     Raises:
-        TranscriptUnavailableError: all fetched scenes have empty transcript text.
-        LiveBlockTooShortError: live_only=True and live-block duration < target.
+        TranscriptUnavailableError: every fetched scene has empty text.
+        LiveBlockTooShortError: live_only and live-block duration < target.
     """
-    from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
     from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
         select_scenes_for_prompt,
     )
+    from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
 
     # ---- 0. Fetch all scenes (one round trip for both live-block
     #         partitioning and transcript building) ----
@@ -574,7 +563,6 @@ async def assemble_full_stt_clip(
         scene_id_allowlist = scene_ids_in_live_blocks(blocks)
 
     # ---- 1. Build FullSttScene list ----
-
     all_scenes: list[FullSttScene] = []
     for hit in raw_scenes:
         sid = hit.get("scene_id", "")
@@ -614,6 +602,45 @@ async def assemble_full_stt_clip(
             "live_only": live_only,
             "max_scenes": max_scenes,
         },
+    )
+    return active_scenes
+
+
+async def assemble_full_stt_clip(
+    *,
+    org_id: UUID,
+    catalog_entry_id: UUID,
+    llm_label: str,
+    spoken_aliases: list[str],
+    os_video_id: str,
+    target_duration_ms: int,
+    title: str | None,
+    os_client: Any,
+    openai_client: Any,
+    enqueue_render: RenderEnqueuer,
+    picker: Any,  # FullSttExplainerPicker — typed as Any to avoid eager import
+    index_alias: str = "heimdex_scenes",
+    live_only: bool = True,
+    max_scenes: int = 300,
+) -> SttClipResult:
+    """Full-STT product explainer pipeline (legacy per-child path).
+
+    Single LLM call over the complete transcript; no mention extraction,
+    chunk scoring, or slot structure. Used when the shared-plan flag is OFF.
+
+    Raises:
+        TranscriptUnavailableError: all fetched scenes have empty transcript text.
+        LiveBlockTooShortError: live_only=True and live-block duration < target.
+    """
+    active_scenes = await _load_active_full_stt_scenes(
+        org_id=org_id,
+        catalog_entry_id=catalog_entry_id,
+        os_video_id=os_video_id,
+        target_duration_ms=target_duration_ms,
+        os_client=os_client,
+        index_alias=index_alias,
+        live_only=live_only,
+        max_scenes=max_scenes,
     )
 
     # ---- 3. LLM pick ----
@@ -656,3 +683,67 @@ async def assemble_full_stt_clip(
         fallback_used="none",
         full_stt_plan=plan,
     )
+
+
+async def plan_full_stt_clips(
+    *,
+    org_id: UUID,
+    catalog_entry_id: UUID,
+    llm_label: str,
+    spoken_aliases: list[str],
+    os_video_id: str,
+    target_duration_ms: int,
+    os_client: Any,
+    picker: Any,  # FullSttExplainerPicker — typed as Any to avoid eager import
+    n: int,
+    index_alias: str = "heimdex_scenes",
+    live_only: bool = True,
+    max_scenes: int = 300,
+) -> list[Any]:
+    """Planner side of the shared-plan path: fetch transcript once, then ONE
+    LLM call returning ``n`` distinct ``FullSttClipPlan``.
+
+    No composition, no render — that's ``render_full_stt_clip`` per child.
+    ``picker.pick_many`` never raises (returns positional fallbacks on any
+    defect), so the only exceptions here come from scene loading.
+
+    Raises:
+        TranscriptUnavailableError: all fetched scenes have empty transcript text.
+        LiveBlockTooShortError: live_only=True and live-block duration < target.
+    """
+    active_scenes = await _load_active_full_stt_scenes(
+        org_id=org_id,
+        catalog_entry_id=catalog_entry_id,
+        os_video_id=os_video_id,
+        target_duration_ms=target_duration_ms,
+        os_client=os_client,
+        index_alias=index_alias,
+        live_only=live_only,
+        max_scenes=max_scenes,
+    )
+    return await picker.pick_many(
+        scenes=active_scenes,
+        target_duration_ms=target_duration_ms,
+        llm_label=llm_label,
+        spoken_aliases=spoken_aliases,
+        n=n,
+        org_id=org_id,
+    )
+
+
+async def render_full_stt_clip(
+    *,
+    plan: Any,  # FullSttClipPlan
+    os_video_id: str,
+    title: str | None,
+    enqueue_render: RenderEnqueuer,
+) -> UUID:
+    """Child side of the shared-plan path: build the composition from a
+    pre-computed plan and enqueue the render. No OS fetch, no LLM call.
+    """
+    spec = composition_builder.build_composition_spec_from_full_stt(
+        plan=plan,
+        os_video_id=os_video_id,
+        title=title,
+    )
+    return await enqueue_render(spec)

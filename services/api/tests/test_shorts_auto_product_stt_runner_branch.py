@@ -14,11 +14,9 @@ MagicMock'd; `assemble_stt_clip` is monkeypatched.
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
-from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -29,7 +27,6 @@ from app.modules.shorts_auto_product.track_stt.errors import (
     TranscriptUnavailableError,
 )
 from app.modules.shorts_auto_product.track_stt.models import SttClipResult
-
 
 # ---------- helpers ----------
 
@@ -57,6 +54,9 @@ def _settings_stub(*, track_mode: str = "stt"):
     # bare MagicMock returns truthy, routing to assemble_full_stt_clip
     # which the legacy STT path tests don't cover.
     s.auto_shorts_product_v2_full_stt_enabled = False
+    # Shared-planner path default-off — same MagicMock-truthy trap; a bare
+    # mock would route _process_child_stt into _render_child_from_shared_plan.
+    s.auto_shorts_product_v2_full_stt_shared_plan_enabled = False
     s.openai_api_key = "sk-test"
     s.opensearch_url = "http://localhost:9200"
     s.opensearch_index_prefix = "heimdex"

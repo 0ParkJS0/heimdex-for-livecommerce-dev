@@ -759,6 +759,7 @@ class ProductScanJobRepository:
         intent: str,
         settings_hash: str,
         catalog_entry_id: UUID | None = None,
+        full_stt_shared_plan_pending: bool = False,
     ) -> ProductScanJob:
         """Insert a wizard parent row.
 
@@ -789,6 +790,7 @@ class ProductScanJobRepository:
             language=language,
             intent=intent,
             settings_hash=settings_hash,
+            full_stt_shared_plan_pending=full_stt_shared_plan_pending,
         )
         self.session.add(job)
         await self.session.flush()
