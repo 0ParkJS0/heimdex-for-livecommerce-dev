@@ -18,13 +18,13 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from app.modules.shorts_auto_product.repositories.catalog import (
+    ProductCatalogRepository,
+)
 from app.modules.shorts_auto_product.repositories.job import (
     ProductScanJobRepository,
 )
 
-from app.modules.shorts_auto_product.repositories.catalog import (
-    ProductCatalogRepository,
-)
 
 @pytest.fixture
 def session():
@@ -756,3 +756,129 @@ class TestPromoteLatestEnumerationDoneStt:
         sql = _compile(session.execute.await_args.args[0])
         assert str(org_id) in sql
         assert str(video_id) in sql
+
+
+# ---------- Full-STT shared planner (migration 060) ----------
+
+
+def _make_scalars_result(values: list) -> MagicMock:
+    result = MagicMock()
+    result.scalars = MagicMock(
+        return_value=MagicMock(all=MagicMock(return_value=values)),
+    )
+    return result
+
+
+class TestSharedPlanChildGate:
+    """Render children whose parent is still awaiting the shared plan must
+    NOT be claimable — the gate is a NOT IN over pending scan_order parents.
+    Both poll queries (self-heal + legacy shim) carry it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_self_heal_poll_excludes_pending_parents(self, repo, session):
+        session.execute = AsyncMock(return_value=_make_scalars_result([]))
+        await repo.find_claimable_render_children(limit=10)
+        sql = _compile(session.execute.await_args.args[0])
+        assert "full_stt_shared_plan_pending" in sql
+        assert "NOT IN" in sql.upper()
+        # original predicate still intact
+        assert "'render_child'" in sql
+        assert "'queued'" in sql
+
+    @pytest.mark.asyncio
+    async def test_legacy_queued_poll_excludes_pending_parents(self, repo, session):
+        session.execute = AsyncMock(return_value=_make_scalars_result([]))
+        await repo.find_queued_render_children(limit=10)
+        sql = _compile(session.execute.await_args.args[0])
+        assert "full_stt_shared_plan_pending" in sql
+        assert "NOT IN" in sql.upper()
+
+
+class TestFindClaimablePlanningParents:
+    @pytest.mark.asyncio
+    async def test_filters_pending_scan_order_claimable(self, repo, session):
+        session.execute = AsyncMock(return_value=_make_scalars_result([]))
+        await repo.find_claimable_planning_parents(limit=5)
+        sql = _compile(session.execute.await_args.args[0])
+        assert "full_stt_shared_plan_pending" in sql
+        assert "'scan_order'" in sql
+        # unclaimed OR expired-lease
+        assert "claimed_by" in sql
+        assert "lease_expires_at" in sql
+        # terminal parents excluded
+        assert "'failed'" in sql or "'cancelled'" in sql
+
+    @pytest.mark.asyncio
+    async def test_returns_id_list(self, repo, session):
+        ids = [uuid4(), uuid4()]
+        session.execute = AsyncMock(return_value=_make_scalars_result(ids))
+        out = await repo.find_claimable_planning_parents(limit=5)
+        assert out == ids
+
+
+class TestClaimPlanningParent:
+    @pytest.mark.asyncio
+    async def test_update_guards_pending_and_claimability(self, repo, session):
+        session.execute = AsyncMock(return_value=_make_update_result(None))
+        out = await repo.claim_planning_parent(
+            job_id=uuid4(), claimed_by="api-1", lease_seconds=300,
+        )
+        assert out is None
+        sql = _compile(session.execute.await_args.args[0])
+        assert sql.strip().upper().startswith("UPDATE PRODUCT_SCAN_JOBS")
+        assert "full_stt_shared_plan_pending" in sql
+        assert "'scan_order'" in sql
+        assert "claimed_by" in sql
+
+    @pytest.mark.asyncio
+    async def test_does_not_change_stage(self, repo, session):
+        session.execute = AsyncMock(return_value=_make_update_result(None))
+        await repo.claim_planning_parent(
+            job_id=uuid4(), claimed_by="api-1", lease_seconds=300,
+        )
+        sql = _compile(session.execute.await_args.args[0])
+        set_clause = sql.split("WHERE")[0]
+        # planning claim must NOT advance the parent stage
+        assert "stage" not in set_clause
+
+    @pytest.mark.asyncio
+    async def test_returns_claimed_row_on_success(self, repo, session):
+        row = MagicMock()
+        session.execute = AsyncMock(return_value=_make_update_result(row))
+        out = await repo.claim_planning_parent(
+            job_id=uuid4(), claimed_by="api-1", lease_seconds=300,
+        )
+        assert out is row
+
+
+class TestSetChildFullSttPlan:
+    @pytest.mark.asyncio
+    async def test_updates_child_plan_column(self, repo, session):
+        session.execute = AsyncMock()
+        await repo.set_child_full_stt_plan(
+            child_id=uuid4(), plan={"v": 1, "segments": []},
+        )
+        # str() avoids JSONB literal-bind rendering issues
+        sql = str(session.execute.await_args.args[0])
+        assert "UPDATE product_scan_jobs" in sql
+        assert "full_stt_plan" in sql
+
+
+class TestClearSharedPlanPending:
+    @pytest.mark.asyncio
+    async def test_clears_marker_and_releases_lease_guarded_on_claimer(
+        self, repo, session,
+    ):
+        session.execute = AsyncMock(return_value=_make_update_result(None))
+        await repo.clear_shared_plan_pending(job_id=uuid4(), claimed_by="api-1")
+        sql = _compile(session.execute.await_args.args[0])
+        assert sql.strip().upper().startswith("UPDATE PRODUCT_SCAN_JOBS")
+        set_clause = sql.split("WHERE")[0]
+        # marker cleared + lease released
+        assert "full_stt_shared_plan_pending" in set_clause
+        assert "claimed_by" in set_clause
+        # guarded on the claiming planner
+        where_clause = sql.split("WHERE", 1)[1]
+        assert "claimed_by" in where_clause
+        assert "'api-1'" in where_clause
