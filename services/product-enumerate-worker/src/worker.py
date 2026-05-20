@@ -66,26 +66,39 @@ def _warm_siglip2(settings: WorkerSettings) -> None:
 
 
 def _load_owlv2(settings: WorkerSettings):
-    """Load OWLv2 processor + model onto the inference device.
+    """Load OWLv2 processor + fp32 ONNX session onto the inference device.
 
-    Returns ``(processor, model, device)``. Run once at boot so per-job
-    dispatch doesn't pay the ~600MB weight-load cost on every message.
+    Returns ``(processor, session, device)``. Run once at boot so per-job
+    dispatch doesn't pay the weight-load cost on every message.
 
     Device selection mirrors ``_gpu_available``: CUDA if available,
     otherwise CPU (only reachable when ``enumerate_allow_cpu=true``).
+    The model is the onnx-community fp32 export driven via raw
+    ``onnxruntime.InferenceSession`` — optimum does not yet support
+    OWLv2 (huggingface/optimum#1721), so we work one layer below
+    ``ORTModelForXxx``. Materially faster than the transformers/PyTorch
+    checkpoint on per-keyframe inference.
     """
+    import onnxruntime as ort
     import torch
-    from transformers import Owlv2ForObjectDetection, Owlv2Processor
+    from huggingface_hub import hf_hub_download
+    from transformers import Owlv2Processor
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
+    gpu = torch.cuda.is_available()
+    providers = (
+        ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if gpu
+        else ["CPUExecutionProvider"]
     )
-    processor = Owlv2Processor.from_pretrained(settings.owlv2_model_id)
-    model = Owlv2ForObjectDetection.from_pretrained(
-        settings.owlv2_model_id
-    ).to(device)
-    model.eval()
-    return processor, model, device
+    device = torch.device("cuda" if gpu else "cpu")
+
+    processor = Owlv2Processor.from_pretrained(settings.owlv2_processor_id)
+    onnx_path = hf_hub_download(
+        repo_id=settings.owlv2_model_id,
+        filename=settings.owlv2_onnx_file,
+    )
+    session = ort.InferenceSession(onnx_path, providers=providers)
+    return processor, session, device
 
 
 def _make_callback(settings: WorkerSettings, vlm_client: OpenAIVlmClient):
@@ -151,14 +164,15 @@ def main() -> None:
     _warm_siglip2(settings)
     log.info("siglip2_warmed")
 
-    owlv2_processor, owlv2_model, owlv2_device = _load_owlv2(settings)
+    owlv2_processor, owlv2_session, owlv2_device = _load_owlv2(settings)
     log.info("owlv2_warmed", device=str(owlv2_device))
 
     vlm_client = OpenAIVlmClient(
         api_key=settings.openai_api_key,
         owlv2_processor=owlv2_processor,
-        owlv2_model=owlv2_model,
+        owlv2_session=owlv2_session,
         owlv2_device=owlv2_device,
+        owlv2_model_id=settings.owlv2_model_id,
         model=settings.openai_model,
         timeout_sec=settings.openai_timeout_sec,
         max_retries=settings.openai_max_retries,

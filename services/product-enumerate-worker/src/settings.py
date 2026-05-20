@@ -72,12 +72,28 @@ class WorkerSettings(BaseSettings):
 
     # ---------- OWLv2 (open-vocab detector, stage 1) ----------
 
-    owlv2_model_id: str = "google/owlv2-base-patch16-ensemble"
+    # ONNX export of OWLv2 — fp32. The transformers/PyTorch checkpoint
+    # (google/owlv2-base-patch16-ensemble) was the per-keyframe latency
+    # bottleneck, so we switched to the onnx-community export driven via
+    # raw onnxruntime-gpu. optimum does not yet support OWLv2 (see
+    # huggingface/optimum#1721) so we go one layer below ORTModelForXxx
+    # and call onnxruntime.InferenceSession directly.
+    owlv2_model_id: str = "onnx-community/owlv2-base-patch16-ensemble-ONNX"
+    # Owlv2Processor (text tokenizer + image preprocessor) is pinned to
+    # the original google/ repo to keep preprocessing identical to the
+    # PyTorch baseline. The onnx-community repo also ships a
+    # preprocessor_config.json, but staying on google/ avoids surprise
+    # drift from a different processor revision.
+    owlv2_processor_id: str = "google/owlv2-base-patch16-ensemble"
+    # ONNX file path inside the model repo. fp32 is the safe default;
+    # model_fp16.onnx is broken with ORT 1.26's full optimization pass
+    # and the quantized variants need threshold recalibration.
+    owlv2_onnx_file: str = "onnx/model.onnx"
     # OWLv2's internal post-processor expects square padding; the
     # processor pads to 960x960, so resizing the long edge to 960 avoids
     # wasted compute on letterbox bands.
     owlv2_max_image_side: int = 960
-    owlv2_threshold: float = 0.475
+    owlv2_threshold: float = 0.45
     owlv2_nms_iou: float = 0.5
     owlv2_max_dets_per_keyframe: int = 5
     # Padding around each OWLv2 bbox when cropping for the labeling

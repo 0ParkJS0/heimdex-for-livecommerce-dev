@@ -33,6 +33,13 @@ torch==2.4.1+cu124
 torchvision==0.19.1+cu124
 transformers==5.5.4
 
+# OWLv2 ONNX runtime — we ship the onnx-community fp32 export and load
+# it via raw onnxruntime.InferenceSession (optimum does not yet support
+# OWLv2: huggingface/optimum#1721). Matches the onnxruntime-gpu pin
+# used by drive-blur-worker so the two GPU workers run one ORT version.
+# The fp32 file is fetched via huggingface_hub (already pinned above).
+onnxruntime-gpu==1.24.4
+
 # Heimdex shared libs:
 # * worker-sdk: pinned to PyPI version, installed by Dockerfile BEFORE
 #   this requirements file.
