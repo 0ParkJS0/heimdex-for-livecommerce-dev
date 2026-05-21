@@ -44,10 +44,6 @@ interface Props {
 }
 
 const POLL_INTERVAL_MS = 5_000;
-// Enumeration on a typical 5–10 min livecommerce VOD takes 30–90s on
-// the warm Aircloud container; 3 min ceiling covers cold-start +
-// HuggingFace download on a fresh container without waiting forever.
-const POLL_TIMEOUT_MS = 180_000;
 
 interface ParsedCriteria {
   length_seconds: number;
@@ -113,7 +109,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
 
   const [entries, setEntries] = useState<CatalogProductSummary[]>([]);
   const [pollState, setPollState] = useState<
-    "enumerating" | "ready" | "no_products" | "timeout" | "error"
+    "enumerating" | "ready" | "no_products" | "error"
   >("enumerating");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // PR 3 of multi-product wizard: multi-select state. See
@@ -156,9 +152,9 @@ export function WizardStepSelectProduct({ videoId }: Props) {
           return; // stop polling
         }
         // scan_status drives the empty-products decisions:
-        //   * failed   → terminal error (don't wait for the 3-min timeout)
+        //   * failed   → terminal error
         //   * complete → enumeration ran and found nothing — terminal
-        //   * never / in_progress → keep polling until the timeout
+        //   * never / in_progress → keep polling until backend resolves
         if (resp.scan_status === "failed") {
           setErrorMessage(
             "이전 스캔이 실패했어요. 다시 시도해 주세요.",
@@ -168,10 +164,6 @@ export function WizardStepSelectProduct({ videoId }: Props) {
         }
         if (resp.scan_status === "complete") {
           setPollState("no_products");
-          return;
-        }
-        if (Date.now() - startedAtRef.current >= POLL_TIMEOUT_MS) {
-          setPollState("timeout");
           return;
         }
         timer = setTimeout(poll, POLL_INTERVAL_MS);
@@ -313,35 +305,6 @@ export function WizardStepSelectProduct({ videoId }: Props) {
             영상을 선택하거나, 영상에 제품이 잘 보이는 시간 구간을
             지정해 보세요.
           </p>
-        </div>
-      ) : null}
-
-      {pollState === "timeout" ? (
-        <div
-          className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-6"
-          data-testid="enumeration-timeout"
-        >
-          <h2 className="text-lg font-semibold text-amber-900">
-            제품 스캔이 아직 끝나지 않았어요
-          </h2>
-          <p className="text-sm text-amber-800">
-            처리 시간이 예상보다 길어지고 있습니다. 스캔은 계속 진행될 수
-            있으니 잠시 후 다시 확인해 주세요.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              startedAtRef.current = Date.now();
-              setEntries([]);
-              setSelectedIds(new Set());
-              setErrorMessage(null);
-              setPollState("enumerating");
-              setRetryCount((n) => n + 1);
-            }}
-            className="rounded-md bg-amber-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-800"
-          >
-            다시 확인
-          </button>
         </div>
       ) : null}
 

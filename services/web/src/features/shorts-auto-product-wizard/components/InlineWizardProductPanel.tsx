@@ -49,14 +49,9 @@ import type { WizardCriteriaDraft } from "./InlineWizardCriteriaPanel";
 import { normalizeTimeRangeForSubmit } from "./VideoSegmentRangeSlider";
 
 const POLL_INTERVAL_MS = 5_000;
-// 2026-05-19 — bumped from 180_000 (3min) to 900_000 (15min). The
-// initial 3min ceiling was derived from a 30-90s expected enumeration,
-// but in practice the backend scan can run well past that. With the
-// stage simulation also stretched to 4min total below, the user now
-// sees a stuck-but-not-errored progress card until either products
-// land or the 15min watchdog fires. 5s poll cadence × 15min = 180
-// requests/session at worst case (vs 36 previously).
-const POLL_TIMEOUT_MS = 900_000;
+// No client-side watchdog: enumeration on heavier videos has been
+// observed at 50min+, so the panel polls until the backend reports a
+// terminal scan_status (or until the operator triggers 상품 재인식).
 
 interface Props {
   videoId: string;
@@ -74,7 +69,7 @@ interface Props {
   completionHoldMs?: number;
 }
 
-type PollState = "enumerating" | "ready" | "no_products" | "timeout" | "error";
+type PollState = "enumerating" | "ready" | "no_products" | "error";
 
 function distributionLabel(value: WizardCriteriaDraft["product_distribution"]) {
   return value === "single" ? "상품별 쇼츠" : "통합 쇼츠";
@@ -186,10 +181,6 @@ export function InlineWizardProductPanel({
         }
         if (!staleJob && resp.scan_status === "complete") {
           setPollState("no_products");
-          return;
-        }
-        if (Date.now() - startedAtRef.current >= POLL_TIMEOUT_MS) {
-          setPollState("timeout");
           return;
         }
         timer = setTimeout(poll, POLL_INTERVAL_MS);
@@ -601,43 +592,6 @@ export function InlineWizardProductPanel({
               영상을 선택하거나, 영상에 제품이 잘 보이는 시간 구간을
               지정해 보세요.
             </p>
-          </div>
-        ) : null}
-
-        {pollState === "timeout" ? (
-          <div
-            className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-6"
-            data-testid="inline-product-timeout"
-          >
-            <h3 className="text-sm font-semibold text-amber-900">
-              제품 스캔이 아직 끝나지 않았어요
-            </h3>
-            <p className="text-xs text-amber-800">
-              처리 시간이 예상보다 길어지고 있습니다. 스캔은 계속 진행될 수
-              있으니 잠시 후 다시 확인해 주세요.
-            </p>
-            {/* 다시 확인 = same dedup'd /scan call (no-op if backend is
-                stuck on the same job). 상품 재인식 = force /rescan,
-                invalidate the prior catalog, and enqueue a fresh job —
-                the escape hatch when enumeration is genuinely wedged. */}
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleRetry}
-                className="rounded-md bg-amber-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-amber-800"
-                data-testid="inline-product-timeout-retry"
-              >
-                다시 확인
-              </button>
-              <button
-                type="button"
-                onClick={handleRescan}
-                className="rounded-md border border-amber-700 bg-white px-4 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100"
-                data-testid="inline-product-timeout-rescan"
-              >
-                상품 재인식
-              </button>
-            </div>
           </div>
         ) : null}
 
