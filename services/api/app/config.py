@@ -132,6 +132,13 @@ class Settings(BaseSettings):
     agent_intent_max_per_org: int = 10
     agent_intent_exchange_max_attempts: int = 5
 
+    # --- Agent high-quality export ---
+    # Gates GET /api/drive/source-facts, which hands the agent the per-video
+    # Drive facts (google_file_id, md5, mount-relative path) it needs to locate
+    # the ORIGINAL on a locally-mounted Google Drive and render at source
+    # resolution. Off by default; flip per-environment once the agent ships.
+    agent_hq_export_enabled: bool = False
+
     people_enabled: bool = True
     face_match_threshold: float = 0.55
     face_thumbnail_s3_primary: bool = False

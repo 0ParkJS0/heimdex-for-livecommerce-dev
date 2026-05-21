@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import get_db_session
 from app.dependencies import get_drive_file_repository, get_export_record_repository
+from app.lib.drive_mount_path import build_mount_relative_path
 from app.modules.drive.repository import DriveFileRepository
 from app.modules.export.edl import EdlClip, generate_edl
 from app.modules.export.fcp_xml import FcpClip, generate_fcp_xml
@@ -351,19 +352,8 @@ async def export_premiere(
             unresolved_clips.append(clip.video_id)
             continue
 
-        # Build local path based on connection type
-        if conn.scope_type == "drive" and conn.drive_name:
-            # Shared Drive: {mount}/Shared drives/{drive_name}/{drive_path}
-            local_path = f"{mount}/Shared drives/{conn.drive_name}/{drive_file.drive_path}"
-        elif conn.scope_type == "folder" and conn.folder_path:
-            # My Drive folder: {mount}/{folder_path}/{drive_path}
-            folder_base = conn.folder_path
-            # folder_path may start with '내 드라이브/' or 'My Drive/'
-            # The actual mount maps directly, e.g. mount/My Drive/subfolder/...
-            local_path = f"{mount}/{folder_base}/{drive_file.drive_path}"
-        else:
-            # Fallback: just use drive_path under mount
-            local_path = f"{mount}/{drive_file.drive_path}"
+        # Build local path based on connection type (shared helper)
+        local_path = _resolve_drive_path(mount, conn, drive_file)
 
         clip_name = clip.clip_name.strip() or drive_file.file_name
 
@@ -656,33 +646,26 @@ async def export_premiere_package_url(
 
 
 def _resolve_drive_path(mount: str, conn: DriveConnection | None, df: DriveFile) -> str:
-    """Resolve a DriveFile to an absolute local path under the Google Drive mount.
-
-    Reuses the same logic as the existing /premiere endpoint (lines 312-330)
-    but decoupled into a standalone function.
-    """
-    if conn is None:
-        return f"{mount}/{df.drive_path or df.file_name}"
-
-    if conn.scope_type == "drive" and conn.drive_name:
-        return f"{mount}/Shared drives/{conn.drive_name}/{df.drive_path}"
-    elif conn.scope_type == "folder" and conn.folder_path:
-        return f"{mount}/{conn.folder_path}/{df.drive_path}"
-    else:
-        return f"{mount}/{df.drive_path or df.file_name}"
+    """Resolve a DriveFile to an absolute local path under the Google Drive mount."""
+    return f"{mount}/{_relative_drive_path(conn, df)}"
 
 
 def _relative_drive_path(conn: DriveConnection | None, df: DriveFile) -> str:
-    """Build the relative path within Google Drive (for manifest.json)."""
-    if conn is None:
-        return df.drive_path or df.file_name
+    """Build the path within Google Drive relative to the mount root.
 
-    if conn.scope_type == "drive" and conn.drive_name:
-        return f"Shared drives/{conn.drive_name}/{df.drive_path}"
-    elif conn.scope_type == "folder" and conn.folder_path:
-        return f"{conn.folder_path}/{df.drive_path}"
-    else:
-        return df.drive_path or df.file_name
+    Delegates to the shared ``build_mount_relative_path`` helper so the Premiere
+    export and the HQ agent export agree on path assembly (and both cover
+    my_drive / shared_drive scopes).
+    """
+    drive_path = df.drive_path or df.file_name
+    if conn is None:
+        return drive_path
+    return build_mount_relative_path(
+        scope_type=conn.scope_type,
+        drive_name=conn.drive_name,
+        folder_path=conn.folder_path,
+        drive_path=drive_path,
+    )
 
 
 # --- Proxy Pack Export (async via SQS) ---
