@@ -4,19 +4,18 @@
 // node-name: 배경 툴바 (line-spacing placeholder + layer order + fill color)
 // spec: gap=1 (mx-1 separator), radius·padding 은 ToolbarButton/Dropdown primitive 사용
 
+import { BringToFront, SendToBack } from "lucide-react";
+
+import { CanvasAlignPopover } from "../primitives/CanvasAlignPopover";
 import { ColorSwatchButton } from "../primitives/ColorSwatchButton";
-import { Dropdown } from "../primitives/Dropdown";
-import { CanvasAlignCenterIcon, LayerStackIcon } from "../primitives/icons";
 import { ToolbarButton } from "../primitives/ToolbarButton";
+import {
+  computeCanvasAlignTarget,
+  type CanvasAlignAxis,
+  type CanvasAlignPosition,
+} from "../../lib/canvas-align";
 import { t } from "../../lib/i18n/strings";
 import type { EditorBackgroundOverlay } from "../../lib/overlay-types";
-
-const LAYER_OPTIONS = [
-  { value: "front", label: t.background.bringToFront },
-  { value: "forward", label: t.background.bringForward },
-  { value: "backward", label: t.background.sendBackward },
-  { value: "back", label: t.background.sendToBack },
-] as const;
 
 interface BackgroundToolbarProps {
   overlay: EditorBackgroundOverlay;
@@ -25,68 +24,47 @@ interface BackgroundToolbarProps {
 }
 
 /**
- * Background tab toolbar — alignment toggle + layer dropdown + fill color.
+ * Background tab toolbar — canvas alignment + layer order + fill color.
  *
- * The alignment button cycles the overlay between horizontal-center
- * (x=0.5), vertical-center (y=0.5), and full-center (both axes). Each
- * press advances one step in the cycle so a single icon serves as the
- * "가로/세로 중앙정렬" affordance from the 2026-05-18 goal capture
- * without growing the toolbar.
+ * 2026-05-20 redesign — replaced the single-button align cycle with a
+ * six-direction CanvasAlignPopover, and dropped the layer-order dropdown
+ * ("부가설명 박스") plus its forward/backward middle steps. Layer order
+ * now exposes only the two lucide affordances the operator wanted:
+ * bring-to-front and send-to-back.
  */
 export function BackgroundToolbar({
   overlay,
   onChange,
   onReorder,
 }: BackgroundToolbarProps) {
-  const handleAlign = () => {
-    const { x, y } = overlay.transform;
-    // Three-step rotation: horizontal-center → vertical-center → both.
-    // The starting state is whichever axis is not already 0.5, so the
-    // first click is always meaningful regardless of where the overlay
-    // currently sits.
-    const isHCentered = Math.abs(x - 0.5) < 0.001;
-    const isVCentered = Math.abs(y - 0.5) < 0.001;
-    let nextX = x;
-    let nextY = y;
-    if (!isHCentered && !isVCentered) {
-      nextX = 0.5;
-    } else if (isHCentered && !isVCentered) {
-      nextY = 0.5;
-    } else if (!isHCentered && isVCentered) {
-      nextX = 0.5;
-    } else {
-      // Both already centered — toggle back to horizontal-center only so
-      // a second press has a visible effect.
-      nextY = overlay.transform.y === 0.5 ? 0.85 : 0.5;
-    }
+  const handleCanvasAlign = (
+    axis: CanvasAlignAxis,
+    position: CanvasAlignPosition,
+  ) => {
+    const next = computeCanvasAlignTarget(overlay.id, axis, position);
     onChange({
-      transform: { ...overlay.transform, x: nextX, y: nextY },
+      transform: { ...overlay.transform, [axis]: next },
     });
   };
 
   return (
     <div className="flex items-center justify-end gap-1">
-      <ToolbarButton
-        ariaLabel="가로/세로 중앙정렬"
-        onClick={handleAlign}
-      >
-        <CanvasAlignCenterIcon />
-      </ToolbarButton>
+      <CanvasAlignPopover onAlign={handleCanvasAlign} />
 
       <span className="mx-1 h-5 w-px bg-grayscale-100" />
 
-      <ToolbarButton ariaLabel={t.background.layerOrder}>
-        <LayerStackIcon />
+      <ToolbarButton
+        ariaLabel={t.background.bringToFront}
+        onClick={() => onReorder("front")}
+      >
+        <BringToFront className="h-4 w-4" />
       </ToolbarButton>
-      <Dropdown
-        value="forward"
-        options={LAYER_OPTIONS}
-        onChange={(v) =>
-          onReorder(v as "front" | "back" | "forward" | "backward")
-        }
-        ariaLabel={t.background.layerOrder}
-        className="!px-1.5 !py-1 !text-xs"
-      />
+      <ToolbarButton
+        ariaLabel={t.background.sendToBack}
+        onClick={() => onReorder("back")}
+      >
+        <SendToBack className="h-4 w-4" />
+      </ToolbarButton>
 
       <span className="mx-1 h-5 w-px bg-grayscale-100" />
 

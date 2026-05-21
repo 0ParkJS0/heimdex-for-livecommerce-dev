@@ -38,10 +38,7 @@ export const t = {
   },
   background: {
     fillColor: "채우기 색",
-    layerOrder: "레이어",
     sendToBack: "맨 뒤로",
-    sendBackward: "뒤로",
-    bringForward: "앞으로",
     bringToFront: "맨 앞으로",
   },
   transform: {
