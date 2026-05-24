@@ -44,24 +44,20 @@ The render worker lives outside this repository. The contract boundary is
   and apply uniform scale.
 - **Status**: Done. Custom scale+pad filter in heimdex-media-pipelines.
 
-### 4. Text Wrap — Korean keep-all (FIXED — eojeol-greedy wrapper)
+### 4. Text Wrap — Korean keep-all (PARTIAL — helper implemented, NOT wired)
 
-- **Gap**: Preview CSS uses `word-break: keep-all` + `max-width: 85%` +
-  `white-space: pre-wrap`. Backend uses `wrap_korean_subtitle_lines()` with
-  eojeol-greedy wrapping at `chars_per_line` (whitespace-split, no
-  morpheme awareness). These produce different line breaks for the same text.
-- **Impact**: Subtitles that wrap to 2 lines in the preview may wrap
-  differently in the rendered MP4 (different column widths, different break
-  points). Low severity for auto-shorts (text is pre-chunked to ~25 chars),
-  higher for manually-typed operator subtitles.
-- **Ideal Fix**: Migrate the render worker's subtitle renderer to use Pango
-  (via Cairo) or HarfBuzz for layout, which natively supports `keep-all`.
-  This is a render-worker change, not feasible in this repo.
-- **Partial Fix**: The backend `compute_chars_per_line` uses `canvas_width`
-  with a 0.92 safety multiplier. The preview uses `maxWidth: 85%`. At 405px
-  canvas width: backend budget = `405 * 0.92 = 372.6px`, preview budget =
-  `405 * 0.85 = 344.25px`. The budgets are within ~8% of each other.
-- **Status**: Done. wrap_korean() in heimdex-media-pipelines, approach (b).
+- **Gap**: Preview CSS uses `word-break: keep-all` + `max-width`. The render
+  worker's subtitle path (contracts `_build_drawtext_filter`) only splits on
+  pre-existing `\n` — it does not re-wrap. So operator-typed subtitles without
+  explicit line breaks can overflow / wrap differently than the preview.
+- **Helper**: `heimdex_media_pipelines.composition.text_wrap.wrap_korean()`
+  implements eojeol-greedy keep-all wrapping (break at spaces, glyph-break an
+  over-long eojeol) measured with the PIL font. It is unit-tested.
+- **NOT WIRED**: the render path does not call `wrap_korean` yet. Contracts'
+  `_build_drawtext_filter` is PIL-free and cannot measure glyphs, so wiring
+  server-side auto-wrap is a separate change (move text measurement into the
+  pipelines layer, or pre-wrap in the worker before drawtext is built).
+- **Status**: Helper DONE + tested; **wiring into the render path is OPEN.**
 
 ### 5. Font Size Scaling (VERIFIED — no gap)
 
@@ -105,13 +101,15 @@ The render worker lives outside this repository. The contract boundary is
 | 1 | Layer order | Done (serialized) | Done (heimdex-media-pipelines render.py) |
 | 2 | Letterbox | Done (serialized) | Done (bake_letterbox_png + ffmpeg overlay) |
 | 3 | Video transform | Done (serialized) | Done (custom scale+pad filter) |
-| 4 | Text wrap (Korean) | N/A | Done (wrap_korean eojeol-greedy, approach b) |
+| 4 | Text wrap (Korean) | N/A | Helper done + tested; **NOT wired** into render path (see §4) |
 | 5 | Font size scaling | No gap | N/A |
 | 6 | Subtitle position | No gap | N/A |
 | 7 | Overlay effects | No gap | N/A |
 | 8 | Overlay z-order | Done (via #1) | Done (via layer_order consumption) |
 
-All render-fidelity gaps are closed. Items 1-4 and 8 were implemented across
-three repos: heimdex-media-contracts (schema), heimdex-media-pipelines
-(rendering), and heimdex-for-livecommerce-dev (worker tests). Items 5-7
-were verified gap-free and required no changes.
+Items 1-3 and 8 are implemented across three repos: heimdex-media-contracts
+(schema + filtergraph orchestrator), heimdex-media-pipelines (rendering + PIL
+bakes), and heimdex-for-livecommerce-dev (worker tests + CI). Items 5-7 were
+verified gap-free and required no changes. Item 4's `wrap_korean` helper is
+implemented and unit-tested but is NOT yet called by the render path — wiring
+server-side Korean auto-wrap remains open.

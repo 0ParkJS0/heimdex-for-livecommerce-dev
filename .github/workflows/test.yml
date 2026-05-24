@@ -163,6 +163,68 @@ jobs:
       - name: Run vitest
         run: npx vitest run --reporter=dot
 
+  render-worker:
+    name: Render Worker (pytest)
+    # The shorts-render-worker render path (composition filter graph + PIL
+    # bakes + Korean wrap) was previously NEVER exercised in CI — PR #255
+    # shipped test_render_fidelity.py + test_text_wrap.py against contracts/
+    # pipelines symbols that didn't exist yet, and nothing caught it. This job
+    # runs the worker suite against the sibling repos' main (the same volume-
+    # mounted source the worker uses at runtime), mirroring build-gpu-images.yml.
+    #
+    # Ordering: this job checks out contracts + pipelines @ main, so a render
+    # change spanning all three repos must merge contracts → pipelines → here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout SaaS repo
+        uses: actions/checkout@v4
+        with:
+          path: dev-heimdex-for-livecommerce
+
+      - name: Checkout media-contracts
+        uses: actions/checkout@v4
+        with:
+          repository: HeimdexDev/heimdex-media-contracts
+          path: heimdex-media-contracts
+          ref: main
+
+      - name: Checkout media-pipelines
+        uses: actions/checkout@v4
+        with:
+          repository: HeimdexDev/heimdex-media-pipelines
+          path: heimdex-media-pipelines
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg (for the real-render e2e + hang regression guard)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install deps (mirror the worker's --no-deps volume-mount runtime)
+        # The worker pip-installs contracts + pipelines with --no-deps at
+        # container start (pipelines is NOT on PyPI). heimdex_worker_sdk is
+        # stubbed by the worker's conftest, so it isn't needed here.
+        run: |
+          pip install pytest Pillow pydantic pydantic-settings structlog boto3 requests
+          pip install --no-deps -e ./heimdex-media-contracts
+          pip install --no-deps -e ./heimdex-media-pipelines
+
+      - name: Run shorts-render-worker tests
+        working-directory: dev-heimdex-for-livecommerce/services/shorts-render-worker
+        run: pytest --tb=short
+
+      - name: Run pipelines render-fidelity tests (real ffmpeg e2e + -t hang guard)
+        # These live in the pipelines repo (they test render_composition) but are
+        # the renderer's most important guards: the infinite-render hang and the
+        # real end-to-end MP4 render that string/pixel unit tests cannot catch.
+        # This is the one CI lane with ffmpeg + both sibling repos checked out,
+        # so the e2e (which needs the worker's bundled fonts) actually executes.
+        working-directory: heimdex-media-pipelines
+        run: pytest tests/composition/test_render_fidelity.py --tb=short
+
   no-auth0-org-fallback:
     # Guard: the build-time Auth0 org fallback env var was removed in 2026-05
     # because a multi-tenant build cannot bake a correct value for every

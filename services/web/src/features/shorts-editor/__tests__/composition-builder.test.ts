@@ -280,5 +280,274 @@ describe("buildCompositionSpec", () => {
       expect(spec.scene_clips[0].timeline_start_ms).toBe(0);
       expect(spec.scene_clips[1].timeline_start_ms).toBe(4000);
     });
+
+    it("crops overlay timing ranges when inPoint/outPoint are set", () => {
+      const state = makeState({
+        clips: [clipA, clipB],
+        totalDurationMs: 10000,
+        inPointMs: 2000,
+        outPointMs: 6000,
+        overlays: [
+          // fully before range — dropped
+          {
+            kind: "background" as const,
+            id: "ov_before",
+            startMs: 0,
+            endMs: 1500,
+            layerIndex: 0,
+            transform: { x: 0.5, y: 0.5, rotationDeg: 0, widthPx: 100, heightPx: 100 },
+            effects: { opacity: 1, stroke: null, shadow: null },
+            fillColor: "#111",
+            imageUrl: null,
+          },
+          // spans in-point — clamped
+          {
+            kind: "background" as const,
+            id: "ov_spans_in",
+            startMs: 1500,
+            endMs: 3000,
+            layerIndex: 1,
+            transform: { x: 0.5, y: 0.5, rotationDeg: 0, widthPx: 100, heightPx: 100 },
+            effects: { opacity: 1, stroke: null, shadow: null },
+            fillColor: "#222",
+            imageUrl: null,
+          },
+          // spans out-point — clamped
+          {
+            kind: "background" as const,
+            id: "ov_spans_out",
+            startMs: 5000,
+            endMs: 8000,
+            layerIndex: 2,
+            transform: { x: 0.5, y: 0.5, rotationDeg: 0, widthPx: 100, heightPx: 100 },
+            effects: { opacity: 1, stroke: null, shadow: null },
+            fillColor: "#333",
+            imageUrl: null,
+          },
+          // fully after range — dropped
+          {
+            kind: "background" as const,
+            id: "ov_after",
+            startMs: 7000,
+            endMs: 9000,
+            layerIndex: 3,
+            transform: { x: 0.5, y: 0.5, rotationDeg: 0, widthPx: 100, heightPx: 100 },
+            effects: { opacity: 1, stroke: null, shadow: null },
+            fillColor: "#444",
+            imageUrl: null,
+          },
+        ],
+      });
+
+      const spec = buildCompositionSpec(state);
+      const ovIds = spec.overlays.map((o) => o.id);
+      expect(ovIds).not.toContain("ov_before");
+      expect(ovIds).not.toContain("ov_after");
+      expect(ovIds).toContain("ov_spans_in");
+      expect(ovIds).toContain("ov_spans_out");
+
+      const spansIn = spec.overlays.find((o) => o.id === "ov_spans_in")!;
+      // startMs clamped: max(0, 1500-2000) = 0; endMs: min(3000,6000)-2000 = 1000
+      expect(spansIn.start_ms).toBe(0);
+      expect(spansIn.end_ms).toBe(1000);
+
+      const spansOut = spec.overlays.find((o) => o.id === "ov_spans_out")!;
+      // startMs: max(0, 5000-2000) = 3000; endMs: min(8000,6000)-2000 = 4000
+      expect(spansOut.start_ms).toBe(3000);
+      expect(spansOut.end_ms).toBe(4000);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // PR #255 — video_transform, letterbox, layer_order serialization
+  // ---------------------------------------------------------------------------
+
+  describe("video_transform serialization", () => {
+    it("emits video_transform with snake_case keys when rotationDeg != 0", () => {
+      const state = makeState({
+        videoTransform: {
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          rotationDeg: 45,
+          outline: null,
+          shadow: null,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.video_transform).toBeDefined();
+      expect(spec.video_transform!.rotation_deg).toBe(45);
+    });
+
+    it("emits video_transform with outline.width_px when outline present", () => {
+      const state = makeState({
+        videoTransform: {
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          rotationDeg: 0,
+          outline: { color: "#FF0000", widthPx: 8 },
+          shadow: null,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.video_transform).toBeDefined();
+      expect(spec.video_transform!.outline).not.toBeNull();
+      expect(spec.video_transform!.outline!.width_px).toBe(8);
+      expect(spec.video_transform!.outline!.color).toBe("#FF0000");
+    });
+
+    it("emits video_transform with shadow.blur_px when shadow present", () => {
+      const state = makeState({
+        videoTransform: {
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          rotationDeg: 0,
+          outline: null,
+          shadow: {
+            color: "#000000",
+            offsetX: 5,
+            offsetY: 10,
+            blurPx: 15,
+            spreadPx: 2,
+          },
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.video_transform).toBeDefined();
+      const s = spec.video_transform!.shadow!;
+      expect(s.blur_px).toBe(15);
+      expect(s.offset_x).toBe(5);
+      expect(s.offset_y).toBe(10);
+      expect(s.spread_px).toBe(2);
+      expect(s.color).toBe("#000000");
+    });
+
+    it("omits video_transform when all defaults (x=0.5, y=0.5, scale=1, rotationDeg=0, no outline, no shadow)", () => {
+      const state = makeState({
+        videoTransform: {
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          rotationDeg: 0,
+          outline: null,
+          shadow: null,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.video_transform).toBeUndefined();
+    });
+
+    it("omits video_transform when outline is present but widthPx is 0 (treated as no-outline)", () => {
+      // widthPx=0 means the operator cleared it but didn't null it — builder
+      // treats hasOutline = widthPx > 0, so this is still default.
+      const state = makeState({
+        videoTransform: {
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          rotationDeg: 0,
+          outline: { color: "#FF0000", widthPx: 0 },
+          shadow: null,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.video_transform).toBeUndefined();
+    });
+  });
+
+  describe("letterbox serialization", () => {
+    it("serializes letterbox to snake_case fields", () => {
+      const state = makeState({
+        letterbox: {
+          topHeightPct: 12,
+          bottomHeightPct: 8,
+          fillColor: "#111111",
+          borderColor: "#FF0000",
+          borderWidthPx: 3,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.letterbox).toBeDefined();
+      expect(spec.letterbox!.top_height_pct).toBe(12);
+      expect(spec.letterbox!.bottom_height_pct).toBe(8);
+      expect(spec.letterbox!.fill_color).toBe("#111111");
+      expect(spec.letterbox!.border_color).toBe("#FF0000");
+      expect(spec.letterbox!.border_width_px).toBe(3);
+    });
+
+    it("omits letterbox when state.letterbox is undefined", () => {
+      const state = makeState({ letterbox: undefined });
+      const spec = buildCompositionSpec(state);
+      expect(spec.letterbox).toBeUndefined();
+    });
+
+    it("serializes letterbox with null border_color when borderColor is null", () => {
+      const state = makeState({
+        letterbox: {
+          topHeightPct: 10,
+          bottomHeightPct: 10,
+          fillColor: "#000000",
+          borderColor: null,
+          borderWidthPx: 0,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.letterbox!.border_color).toBeNull();
+    });
+  });
+
+  describe("layer_order serialization", () => {
+    it("preserves overlay ids in layer_order with kind='overlay'", () => {
+      const state = makeState({
+        layerOrder: [
+          { kind: "video" as const },
+          { kind: "letterbox" as const },
+          { kind: "subtitles" as const },
+          { kind: "overlay" as const, id: "ov_abc123" },
+          { kind: "overlay" as const, id: "ov_def456" },
+        ],
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.layer_order).toBeDefined();
+      const overlayEntries = spec.layer_order!.filter((l) => l.kind === "overlay");
+      expect(overlayEntries).toHaveLength(2);
+      expect(overlayEntries[0].id).toBe("ov_abc123");
+      expect(overlayEntries[1].id).toBe("ov_def456");
+    });
+
+    it("non-overlay entries have no id field", () => {
+      const state = makeState({
+        layerOrder: [
+          { kind: "video" as const },
+          { kind: "subtitles" as const },
+        ],
+      });
+      const spec = buildCompositionSpec(state);
+      for (const entry of spec.layer_order!) {
+        if (entry.kind !== "overlay") {
+          expect(entry.id).toBeUndefined();
+        }
+      }
+    });
+
+    it("preserves order of all layer kinds", () => {
+      const state = makeState({
+        layerOrder: [
+          { kind: "video" as const },
+          { kind: "letterbox" as const },
+          { kind: "subtitles" as const },
+          { kind: "overlay" as const, id: "ov_1" },
+        ],
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.layer_order!.map((l) => l.kind)).toEqual([
+        "video",
+        "letterbox",
+        "subtitles",
+        "overlay",
+      ]);
+    });
   });
 });

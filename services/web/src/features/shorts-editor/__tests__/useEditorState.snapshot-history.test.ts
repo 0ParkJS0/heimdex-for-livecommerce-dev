@@ -247,3 +247,160 @@ describe("useEditorState — hybrid snapshot history", () => {
     expect(result.current.state.redoHistory).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR #255 — SPLIT_SUBTITLE / SPLIT_CLIP undo; video_rotation / video_shadow
+// history entries (inverse-action, not snapshot).
+// ---------------------------------------------------------------------------
+
+import type { EditorSubtitle } from "../lib/types";
+import { DEFAULT_SUBTITLE_STYLE } from "../constants";
+
+function makeSub(overrides: Partial<EditorSubtitle> = {}): EditorSubtitle {
+  return {
+    id: `sub_${Math.random()}`,
+    text: "hello world",
+    startMs: 0,
+    endMs: 3000,
+    style: { ...DEFAULT_SUBTITLE_STYLE },
+    ...overrides,
+  };
+}
+
+describe("useEditorState — PR #255 snapshot history", () => {
+  // SPLIT_SUBTITLE: caller (splitSubtitle hook wrapper) pushes a snapshot
+  // before dispatching, so undo collapses the two halves back to one.
+  it("SPLIT_SUBTITLE → undo collapses the two halves back to one subtitle", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+    act(() => result.current.addSubtitle(makeSub({ id: "s1", startMs: 0, endMs: 3000 })));
+
+    // splitSubtitle pushes a snapshot then dispatches SPLIT_SUBTITLE
+    act(() => result.current.splitSubtitle(0, 1500));
+
+    expect(result.current.state.subtitles).toHaveLength(2);
+    expect(result.current.state.subtitles[0].endMs).toBe(1500);
+    expect(result.current.state.subtitles[1].startMs).toBe(1500);
+
+    act(() => result.current.undo());
+
+    expect(result.current.state.subtitles).toHaveLength(1);
+    expect(result.current.state.subtitles[0].id).toBe("s1");
+    expect(result.current.state.subtitles[0].startMs).toBe(0);
+    expect(result.current.state.subtitles[0].endMs).toBe(3000);
+  });
+
+  // SPLIT_CLIP: caller (splitClip hook wrapper) pushes a snapshot before
+  // dispatching, so undo collapses the two half-clips back to one.
+  it("SPLIT_CLIP → undo collapses the two half-clips back to one", () => {
+    const { result } = renderHook(() => useEditorState());
+    const clip = makeClip({
+      id: "c1",
+      trimStartMs: 0,
+      trimEndMs: 6000,
+      timelineStartMs: 0,
+    });
+    act(() => result.current.initFromScenes("v", "gdrive", [clip]));
+
+    act(() => result.current.splitClip(0, 3000));
+
+    expect(result.current.state.clips).toHaveLength(2);
+    expect(result.current.state.clips[0].trimEndMs).toBe(3000);
+    expect(result.current.state.clips[1].timelineStartMs).toBe(3000);
+
+    act(() => result.current.undo());
+
+    expect(result.current.state.clips).toHaveLength(1);
+    expect(result.current.state.clips[0].id).toBe("c1");
+    expect(result.current.state.clips[0].trimStartMs).toBe(0);
+    expect(result.current.state.clips[0].trimEndMs).toBe(6000);
+  });
+
+  // UPDATE_VIDEO_ROTATION uses inverse history entry kind "video_rotation"
+  // (pushed on pointerdown by the drag pipeline). Simulate the protocol:
+  // push a video_rotation entry, then dispatch UPDATE_VIDEO_ROTATION, then
+  // undo restores the prior rotationDeg.
+  it("UPDATE_VIDEO_ROTATION → undo restores prior rotationDeg via inverse history entry", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+
+    // Set initial rotation
+    act(() => result.current.updateVideoRotation(30));
+    expect(result.current.state.videoTransform.rotationDeg).toBe(30);
+
+    // Simulate pointer-down: caller pushes inverse history entry
+    act(() =>
+      result.current.pushHistory({
+        kind: "video_rotation",
+        rotationDeg: 30,
+      }),
+    );
+
+    // Drag updates rotation
+    act(() => result.current.updateVideoRotation(90));
+    expect(result.current.state.videoTransform.rotationDeg).toBe(90);
+
+    // Undo restores via the inverse entry
+    act(() => result.current.undo());
+    expect(result.current.state.videoTransform.rotationDeg).toBe(30);
+  });
+
+  // SET_VIDEO_SHADOW uses inverse history entry kind "video_shadow".
+  // The setVideoShadow hook wrapper pushes the entry itself (reads stateRef).
+  it("SET_VIDEO_SHADOW → undo restores prior shadow", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+
+    // setVideoShadow internally pushes a video_shadow entry capturing the
+    // CURRENT shadow, then dispatches SET_VIDEO_SHADOW.
+    act(() =>
+      result.current.setVideoShadow({
+        color: "#000000",
+        offsetX: 5,
+        offsetY: 5,
+        blurPx: 10,
+        spreadPx: 0,
+      }),
+    );
+    expect(result.current.state.videoTransform.shadow).not.toBeNull();
+
+    act(() =>
+      result.current.setVideoShadow({
+        color: "#FF0000",
+        offsetX: 10,
+        offsetY: 10,
+        blurPx: 20,
+        spreadPx: 5,
+      }),
+    );
+    expect(result.current.state.videoTransform.shadow?.color).toBe("#FF0000");
+
+    // Undo restores the previous shadow value
+    act(() => result.current.undo());
+    expect(result.current.state.videoTransform.shadow?.color).toBe("#000000");
+    expect(result.current.state.videoTransform.shadow?.blurPx).toBe(10);
+  });
+
+  it("SET_VIDEO_SHADOW null → undo restores prior non-null shadow", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+
+    act(() =>
+      result.current.setVideoShadow({
+        color: "#AABBCC",
+        offsetX: 3,
+        offsetY: 3,
+        blurPx: 8,
+        spreadPx: 1,
+      }),
+    );
+    expect(result.current.state.videoTransform.shadow).not.toBeNull();
+
+    // Clearing shadow also pushes a video_shadow entry first
+    act(() => result.current.setVideoShadow(null));
+    expect(result.current.state.videoTransform.shadow).toBeNull();
+
+    act(() => result.current.undo());
+    expect(result.current.state.videoTransform.shadow?.color).toBe("#AABBCC");
+  });
+});
