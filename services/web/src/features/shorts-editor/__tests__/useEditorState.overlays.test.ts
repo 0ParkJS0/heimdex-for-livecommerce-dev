@@ -111,8 +111,10 @@ describe("useEditorState — V2 overlays", () => {
     });
 
     const moved = result.current.state.overlays.find((o) => o.id === firstId)!;
-    // After densely repacking: front means highest index (length - 1)
-    expect(moved.layerIndex).toBe(result.current.state.overlays.length - 1);
+    // 'front' clamps to MAX_TEXT_OVERLAY_LAYER (1) per operator policy
+    // 2026-05-24 (텍스트 row 최대 2개). Reducer applies the cap to all
+    // overlays uniformly, so the highest reachable index via 'front' is 1.
+    expect(moved.layerIndex).toBe(1);
   });
 
   it("reorderOverlay 'forward' is a single-step swap", () => {

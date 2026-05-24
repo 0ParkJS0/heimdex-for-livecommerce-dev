@@ -19,6 +19,16 @@ interface TimelineRulerProps {
    * empty area would otherwise have no timecode labels.
    */
   minWidthPx?: number;
+  /**
+   * Visible horizontal window in px coordinates (L7 virtualization).
+   * Only marks within [viewportLeftPx, viewportRightPx] + buffer are
+   * rendered — saves DOM nodes on long clips at high zoom (e.g. a 1hr
+   * clip at zoom=100 = 3600 labels × 5 spans = 18k DOM nodes). When
+   * unset (or one of the props is missing), the ruler falls back to
+   * rendering every mark — keeps embedded read-only previews simple.
+   */
+  viewportLeftPx?: number;
+  viewportRightPx?: number;
 }
 
 // figma: 1669:49089 — "0s ㆍㆍㆍㆍ 1s ㆍㆍㆍㆍ 2s ㆍ··" pattern. Every
@@ -42,7 +52,19 @@ function formatRulerLabel(ms: number): string {
 // label cadence (1s per major mark) stays constant at zoom ≥ 100.
 const RULER_MIN_EXTENT_MS = 12_000;
 
-export function TimelineRuler({ totalDurationMs, zoom, onSeek, minWidthPx }: TimelineRulerProps) {
+// Buffer added on each side of the visible viewport so a quick scroll
+// (or a Shift+wheel jump) doesn't reveal blank space before the next
+// virtualization pass. 240 px ≈ 2 ruler labels at the densest cadence.
+const RULER_VIEWPORT_BUFFER_PX = 240;
+
+export function TimelineRuler({
+  totalDurationMs,
+  zoom,
+  onSeek,
+  minWidthPx,
+  viewportLeftPx,
+  viewportRightPx,
+}: TimelineRulerProps) {
   // Extend the ruler whichever is longer: content + 2s pad, the 12s
   // baseline floor, or whatever the viewport says it needs to keep
   // labels visible across the empty area. The viewport-driven extent
@@ -97,6 +119,28 @@ export function TimelineRuler({ totalDurationMs, zoom, onSeek, minWidthPx }: Tim
 
   const totalWidth = msToPixels(endMs, zoom);
 
+  // L7 virtualization — when the caller knows the visible window, only
+  // render marks within it (plus one buffer mark on each side so the
+  // dot segments connecting neighboring labels don't gap out at the
+  // edges). Falls through to the unfiltered marks array if either
+  // bound is missing.
+  const visibleMarks = useMemo(() => {
+    if (viewportLeftPx == null || viewportRightPx == null) return marks;
+    const minPx = viewportLeftPx - RULER_VIEWPORT_BUFFER_PX;
+    const maxPx = viewportRightPx + RULER_VIEWPORT_BUFFER_PX;
+    let startIdx = marks.findIndex((m) => m.px >= minPx);
+    if (startIdx === -1) return [];
+    if (startIdx > 0) startIdx -= 1; // keep the prior mark so its dots render
+    let endIdx = marks.length;
+    for (let i = startIdx; i < marks.length; i++) {
+      if (marks[i].px > maxPx) {
+        endIdx = i + 1; // include first off-screen mark so its dots toward the prior label render
+        break;
+      }
+    }
+    return marks.slice(startIdx, endIdx);
+  }, [marks, viewportLeftPx, viewportRightPx]);
+
   return (
     <div
       className={`relative h-6 select-none border-b border-grayscale-100 bg-white ${onSeek ? "cursor-pointer" : ""}`}
@@ -105,8 +149,8 @@ export function TimelineRuler({ totalDurationMs, zoom, onSeek, minWidthPx }: Tim
       role={onSeek ? "slider" : undefined}
       aria-label={onSeek ? "타임라인 위치 이동" : undefined}
     >
-      {marks.map((mark, idx) => {
-        const next = marks[idx + 1];
+      {visibleMarks.map((mark, idx) => {
+        const next = visibleMarks[idx + 1];
         const dots: number[] = [];
         if (next) {
           const segment = next.px - mark.px;

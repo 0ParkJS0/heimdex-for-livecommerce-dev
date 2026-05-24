@@ -35,6 +35,7 @@ from app.modules.shorts_auto_product.internal_router import (
 from app.modules.blur.router import router as blur_router
 from app.modules.text_templates.router import router as text_templates_router
 from app.modules.basket.router import router as basket_router
+from app.modules.editor_projects.router import router as editor_projects_router
 from app.modules.thumbnails.router import public_router as thumbnails_public_router
 from app.modules.thumbnails.router import upload_router as thumbnails_upload_router
 from app.modules.videos.router import router as videos_router
@@ -449,6 +450,7 @@ from app.modules.worker_events.internal_router import router as internal_worker_
 app.include_router(internal_worker_events_router)
 
 app.include_router(basket_router, prefix="/api")
+app.include_router(editor_projects_router, prefix="/api")
 app.include_router(thumbnails_public_router, prefix="/api")
 app.include_router(videos_router, prefix="/api")
 app.include_router(scene_overrides_router, prefix="/api")

@@ -63,10 +63,16 @@ export function ShadowControl({
   // was dropped because the right wrapper is only 371px wide and the goal
   // capture shows all three primary numeric controls on a single line.
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-[1fr_auto_auto] items-end gap-2">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-grayscale-500">{t.effects.position}</span>
+    <div className="space-y-2.5">
+      {/* Flex layout so the 위치/확산/swatch sit at fixed widths with
+          a fixed 10 px gap between each pair — matches the operator
+          spec '확산 박스와 색 팔레트 사이 10px'. The earlier grid
+          (1fr_auto_auto) left a wide empty strip inside the position
+          cell that read as a 20–30 px gap before the swatch. */}
+      <div className="flex items-end gap-x-2.5">
+        <div className="flex w-[100px] flex-col gap-1">
+          {/* figma 2015:249496 — sublabel 12px Medium tracking-[-0.3px] */}
+          <span className="text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-grayscale-500">{t.effects.position}</span>
           <ValueBoxXY
             x={offsetX}
             y={offsetY}
@@ -75,10 +81,12 @@ export function ShadowControl({
             onChangeX={disabled ? undefined : (v) => emit({ offsetX: v })}
             onChangeY={disabled ? undefined : (v) => emit({ offsetY: v })}
             ariaLabel="shadow offset"
+            className="w-full"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-grayscale-500">{t.effects.spread}</span>
+          {/* figma 2015:249496 — sublabel 12px Medium tracking-[-0.3px] */}
+          <span className="text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-grayscale-500">{t.effects.spread}</span>
           <NumericStepper
             value={spread}
             min={0}
@@ -87,6 +95,12 @@ export function ShadowControl({
             unit="px"
             ariaLabel={t.effects.spread}
             disabled={disabled}
+            // figma 2045:407082 — spread input matches stroke width:
+            // chevron-up / chevron-down vertical stack on the right.
+            // Width tracked to BorderControl's 72 px so the 그림자 row
+            // visually aligns with 윤곽선.
+            variant="vertical"
+            className="w-[80px]"
           />
         </div>
         {onColorClick ? (
@@ -95,7 +109,7 @@ export function ShadowControl({
             onClick={onColorClick}
             disabled={disabled}
             aria-label={`${t.effects.shadow} color`}
-            className="h-9 w-9 rounded-lg border border-grayscale-200 bg-white p-0.5 disabled:cursor-not-allowed disabled:opacity-40"
+            className="h-10 w-10 rounded-lg border border-grayscale-200 bg-white p-0.5 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <span
               className="block h-full w-full rounded"
@@ -107,14 +121,15 @@ export function ShadowControl({
             color={color}
             onChange={(c) => emit({ color: c })}
             ariaLabel={`${t.effects.shadow} color`}
-            size="md"
+            size="lg"
             disabled={disabled}
           />
         )}
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className="text-[10px] font-medium text-grayscale-500">{t.effects.blur}</span>
+        {/* figma 2015:249496 — sublabel 12px Medium tracking-[-0.3px] */}
+        <span className="text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-grayscale-500">{t.effects.blur}</span>
         <LabeledSlider
           value={blur}
           onChange={(v) => emit({ blur: v })}

@@ -10,15 +10,30 @@ function makeState(overrides: Partial<EditorState> = {}): EditorState {
     clips: [],
     subtitles: [],
     overlays: [],
+    videoTransform: {
+      x: 0.5,
+      y: 0.5,
+      scale: 1,
+      rotationDeg: 0,
+      outline: null,
+      shadow: null,
+    },
+    layerOrder: [{ kind: "video" }, { kind: "subtitles" }],
     selectedClipIndex: null,
     selectedSubtitleIndex: null,
     selectedOverlayId: null,
+    selectedVideo: false,
+    selectedLetterbox: false,
+    razorMode: false,
     playheadMs: 0,
-    isPlaying: false,
+    playback: { kind: "idle" },
     totalDurationMs: 0,
     zoom: 100,
     isDirty: false,
     history: [],
+    redoHistory: [],
+    inPointMs: null,
+    outPointMs: null,
     ...overrides,
   };
 }
@@ -112,13 +127,15 @@ describe("buildCompositionSpec", () => {
     expect(spec.subtitles).toHaveLength(1);
     expect(spec.subtitles[0].text).toBe("Hello World");
     expect(spec.subtitles[0].style.font_family).toBe("Pretendard");
-    // 2026-05-20 — DEFAULT_SUBTITLE_STYLE was retargeted for the editor
-    // manual-add flow: font_size_px=18 (renders as ~16px in the 1440-
-    // anchor editor preview via container-query scaling) and position_y
-    // =0.80 (operator-picked lower-third placement). AI-shorts captions
-    // still come through the backend formula at 32px so this constant
-    // diverges from build_auto_shorts_subtitle_style.
-    expect(spec.subtitles[0].style.font_size_px).toBe(18);
+    // 2026-05-22 — DEFAULT_SUBTITLE_STYLE.fontSizePx bumped to 29
+    // (PR 10 / Item 11 / D11=A) so the editor's manual-add subtitle
+    // reads as ~25 px in the 352×626 preview reference (29 ×
+    // 626/720 ≈ 25.2). Stored value stays in 720-tall output coords
+    // for backend renderer compatibility; the editor preview scales
+    // down via container queries. AI-shorts captions still come
+    // through build_auto_shorts_subtitle_style at 32 px so this
+    // constant remains decoupled from that path.
+    expect(spec.subtitles[0].style.font_size_px).toBe(29);
     expect(spec.subtitles[0].style.position_y).toBe(0.8);
     expect(spec.title).toBeNull();
   });
@@ -178,5 +195,90 @@ describe("buildCompositionSpec", () => {
     expect(style.position_y).toBe(0.7);
     expect(style.background_color).toBe("#000000");
     expect(style.background_opacity).toBe(0.8);
+  });
+
+  // L4 / T2 — export range cropping.
+  describe("inPoint/outPoint cropping", () => {
+    const clipA = {
+      id: "ca",
+      sceneId: "sa",
+      videoId: "v",
+      sourceType: "gdrive",
+      originalStartMs: 0,
+      originalEndMs: 4000,
+      trimStartMs: 0,
+      trimEndMs: 4000,
+      timelineStartMs: 0,
+      volume: 1.0,
+    };
+    const clipB = {
+      id: "cb",
+      sceneId: "sb",
+      videoId: "v",
+      sourceType: "gdrive",
+      originalStartMs: 0,
+      originalEndMs: 6000,
+      trimStartMs: 0,
+      trimEndMs: 6000,
+      timelineStartMs: 4000,
+      volume: 1.0,
+    };
+
+    it("drops clips entirely outside the range and trims partial ones", () => {
+      const state = makeState({
+        clips: [clipA, clipB],
+        totalDurationMs: 10000,
+        inPointMs: 3000,
+        outPointMs: 7000,
+      });
+      const spec = buildCompositionSpec(state);
+      // Both clips overlap the range.
+      expect(spec.scene_clips).toHaveLength(2);
+      // clipA: timelineStart shifts from 0 to 0 (3000 - 3000), trimStart
+      // advances by 3000 so source frames before t=3000 are skipped.
+      expect(spec.scene_clips[0].timeline_start_ms).toBe(0);
+      expect(spec.scene_clips[0].start_ms).toBe(3000);
+      expect(spec.scene_clips[0].end_ms).toBe(4000);
+      // clipB: timelineStart shifts from 4000 → 1000 (4000 - 3000),
+      // trimEnd reduced by (clipEnd 10000 - outPoint 7000) = 3000.
+      expect(spec.scene_clips[1].timeline_start_ms).toBe(1000);
+      expect(spec.scene_clips[1].start_ms).toBe(0);
+      expect(spec.scene_clips[1].end_ms).toBe(3000);
+    });
+
+    it("clamps subtitle start/end to the range", () => {
+      const state = makeState({
+        clips: [clipA, clipB],
+        totalDurationMs: 10000,
+        inPointMs: 2000,
+        outPointMs: 5000,
+        subtitles: [
+          { id: "s1", text: "before", startMs: 0, endMs: 1500, style: { ...DEFAULT_SUBTITLE_STYLE } },
+          { id: "s2", text: "spans-in", startMs: 1800, endMs: 3000, style: { ...DEFAULT_SUBTITLE_STYLE } },
+          { id: "s3", text: "spans-out", startMs: 4000, endMs: 6000, style: { ...DEFAULT_SUBTITLE_STYLE } },
+          { id: "s4", text: "after", startMs: 5500, endMs: 6500, style: { ...DEFAULT_SUBTITLE_STYLE } },
+        ],
+      });
+      const spec = buildCompositionSpec(state);
+      // s1 (before range) and s4 (after range) dropped.
+      expect(spec.subtitles.map((s) => s.text)).toEqual(["spans-in", "spans-out"]);
+      // s2 clamped: starts at 0 (1800 - 2000 → clamped to 0), ends at 1000.
+      expect(spec.subtitles[0].start_ms).toBe(0);
+      expect(spec.subtitles[0].end_ms).toBe(1000);
+      // s3 clamped: starts at 2000, ends at 3000 (5000 outPoint - 2000 in).
+      expect(spec.subtitles[1].start_ms).toBe(2000);
+      expect(spec.subtitles[1].end_ms).toBe(3000);
+    });
+
+    it("no-ops when neither inPointMs nor outPointMs is set", () => {
+      const state = makeState({
+        clips: [clipA, clipB],
+        totalDurationMs: 10000,
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.scene_clips).toHaveLength(2);
+      expect(spec.scene_clips[0].timeline_start_ms).toBe(0);
+      expect(spec.scene_clips[1].timeline_start_ms).toBe(4000);
+    });
   });
 });

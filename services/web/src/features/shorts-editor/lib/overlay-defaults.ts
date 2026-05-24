@@ -53,16 +53,27 @@ export function createDefaultTextOverlay(args: {
     startMs: args.startMs,
     endMs: args.endMs ?? args.startMs + DEFAULT_OVERLAY_DURATION_MS,
     layerIndex: args.layerIndex ?? 0,
-    transform: { ...DEFAULT_TRANSFORM, y: 0.85 }, // legacy subtitle baseline
+    // 2026-05-22 — '텍스트 추가' default (Figma 2031:328972 / user
+    // spec): centered horizontally at 0.5, 10 % down from the top so a
+    // freshly added overlay sits in the upper third of the canvas
+    // (close to the title position the operator sees in the Figma
+    // mock). Previously y=0.85 mimicked the legacy lower-third
+    // subtitle baseline, which collided with the host-STT subtitle
+    // row on the canvas.
+    transform: { ...DEFAULT_TRANSFORM, x: 0.5, y: 0.1 },
     effects: { ...DEFAULT_EFFECTS },
-    text: "",
+    // Default text body lets the operator see the overlay
+    // immediately; they can double-click on the canvas to replace
+    // it (no right-panel textarea anymore per Figma 2031:328975).
+    text: "Default Text",
     fontFamily: "Pretendard",
-    fontSizePx: 36,
+    // Stored in 720-tall output reference coords; the editor preview
+    // scales via 100cqh/720 → ~25 px displayed in the 352×626 canvas
+    // (29 × 626/720 ≈ 25.2). Matches the host-subtitle 25 px target.
+    fontSizePx: 29,
     fontWeight: 400,
     italic: false,
     underline: false,
-    // Black default reads better against bright livecommerce frames
-    // (2026-05-18 review).
     fontColor: "#000000",
     textAlign: "center",
     lineHeight: 1.3,

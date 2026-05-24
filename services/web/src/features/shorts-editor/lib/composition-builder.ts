@@ -1,4 +1,4 @@
-import type { EditorState, CompositionSpec } from "./types";
+import type { EditorState, CompositionSpec, CompositionLayerOrder, CompositionLetterbox, CompositionVideoTransform } from "./types";
 import type {
   EditorBackgroundOverlay,
   EditorTextOverlay,
@@ -11,14 +11,96 @@ import { DEFAULT_OUTPUT } from "../constants";
 /**
  * Build a CompositionSpec dict from the editor state.
  * Mirrors the highlight_reel service's build_composition_dict() pattern.
+ *
+ * L4 / T2 — when state.inPointMs / outPointMs are set, the spec is
+ * cropped to that range before serialization:
+ *   * scene_clips outside the range are dropped; partial clips are
+ *     trimmed at the source level (adjust trim_start / trim_end so
+ *     the backend never sees frames it shouldn't render).
+ *   * subtitles and overlays outside the range are dropped; partial
+ *     ones are clamped to the range edges.
+ *   * Every remaining timeline coord is shifted by -inPointMs so the
+ *     export starts at t=0.
+ *
+ * The wire schema is intentionally unchanged — the backend just sees
+ * a shorter, time-zeroed composition. No backend coordination needed.
  */
 export function buildCompositionSpec(
   state: EditorState,
   title?: string | null,
 ): CompositionSpec {
+  const inPoint = state.inPointMs ?? 0;
+  const outPoint = state.outPointMs ?? state.totalDurationMs;
+  // No range set (or range covers the whole clip) → fast path, no cropping.
+  const hasRange =
+    state.inPointMs != null || state.outPointMs != null;
+
+  const clips = hasRange ? cropClips(state.clips, inPoint, outPoint) : state.clips;
+  const subtitles = hasRange
+    ? cropTimeRanges(state.subtitles, inPoint, outPoint)
+    : state.subtitles;
+  const overlays = hasRange
+    ? cropTimeRanges(state.overlays, inPoint, outPoint)
+    : state.overlays;
+
+  // Render-fidelity: serialize layer_order so the worker composites
+  // in the operator's chosen z-order.
+  const layer_order: CompositionLayerOrder[] = state.layerOrder.map((l) => {
+    if (l.kind === "overlay") return { kind: "overlay" as const, id: l.id };
+    return { kind: l.kind };
+  });
+
+  // Render-fidelity: serialize letterbox when present.
+  const letterbox: CompositionLetterbox | undefined = state.letterbox
+    ? {
+        top_height_pct: state.letterbox.topHeightPct,
+        bottom_height_pct: state.letterbox.bottomHeightPct,
+        fill_color: state.letterbox.fillColor,
+        border_color: state.letterbox.borderColor,
+        border_width_px: state.letterbox.borderWidthPx,
+      }
+    : undefined;
+
+  // Render-fidelity: serialize video transform when non-default.
+  // ``isDefaultTransform`` now accounts for rotation, outline, and
+  // shadow too — a video at the centre with default scale but a
+  // non-null outline still needs to round-trip through the backend
+  // worker, so the spec must carry the fields.
+  const vt = state.videoTransform;
+  const hasOutline =
+    vt.outline != null && vt.outline.widthPx > 0;
+  const hasShadow = vt.shadow != null;
+  const isDefaultTransform =
+    vt.x === 0.5 &&
+    vt.y === 0.5 &&
+    vt.scale === 1 &&
+    (vt.rotationDeg ?? 0) === 0 &&
+    !hasOutline &&
+    !hasShadow;
+  const video_transform: CompositionVideoTransform | undefined = isDefaultTransform
+    ? undefined
+    : {
+        x: vt.x,
+        y: vt.y,
+        scale: vt.scale,
+        rotation_deg: vt.rotationDeg ?? 0,
+        outline: hasOutline && vt.outline
+          ? { color: vt.outline.color, width_px: vt.outline.widthPx }
+          : null,
+        shadow: hasShadow && vt.shadow
+          ? {
+              color: vt.shadow.color,
+              offset_x: vt.shadow.offsetX,
+              offset_y: vt.shadow.offsetY,
+              blur_px: vt.shadow.blurPx,
+              spread_px: vt.shadow.spreadPx,
+            }
+          : null,
+      };
+
   return {
     output: { ...DEFAULT_OUTPUT },
-    scene_clips: state.clips.map((clip) => ({
+    scene_clips: clips.map((clip) => ({
       scene_id: clip.sceneId,
       video_id: clip.videoId,
       source_type: clip.sourceType,
@@ -31,7 +113,7 @@ export function buildCompositionSpec(
       crop_w: 1.0,
       crop_h: 1.0,
     })),
-    subtitles: state.subtitles.map((sub) => ({
+    subtitles: subtitles.map((sub) => ({
       text: sub.text,
       start_ms: sub.startMs,
       end_ms: sub.endMs,
@@ -46,11 +128,58 @@ export function buildCompositionSpec(
         background_opacity: sub.style.backgroundOpacity,
       },
     })),
-    overlays: state.overlays.map(serializeOverlay),
+    overlays: overlays.map(serializeOverlay),
     transitions: [],
     title: title ?? null,
     version: 1,
+    layer_order,
+    ...(letterbox && { letterbox }),
+    ...(video_transform && { video_transform }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Export range cropping helpers (L4 / T2)
+// ---------------------------------------------------------------------------
+
+function cropClips(
+  clips: EditorState["clips"],
+  inPoint: number,
+  outPoint: number,
+): EditorState["clips"] {
+  const out: EditorState["clips"] = [];
+  for (const clip of clips) {
+    const clipStart = clip.timelineStartMs;
+    const clipEnd = clipStart + (clip.trimEndMs - clip.trimStartMs);
+    if (clipEnd <= inPoint || clipStart >= outPoint) continue; // fully out
+
+    const leadingClip = Math.max(0, inPoint - clipStart);
+    const trailingClip = Math.max(0, clipEnd - outPoint);
+    out.push({
+      ...clip,
+      trimStartMs: clip.trimStartMs + leadingClip,
+      trimEndMs: clip.trimEndMs - trailingClip,
+      timelineStartMs: Math.max(0, clipStart - inPoint),
+    });
+  }
+  return out;
+}
+
+function cropTimeRanges<T extends { startMs: number; endMs: number }>(
+  items: T[],
+  inPoint: number,
+  outPoint: number,
+): T[] {
+  const out: T[] = [];
+  for (const item of items) {
+    if (item.endMs <= inPoint || item.startMs >= outPoint) continue;
+    out.push({
+      ...item,
+      startMs: Math.max(0, item.startMs - inPoint),
+      endMs: Math.min(item.endMs, outPoint) - inPoint,
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

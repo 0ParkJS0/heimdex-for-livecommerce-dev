@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { ChevronDownIcon } from "./icons";
 import { ToolbarButton } from "./ToolbarButton";
 import type {
   CanvasAlignAxis,
@@ -19,6 +20,12 @@ import type {
 
 interface CanvasAlignPopoverProps {
   onAlign: (axis: CanvasAlignAxis, position: CanvasAlignPosition) => void;
+  // 2026-05-24 — selection-based routing model in the background panel
+  // dims the popover when no element is selected (or the selected
+  // element doesn't expose canvas-align — e.g. letterbox). Dimmed +
+  // pointer-events-off matches the existing ToolbarButton disabled
+  // style so the operator can see the panel structure stays consistent.
+  disabled?: boolean;
 }
 
 interface AlignOption {
@@ -89,7 +96,7 @@ const VERTICAL_OPTIONS: AlignOption[] = [
  * toolbar caller can decide how to compute the actual normalized target
  * (anchor correction lives in lib/canvas-align.ts).
  */
-export function CanvasAlignPopover({ onAlign }: CanvasAlignPopoverProps) {
+export function CanvasAlignPopover({ onAlign, disabled = false }: CanvasAlignPopoverProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -106,6 +113,13 @@ export function CanvasAlignPopover({ onAlign }: CanvasAlignPopoverProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
+  // Auto-close the popover when the toolbar transitions to disabled
+  // (e.g. operator clicked off the selected element while the popover
+  // was open) so we don't leave a phantom dropdown hanging.
+  useEffect(() => {
+    if (disabled && open) setOpen(false);
+  }, [disabled, open]);
+
   const handleSelect = (axis: CanvasAlignAxis, position: CanvasAlignPosition) => {
     onAlign(axis, position);
     setOpen(false);
@@ -113,12 +127,24 @@ export function CanvasAlignPopover({ onAlign }: CanvasAlignPopoverProps) {
 
   return (
     <div ref={triggerRef} className="relative">
+      {/* Figma 2015:246597 — trigger is a 54×28 row (p-[4px] + two
+          20 px glyphs + gap-[6px]). Operator request 2026-05-24: the
+          hover rectangle should sit 4 px past the icon on each side
+          (~8 px wider total) so the affordance reads as "click me"
+          and isn't visually pinched against the glyph. px-1 + the
+          icon/chevron flex row inside extend the hover-bg rectangle
+          by the requested amount without shifting the icon centre. */}
       <ToolbarButton
         ariaLabel="화면 정렬"
         active={open}
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
+        className="w-auto px-1"
       >
-        <AlignCenterVertical className="h-4 w-4" />
+        <span className="flex items-center gap-1">
+          <AlignCenterVertical className="h-4 w-4" />
+          <ChevronDownIcon className="h-3 w-3" />
+        </span>
       </ToolbarButton>
 
       {open && (

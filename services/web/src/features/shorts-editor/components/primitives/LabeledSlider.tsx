@@ -80,7 +80,13 @@ export function LabeledSlider({
       >
         +
       </button>
-      <span className="min-w-[3.5rem] rounded-lg border border-grayscale-200 px-2 py-1 text-center text-xs text-grayscale-500">
+      {/* figma 2031:329081 / 329120 — readout chip is a 40px-tall
+          rounded box matching the section's other 40px controls (Value
+          / NumericStepper / ColorSwatch). The earlier compact py-1
+          rendering kept the chip ~24 px, which short-circuited the
+          row height so the 불투명도 / 그림자 sections came in 12–20 px
+          shorter than the figma frame. */}
+      <span className="inline-flex h-10 min-w-[46px] items-center justify-center rounded-lg border border-grayscale-200 px-2 text-center text-xs text-grayscale-500">
         {readout}
       </span>
     </div>

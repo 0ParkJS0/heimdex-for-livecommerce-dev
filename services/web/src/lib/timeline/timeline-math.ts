@@ -1,5 +1,11 @@
+// Returns an integer pixel offset so two elements positioned at the
+// same ms — e.g. the PlayheadCursor and a SubtitleBlock's left edge —
+// land on the same physical pixel. Floats here let the browser pick
+// different sub-pixel rounding for each callsite, producing a visible
+// ~1px misalignment that operators read as the subtitle box "starting
+// late" relative to when the overlay actually appears.
 export function msToPixels(ms: number, zoom: number): number {
-  return (ms / 1000) * zoom;
+  return Math.round((ms / 1000) * zoom);
 }
 
 export function pixelsToMs(px: number, zoom: number): number {

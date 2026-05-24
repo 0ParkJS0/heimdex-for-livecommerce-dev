@@ -13,9 +13,21 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onSave: (name: string, isShared: boolean) => void | Promise<void>;
+  // "overlay"     → saves the selected overlay's style (legacy flow,
+  //                 still used by PresetSection's per-overlay button).
+  // "composition" → saves the whole canvas chrome (subtitle style,
+  //                 overlays, letterbox, video transform). Default
+  //                 stays "overlay" so existing callers keep their
+  //                 body copy.
+  mode?: "overlay" | "composition";
 }
 
-export function TemplateSaveDialog({ open, onClose, onSave }: Props) {
+export function TemplateSaveDialog({
+  open,
+  onClose,
+  onSave,
+  mode = "overlay",
+}: Props) {
   const [name, setName] = useState("");
 
   useEffect(() => {
@@ -60,7 +72,9 @@ export function TemplateSaveDialog({ open, onClose, onSave }: Props) {
             템플릿으로 저장할까요?
           </p>
           <p className="text-center text-[14px] font-medium leading-[1.4] tracking-[-0.35px] text-grayscale-800">
-            현재 텍스트/배경 스타일을 템플릿으로 저장합니다.
+            {mode === "composition"
+              ? "현재 자막·텍스트·배경·레터박스 구성을 통째로 저장합니다."
+              : "현재 텍스트/배경 스타일을 템플릿으로 저장합니다."}
           </p>
         </div>
 

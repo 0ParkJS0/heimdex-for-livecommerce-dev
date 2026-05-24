@@ -16,7 +16,6 @@ import { formatTimestamp } from "@/lib/api/utils";
 import { formatVideoTimestampHMS } from "@/lib/timeline";
 import type { VideoScene, VideoScenesResponse, VideoSummaryResponse, ReprocessJobResponse, ReprocessParams } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 import { InlineEditField } from "./InlineEditField";
 import { TagEditor } from "./TagEditor";
@@ -296,10 +295,6 @@ function VideoInfoPanel({
           >
             {middleTruncate(title, 30)}
           </h2>
-          <OpenInDriveButton
-            sourceType={meta?.source_type ?? "local"}
-            webViewLink={meta?.web_view_link}
-          />
         </div>
       </div>
 
@@ -1416,13 +1411,6 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
                   onClick={() => handleViewChange("auto-shorts")}
                   renderWhileProbing
                 />
-                <button
-                  type="button"
-                  onClick={() => router.push(`/export/shorts/editor?videoId=${videoId}`)}
-                  className="inline-flex h-8 items-center justify-center rounded-lg border border-neutral-500 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-500 transition-colors hover:bg-grayscale-10"
-                >
-                  내보내기
-                </button>
               </div>
             </nav>
           )}
@@ -1430,10 +1418,16 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
           {/* Active panel surface. Overview hides outer scroll so only
               its script lane scrolls (2026-05-18 review). Other views
               keep an outer scroll fallback so paginated lists / wizard
-              steps don't get clipped. */}
+              steps don't get clipped.
+              Scrollbar UI is hidden (`scrollbar-width:none` for Firefox +
+              `::-webkit-scrollbar { display:none }` for WebKit/Blink) so
+              the panel keeps the full inline width — the nav row's right
+              edge (set by parent p-[20px]) lines up with the scene-panel
+              action buttons (e.g. "쇼츠 제작") at any viewport. Scroll
+              still works via wheel / trackpad / keyboard. */}
           <div
             className={cn(
-              "min-h-0 flex-1",
+              "min-h-0 flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
               view === "overview" ? "overflow-hidden" : "overflow-y-auto",
             )}
           >

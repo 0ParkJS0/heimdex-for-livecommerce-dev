@@ -85,6 +85,16 @@ vi.mock("@/features/videos/hooks/useSceneGroups", () => ({
   useSceneGroups: () => ({ groups: null, isLoading: false, error: null, fetchGroups: vi.fn() }),
 }));
 
+vi.mock("@/features/shorts-auto", () => ({
+  AutoShortsCTA: ({ onClick }: { onClick?: () => void }) => (
+    <button type="button" onClick={onClick}>AI 쇼츠 생성</button>
+  ),
+}));
+
+vi.mock("@/features/shorts-auto-product-wizard/components/InlineWizardContainer", () => ({
+  InlineWizardContainer: () => <div data-testid="inline-wizard">wizard</div>,
+}));
+
 vi.mock("@/features/basket/useSceneBasket", () => ({
   useSceneBasket: () => ({
     items: [],
@@ -141,13 +151,13 @@ beforeEach(() => {
 });
 
 describe("VideoDetailPage tab bar", () => {
-  it("renders three tabs and export button", async () => {
+  it("renders three tabs and AI shorts button", async () => {
     await renderVideoDetail();
 
     expect(screen.getByRole("button", { name: /개요/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /장면 분석/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /인물 관리/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /내보내기/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /AI 쇼츠 생성/ })).toBeInTheDocument();
   });
 
   it("renders scenes tab without count badge", async () => {
@@ -228,12 +238,15 @@ describe("VideoDetailPage tab bar", () => {
     );
   });
 
-  it("export button navigates to shorts create page", async () => {
+  it("AI shorts button switches to auto-shorts view", async () => {
     const user = userEvent.setup();
     await renderVideoDetail();
 
-    await user.click(screen.getByRole("button", { name: /내보내기/ }));
-    expect(mockPush).toHaveBeenCalledWith("/export/shorts/editor?videoId=test-video-123");
+    await user.click(screen.getByRole("button", { name: /AI 쇼츠 생성/ }));
+    expect(mockReplace).toHaveBeenCalledWith(
+      expect.stringContaining("view=auto-shorts"),
+      { scroll: false },
+    );
   });
 
   it("ignores invalid ?view= values and defaults to overview", async () => {

@@ -14,27 +14,26 @@ import {
 } from "@/components/layout/TopHeaderActionsContext";
 import { cn } from "@/lib/utils";
 import { useEditorState, createClipFromScene, generateSubtitlesFromTranscript } from "../hooks/useEditorState";
+import { useEditorKeyboard } from "../hooks/useEditorKeyboard";
 import { STARTER_TEMPLATES } from "../lib/starter-templates";
 import {
   wireSubtitleToEditorSubtitle,
-  wireSubtitleToEditorTextOverlay,
 } from "../lib/wire-to-editor";
 import { recomputeTimeline } from "../lib/timeline-math";
 import { useCompositionExport } from "../hooks/useCompositionExport";
 import type { RenderStatus } from "../hooks/useCompositionExport";
-import { usePresets } from "../hooks/usePresets";
+import { buildCompositionPayloadFromState, usePresets } from "../hooks/usePresets";
 import { EditorLayout } from "./EditorLayout";
 import { FullscreenOverlay } from "./FullscreenOverlay";
 import { PreviewPanel } from "./PreviewPanel";
 import { TimelinePanel } from "./TimelinePanel";
-import { TextOverlayPanel } from "./TextOverlayPanel";
 import { OverlayPanel } from "./OverlayPanel";
 import { SubtitleListNav } from "./SubtitleEditor";
 import { TemplateSaveDialog } from "./TemplateSaveDialog";
 import { TemplateSaveMenu } from "./TemplateSaveMenu";
-import { isShortsEditorV2Enabled } from "@/lib/feature-flags";
 import type { EditorSubtitle } from "../lib/types";
-import type { EditorOverlay, EditorTextOverlay, PresetKind } from "../lib/overlay-types";
+import { getVisibleSubtitles } from "../lib/source-time";
+import type { EditorOverlay, EditorTextOverlay } from "../lib/overlay-types";
 import { RightPanel } from "./RightPanel";
 import { BackgroundPanel } from "./BackgroundPanel";
 import { TemplatePanel } from "./TemplatePanel";
@@ -101,11 +100,18 @@ export function ShortsEditorPage() {
   const [didAutoOpenPreview, setDidAutoOpenPreview] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
-  // playback rate lifted to page so timeline toggle + preview <video>
-  // stay in sync. Only 1.0 and 1.5 are exposed via the toolbar toggle.
-  const [playbackRate, setPlaybackRate] = useState(1.0);
+  // Playback rate derived from the state machine; the operator changes
+  // it via the SpeedPopover which dispatches SET_RATE.
   // figma: 1670:185907 — 마스터 볼륨 (하단 컨트롤 슬라이더와 동기화)
   const [masterVolume, setMasterVolume] = useState(1.0);
+  // L9 / T9 — transient drop-target hint. Auto-clears after ~2.4 sec
+  // so the operator gets feedback without permanent UI chrome.
+  const [dropHint, setDropHint] = useState<string | null>(null);
+  useEffect(() => {
+    if (!dropHint) return;
+    const t = setTimeout(() => setDropHint(null), 2400);
+    return () => clearTimeout(t);
+  }, [dropHint]);
 
   const editor = useEditorState();
   const {
@@ -117,16 +123,18 @@ export function ShortsEditorPage() {
     selectSubtitle,
     updateSubtitle,
     undo,
+    redo,
   } = editor;
 
-  // Ctrl+Z / Cmd+Z to roll back the most recent drag-style gesture
-  // (overlay move/resize/rotate, V1 subtitle move/resize, subtitle
-  // time-drag). Skipped when the focused element is a text input so
-  // typing into a subtitle / preset name doesn't get hijacked.
+  // Ctrl+Z / Cmd+Z rolls back the most recent drag-style gesture; the
+  // Shift variant (Ctrl+Shift+Z / Cmd+Shift+Z) re-applies the previously
+  // undone gesture by walking the redo stack. Both are skipped when the
+  // focused element is a text input so typing into a subtitle / preset
+  // name doesn't get hijacked.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const meta = e.ctrlKey || e.metaKey;
-      if (!meta || e.shiftKey || e.altKey) return;
+      if (!meta || e.altKey) return;
       if (e.key !== "z" && e.key !== "Z") return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
@@ -136,11 +144,15 @@ export function ShortsEditorPage() {
         target?.isContentEditable === true;
       if (isEditable) return;
       e.preventDefault();
-      undo();
+      if (e.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo]);
+  }, [undo, redo]);
 
   const {
     renderStatus,
@@ -179,37 +191,32 @@ export function ShortsEditorPage() {
   // ---------------------------------------------------------------------
   // V2 timeline bridge
   // ---------------------------------------------------------------------
-  // The TimelinePanel (and SubtitleTrack inside it) only knows about V1
-  // subtitles. In V2 mode we project the overlays[] slice into a
-  // subtitle-shaped array so the timeline shows V2 text overlays as
-  // blocks, the "+ 자막" button creates V2 overlays, and selection /
-  // resize / drag callbacks dispatch V2 actions instead of V1.
-  //
-  // Background overlays are deliberately NOT projected here — the timeline
-  // only has a single "subtitle" lane and showing background blocks there
-  // would conflate two visually-distinct things. Backgrounds live on the
-  // canvas + are managed via the panel only.
-  const v2Enabled = isShortsEditorV2Enabled();
-
-  const v2TextOverlays = useMemo(
+  // Timeline data model — V2 (the only path since the 2026-05-22 cleanup):
+  //   • Host auto-STT subtitles live in ``state.subtitles`` → bottom
+  //     subtitle track.
+  //   • Operator-added text overlays live in ``state.overlays`` → upper
+  //     overlay tracks (one row per overlay).
+  //   • Background overlays are deliberately NOT shown on the timeline;
+  //     they live on the canvas and are managed via the right panel.
+  const textOverlays = useMemo(
     () =>
-      v2Enabled
-        ? state.overlays.filter(
-            (o): o is EditorTextOverlay => o.kind === "text",
-          )
-        : [],
-    [v2Enabled, state.overlays],
+      state.overlays.filter(
+        (o): o is EditorTextOverlay => o.kind === "text",
+      ),
+    [state.overlays],
   );
 
-  const timelineSubtitles: EditorSubtitle[] = useMemo(() => {
-    if (!v2Enabled) return state.subtitles;
-    return v2TextOverlays.map((o) => ({
+  const timelineSubtitles: EditorSubtitle[] = getVisibleSubtitles(state.subtitles, state.clips);
+
+  const timelineTextOverlays: (EditorSubtitle & { layerIndex: number })[] = useMemo(() => {
+    return textOverlays.map((o) => ({
       id: o.id,
       text: o.text,
       startMs: o.startMs,
       endMs: o.endMs,
-      // SubtitleBlock only reads {text, startMs, endMs}. Style is included
-      // for type compatibility; the timeline doesn't render with it.
+      // Carry layerIndex into the projection so TimelinePanel can
+      // place each text overlay at its own row (layerIndex 0 = bottom).
+      layerIndex: o.layerIndex,
       style: {
         fontFamily: o.fontFamily,
         fontSizePx: o.fontSizePx,
@@ -221,114 +228,76 @@ export function ShortsEditorPage() {
         backgroundOpacity: o.highlightOpacity,
       },
     }));
-  }, [v2Enabled, state.subtitles, v2TextOverlays]);
+  }, [textOverlays]);
 
-  const timelineSelectedSubtitleIndex: number | null = useMemo(() => {
-    if (!v2Enabled) return state.selectedSubtitleIndex;
-    if (state.selectedOverlayId == null) return null;
-    const idx = v2TextOverlays.findIndex(
-      (o) => o.id === state.selectedOverlayId,
-    );
-    return idx >= 0 ? idx : null;
-  }, [
-    v2Enabled,
-    state.selectedSubtitleIndex,
-    state.selectedOverlayId,
-    v2TextOverlays,
-  ]);
+  // Selection state for the (host) subtitle track is always the V1
+  // index — the operator-added overlay track has its own selection
+  // wiring via state.selectedOverlayId (Q7).
+  const timelineSelectedSubtitleIndex: number | null =
+    state.selectedSubtitleIndex;
 
+  // Host auto-STT subtitles always live in state.subtitles (decision
+  // 2026-05-22 — host subtitles are no longer routed into overlays
+  // under V2). The stale V2 branches in these handlers used to dispatch
+  // selectOverlay / updateOverlay / removeOverlay against host-subtitle
+  // indices, which left state.selectedSubtitleIndex untouched and broke
+  // the left SubtitleListNav's selected-border (and made the bottom
+  // SubtitleTrack's trim/remove dispatch into the wrong array).
   const handleTimelineAddSubtitle = useCallback(
-    (sub: EditorSubtitle) => {
-      if (v2Enabled) {
-        // Discard the synthesized V1 subtitle's id/style; create a V2
-        // text overlay at the same timing instead. (UX regression: double-
-        // clicking the track ignores the click position and uses playhead;
-        // SubtitleTrack constructs `sub` with click-derived timing but we
-        // currently only have addTextOverlayAtPlayhead — TODO: extend the
-        // hook to accept explicit timing.)
-        editor.addTextOverlayAtPlayhead();
-      } else {
-        editor.addSubtitle(sub);
-      }
-    },
-    [v2Enabled, editor],
+    (sub: EditorSubtitle) => editor.addSubtitle(sub),
+    [editor],
   );
 
   const handleTimelineSelectSubtitle = useCallback(
-    (index: number | null) => {
-      if (v2Enabled) {
-        if (index == null) {
-          editor.selectOverlay(null);
-          return;
-        }
-        const overlay = v2TextOverlays[index];
-        if (overlay) editor.selectOverlay(overlay.id);
-      } else {
-        editor.selectSubtitle(index);
-      }
-    },
-    [v2Enabled, editor, v2TextOverlays],
+    (index: number | null) => editor.selectSubtitle(index),
+    [editor],
   );
 
   const handleTimelineUpdateSubtitle = useCallback(
-    (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) => {
-      if (v2Enabled) {
-        const overlay = v2TextOverlays[index];
-        if (!overlay) return;
-        const overlayUpdates: Partial<EditorTextOverlay> = {};
-        if (updates.text !== undefined) overlayUpdates.text = updates.text;
-        if (updates.startMs !== undefined) overlayUpdates.startMs = updates.startMs;
-        if (updates.endMs !== undefined) overlayUpdates.endMs = updates.endMs;
-        if (Object.keys(overlayUpdates).length > 0) {
-          editor.updateOverlay(overlay.id, overlayUpdates);
-        }
-      } else {
-        editor.updateSubtitle(index, updates);
-      }
-    },
-    [v2Enabled, editor, v2TextOverlays],
+    (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) =>
+      editor.updateSubtitle(index, updates),
+    [editor],
   );
 
   const handleTimelineRemoveSubtitle = useCallback(
-    (index: number) => {
-      if (v2Enabled) {
-        const overlay = v2TextOverlays[index];
-        if (overlay) editor.removeOverlay(overlay.id);
-      } else {
-        editor.removeSubtitle(index);
-      }
-    },
-    [v2Enabled, editor, v2TextOverlays],
+    (index: number) => editor.removeSubtitle(index),
+    [editor],
   );
 
   // GNB "템플릿 저장" entry — opens the same TemplateSaveDialog that the
   // PresetSection uses, but driven from the global header. Save targets the
-  // currently selected overlay; menu is disabled when no overlay is selected
-  // or v2 is off (presets are V2-only).
+  // currently selected overlay; menu is disabled when no overlay is selected.
   const selectedOverlay = useMemo<EditorOverlay | null>(() => {
-    if (!v2Enabled || state.selectedOverlayId == null) return null;
+    if (state.selectedOverlayId == null) return null;
     return state.overlays.find((o) => o.id === state.selectedOverlayId) ?? null;
-  }, [v2Enabled, state.selectedOverlayId, state.overlays]);
+  }, [state.selectedOverlayId, state.overlays]);
 
-  const presetKind: PresetKind =
-    selectedOverlay?.kind === "background" ? "background" : "text";
-
+  // GNB '템플릿 저장' is now a COMPOSITION save (operator request
+  // 2026-05-24) — it captures subtitle style + every operator overlay
+  // + letterbox + video transform in one preset so the same canvas
+  // chrome can be re-applied to a different video later. The legacy
+  // per-overlay style save lives in PresetSection (right panel) and
+  // continues to use ``presetsApi.save``.
+  //
+  // The TemplatePanel grid surfaces every preset (text + background +
+  // composition) so the operator can pick any saved chrome from one
+  // place. Passing ``kind: undefined`` to usePresets disables the
+  // server-side filter and returns all kinds.
   const presetsApi = usePresets({
-    kind: presetKind,
+    kind: undefined,
     getToken: getAccessToken,
-    enabled: v2Enabled,
   });
 
   const handleTemplateSave = useCallback(
     async (name: string, isShared: boolean) => {
-      if (!selectedOverlay) {
-        setTemplateDialogOpen(false);
-        return;
-      }
-      await presetsApi.save(name, selectedOverlay, isShared);
+      // GNB save → composition snapshot. Always succeeds regardless of
+      // whether an overlay is currently selected — the snapshot is the
+      // global canvas, not the focused element.
+      const payload = buildCompositionPayloadFromState(state);
+      await presetsApi.saveComposition(name, payload, isShared);
       setTemplateDialogOpen(false);
     },
-    [selectedOverlay, presetsApi],
+    [state, presetsApi],
   );
 
   // figma: 1602:37719 — editor GNB merges into the global TopHeader.
@@ -401,9 +370,12 @@ export function ShortsEditorPage() {
         {renderError && (
           <span className="max-w-48 truncate text-xs text-red-h-500">{renderError}</span>
         )}
+        {/* GNB 템플릿 저장 — composition save (global chrome). No
+            selection required; the snapshot is the whole canvas, not
+            an individual overlay. */}
         <TemplateSaveMenu
           onClick={() => setTemplateDialogOpen(true)}
-          disabled={!v2Enabled || selectedOverlay == null}
+          disabled={false}
         />
         {renderStatus === "completed" && renderJob && (
           <>
@@ -457,7 +429,6 @@ export function ShortsEditorPage() {
     isLoading,
     loadError,
     renderError,
-    v2Enabled,
     selectedOverlay,
     renderStatus,
     renderJob,
@@ -522,13 +493,17 @@ export function ShortsEditorPage() {
         // so this is safe across the whole flow — operators always
         // see an editable subtitle list rather than an empty panel.
         //
-        // V2 timeline reads from state.overlays, not state.subtitles
-        // (see ShortsEditorPage timelineSubtitles memo + feature-flag
-        // default-on). Subtitles inserted via addSubtitle never reach
-        // the V2 timeline / left-panel list. Route through addTextOverlay
-        // so the generated lines render as text overlays on both surfaces.
+        // 2026-05-22 (#22/#23 — operator request): host auto-STT
+        // subtitles always go to ``state.subtitles`` regardless of V2
+        // flag. The left SubtitleListNav + bottom SubtitleTrack read
+        // from there. The ``텍스트 추가`` button continues to add to
+        // ``state.overlays`` (separate channel), so the two stay
+        // visually distinct — host subtitles on their own track at
+        // the bottom of the timeline, operator-added text on
+        // stackable tracks above. Q7's earlier branch routed both
+        // into overlays when V2 was on, which left the left nav
+        // empty and broke "재생 시 자막 바 따라 움직임" feedback.
         if (sceneIdsParam && scenes.length > 0) {
-          const v2Active = isShortsEditorV2Enabled();
           for (let i = 0; i < scenes.length; i++) {
             // Prefer the speaker-tagged transcript when present (carries
             // diarisation + timestamps) and fall back to ``transcript_raw``
@@ -542,15 +517,7 @@ export function ShortsEditorPage() {
                 : scenes[i].transcript_raw;
             const subs = generateSubtitlesFromTranscript(sourceText, clips[i]);
             for (const sub of subs) {
-              if (v2Active) {
-                editor.addTextOverlay({
-                  text: sub.text,
-                  startMs: sub.startMs,
-                  endMs: sub.endMs,
-                });
-              } else {
-                editor.addSubtitle(sub);
-              }
+              editor.addSubtitle(sub);
             }
           }
         }
@@ -643,20 +610,16 @@ export function ShortsEditorPage() {
             // "skip auto-gen, but don't load either" branch, so AI
             // shorts that DID have refined subtitles came up empty in
             // the editor.
+            // Both saved- and auto-stt paths populate state.subtitles
+            // (host channel). The earlier V2 branch routed them into
+            // overlays, which broke #23 (left wrapper empty + selected
+            // border not lighting up). Operator-added text overlays are
+            // a separate channel and never come from this load path.
             const hasSavedSubtitles =
               (comp.subtitles?.length ?? 0) > 0;
-            const v2Active = isShortsEditorV2Enabled();
             if (hasSavedSubtitles) {
               for (const wireSub of comp.subtitles ?? []) {
-                if (v2Active) {
-                  editor.addOverlayDirect(
-                    wireSubtitleToEditorTextOverlay(wireSub),
-                  );
-                } else {
-                  editor.addSubtitle(
-                    wireSubtitleToEditorSubtitle(wireSub),
-                  );
-                }
+                editor.addSubtitle(wireSubtitleToEditorSubtitle(wireSub));
               }
             } else {
               for (let i = 0; i < clips.length; i++) {
@@ -676,15 +639,7 @@ export function ShortsEditorPage() {
                   clips[i],
                 );
                 for (const sub of subs) {
-                  if (v2Active) {
-                    editor.addTextOverlay({
-                      text: sub.text,
-                      startMs: sub.startMs,
-                      endMs: sub.endMs,
-                    });
-                  } else {
-                    editor.addSubtitle(sub);
-                  }
+                  editor.addSubtitle(sub);
                 }
               }
             }
@@ -703,33 +658,53 @@ export function ShortsEditorPage() {
   }, [shortId, getAccessToken, initFromComposition]);
 
   // Keyboard shortcuts
+  // Keyboard shortcuts — owned by useEditorKeyboard hook (L3). The
+  // hook covers Space/Delete/Backspace/Escape plus the new J/K/L jog-
+  // shuttle, Home/End boundary jumps, and reserves slots for I/O (L4)
+  // and S (L5).
+  useEditorKeyboard({
+    state,
+    setPlayhead,
+    dispatchPlaybackEvent: editor.dispatchPlaybackEvent,
+    selectClip: editor.selectClip,
+    selectOverlay: editor.selectOverlay,
+    selectSubtitle: editor.selectSubtitle,
+    removeClip: editor.removeClip,
+    removeOverlay: editor.removeOverlay,
+    removeSubtitle: editor.removeSubtitle,
+    setInPoint: editor.setInPoint,
+    setOutPoint: editor.setOutPoint,
+    splitAtPlayhead: editor.splitAtPlayhead,
+    setRazorMode: editor.setRazorMode,
+  });
+
+  // Global razor-mode cursor — inject a <style> tag with !important so
+  // the razor SVG cursor persists on ALL elements, overriding per-element
+  // cursor rules (grab, pointer, col-resize, etc.). The previous
+  // body.style.cursor approach was defeated by any child CSS that set its
+  // own cursor property, causing the razor to revert on hover over
+  // subtitle blocks, resize handles, and buttons.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Ignore when typing in inputs
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-      if (e.key === " ") {
-        e.preventDefault();
-        setPlaying(!state.isPlaying);
-      } else if (e.key === "Delete" || e.key === "Backspace") {
-        if (state.selectedClipIndex != null) {
-          editor.removeClip(state.selectedClipIndex);
-        } else if (v2Enabled && state.selectedOverlayId != null) {
-          editor.removeOverlay(state.selectedOverlayId);
-        } else if (state.selectedSubtitleIndex != null) {
-          editor.removeSubtitle(state.selectedSubtitleIndex);
+    if (state.razorMode) {
+      document.body.classList.add("razor-mode");
+      const style = document.createElement("style");
+      style.id = "razor-mode-cursor";
+      style.textContent = `
+        body.razor-mode, body.razor-mode * {
+          cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23234c77' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 19H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h3'/><path d='M16 5h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-3'/><line x1='12' x2='12' y1='4' y2='20'/></svg>") 10 10, crosshair !important;
         }
-      } else if (e.key === "Escape") {
-        editor.selectClip(null);
-        if (v2Enabled) editor.selectOverlay(null);
-        else editor.selectSubtitle(null);
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [state.isPlaying, state.selectedClipIndex, state.selectedSubtitleIndex, state.selectedOverlayId, v2Enabled, setPlaying, editor]);
+      `;
+      document.head.appendChild(style);
+      return () => {
+        document.body.classList.remove("razor-mode");
+        style.remove();
+      };
+    } else {
+      document.body.classList.remove("razor-mode");
+      const existing = document.getElementById("razor-mode-cursor");
+      if (existing) existing.remove();
+    }
+  }, [state.razorMode]);
 
   if (isLoading) {
     return (
@@ -755,7 +730,58 @@ export function ShortsEditorPage() {
 
 
   return (
-    <div className="font-pretendard h-full overflow-hidden bg-grayscale-10">
+    <div
+      className="font-pretendard h-full overflow-hidden bg-grayscale-10"
+      // L9 / T9 — drag & drop import. Image files become a background
+      // overlay at the playhead via the existing reducer factory; video
+      // and audio fall back to a transient hint banner (their pipeline
+      // requires backend upload — deferred to L10's editor-assets
+      // endpoint).
+      onDragOver={(e) => {
+        // preventDefault is what flips the cursor to "copy" + stops
+        // the browser from navigating to the dropped file.
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer.files);
+        for (const file of files) {
+          if (file.type.startsWith("image/")) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const url = reader.result;
+              if (typeof url === "string") {
+                editor.addImageBackgroundOverlayAtPlayhead(url);
+                setDropHint(`이미지 추가됨: ${file.name}`);
+              }
+            };
+            reader.readAsDataURL(file);
+          } else if (file.type.startsWith("video/")) {
+            // TODO L10 — upload to /api/v1/editor/assets then add a
+            // clip pointing at the returned URL. Until that endpoint
+            // exists we just surface a hint so the operator knows the
+            // drop wasn't ignored entirely.
+            setDropHint(`비디오 업로드는 곧 지원됩니다: ${file.name}`);
+          } else if (file.type.startsWith("audio/")) {
+            setDropHint(`오디오 업로드는 곧 지원됩니다: ${file.name}`);
+          } else {
+            setDropHint(`지원하지 않는 형식: ${file.type || file.name}`);
+          }
+        }
+      }}
+    >
+      {dropHint && (
+        <div
+          role="status"
+          className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-grayscale-900 px-4 py-2 text-[12px] font-medium text-white shadow-card"
+        >
+          {dropHint}
+        </div>
+      )}
       <EditorLayout
         leftPanel={
           // figma: 1602:37844 (left subtitle panel) — wrapper hosts only the
@@ -772,6 +798,9 @@ export function ShortsEditorPage() {
               selectedSubtitleIndex={timelineSelectedSubtitleIndex}
               onSelectSubtitle={handleTimelineSelectSubtitle}
               onSeek={setPlayhead}
+              onUpdateSubtitleText={(index, text) =>
+                editor.updateSubtitle(index, { text })
+              }
             />
           </div>
         }
@@ -786,16 +815,28 @@ export function ShortsEditorPage() {
             onRemoveOverlay={editor.removeOverlay}
             onRemoveSubtitle={editor.removeSubtitle}
             playheadMs={state.playheadMs}
-            isPlaying={state.isPlaying}
+            playback={state.playback}
             totalDurationMs={state.totalDurationMs}
             selectedSubtitleIndex={state.selectedSubtitleIndex}
             onPlayheadChange={setPlayhead}
-            onPlayingChange={setPlaying}
+            dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
             onSelectSubtitle={selectSubtitle}
             onUpdateSubtitlePosition={handleSubtitlePositionChange}
             onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+            videoTransform={state.videoTransform}
+            onUpdateVideoPosition={editor.updateVideoPosition}
+            onUpdateVideoScale={editor.updateVideoScale}
+            onUpdateVideoRotation={editor.updateVideoRotation}
+            layerOrder={state.layerOrder}
+            letterbox={state.letterbox}
+            onUpdateLetterbox={editor.setLetterbox}
             onPushHistory={editor.pushHistory}
-            playbackRate={playbackRate}
+            selectedVideo={state.selectedVideo}
+            selectedLetterbox={state.selectedLetterbox}
+            onSelectVideo={editor.selectVideo}
+            onSelectLetterbox={editor.selectLetterbox}
+            onClearSelections={editor.clearAllSelections}
+            muted={isFullscreen}
           />
         }
         rightPanel={
@@ -810,6 +851,30 @@ export function ShortsEditorPage() {
                 onAddImageBackground={editor.addImageBackgroundOverlayAtPlayhead}
                 onUpdateOverlay={editor.updateOverlay}
                 onReorderOverlay={editor.reorderOverlay}
+                onReorderLayer={editor.reorderLayer}
+                onSetLetterbox={(next) => {
+                  // Snapshot the current letterbox so Ctrl+Z restores
+                  // the prior state — covers both add/remove and color
+                  // changes through the popover.
+                  editor.pushHistory({
+                    kind: "letterbox",
+                    letterbox: state.letterbox,
+                  });
+                  editor.setLetterbox(next);
+                }}
+                onUpdateVideoPosition={(x, y) => {
+                  // Snapshot the pre-align position so Ctrl+Z reverts
+                  // the snap in one stroke — mirrors the letterbox
+                  // wrapper above.
+                  editor.pushHistory({
+                    kind: "video_position",
+                    x: state.videoTransform.x,
+                    y: state.videoTransform.y,
+                  });
+                  editor.updateVideoPosition(x, y);
+                }}
+                onSetVideoOutline={editor.setVideoOutline}
+                onSetVideoShadow={editor.setVideoShadow}
               />
             );
             const templateTab = (
@@ -843,7 +908,20 @@ export function ShortsEditorPage() {
                 selectedId={selectedTemplateId}
                 onSelect={setSelectedTemplateId}
                 onApply={(preset) => {
+                  // Composition preset → atomic apply at the current
+                  // playhead (single Ctrl+Z reverts the whole apply,
+                  // per applyCompositionTemplate's snapshot wrap).
+                  // text / background presets → legacy per-overlay
+                  // merge that requires a selected overlay of the
+                  // matching kind.
+                  if (preset.kind === "composition") {
+                    const payload = presetsApi.parseComposition(preset);
+                    if (!payload) return;
+                    editor.applyCompositionTemplate(payload);
+                    return;
+                  }
                   if (!selectedOverlay) return;
+                  if (selectedOverlay.kind !== preset.kind) return;
                   const merged = presetsApi.applyTo(selectedOverlay, preset);
                   editor.updateOverlay(selectedOverlay.id, merged);
                 }}
@@ -851,7 +929,7 @@ export function ShortsEditorPage() {
                 onDelete={(preset) => void presetsApi.remove(preset.id)}
               />
             );
-            return v2Enabled ? (
+            return (
               <RightPanel
                 backgroundTab={backgroundTab}
                 templateTab={templateTab}
@@ -865,23 +943,7 @@ export function ShortsEditorPage() {
                   onRemoveOverlay={editor.removeOverlay}
                   onSelectOverlay={editor.selectOverlay}
                   onReorderOverlay={editor.reorderOverlay}
-                />
-              </RightPanel>
-            ) : (
-              <RightPanel
-                backgroundTab={backgroundTab}
-                templateTab={templateTab}
-              >
-                <TextOverlayPanel
-                  subtitle={
-                    state.selectedSubtitleIndex != null && state.selectedSubtitleIndex < state.subtitles.length
-                      ? state.subtitles[state.selectedSubtitleIndex]
-                      : null
-                  }
-                  subtitleIndex={state.selectedSubtitleIndex}
-                  onAddOverlay={editor.addOverlayAtPlayhead}
-                  onUpdateSubtitle={editor.updateSubtitle}
-                  onRemoveSubtitle={editor.removeSubtitle}
+                  onUpdateAllSubtitleStyles={editor.updateAllSubtitleStyles}
                 />
               </RightPanel>
             );
@@ -891,29 +953,58 @@ export function ShortsEditorPage() {
           <TimelinePanel
             clips={state.clips}
             subtitles={timelineSubtitles}
+            textOverlaysForTimeline={timelineTextOverlays}
+            selectedTextOverlayId={state.selectedOverlayId}
+            onSelectTextOverlay={editor.selectOverlay}
+            onUpdateTextOverlay={(id, updates) =>
+              editor.updateOverlay(id, updates)
+            }
+            onReorderTextOverlay={(id, direction, count) => {
+              // Cross-track row swap (L2). Multi-row drags dispatch the
+              // reorder action N times — the reducer is fast and each
+              // dispatch already snapshots history, so undo gives the
+              // operator granular per-row reversibility. Future
+              // refinement: introduce a REORDER_OVERLAY_BY action that
+              // moves N slots in one dispatch (one snapshot).
+              for (let i = 0; i < count; i++) {
+                editor.reorderOverlay(id, direction);
+              }
+            }}
             zoom={state.zoom}
             playheadMs={state.playheadMs}
-            isPlaying={state.isPlaying}
+            playback={state.playback}
             totalDurationMs={state.totalDurationMs}
             selectedClipIndex={state.selectedClipIndex}
             selectedSubtitleIndex={timelineSelectedSubtitleIndex}
             onSelectClip={editor.selectClip}
             onSelectSubtitle={handleTimelineSelectSubtitle}
             onTrimClip={editor.trimClip}
+            onMoveClip={editor.moveClip}
             onReorderClips={editor.reorderClips}
             onUpdateSubtitle={handleTimelineUpdateSubtitle}
             onAddSubtitle={handleTimelineAddSubtitle}
             onRemoveClip={editor.removeClip}
             onRemoveSubtitle={handleTimelineRemoveSubtitle}
-            onTogglePlay={() => setPlaying(!state.isPlaying)}
+            onTogglePlay={() => editor.dispatchPlaybackEvent({ kind: "TOGGLE" })}
             onSeek={setPlayhead}
             onZoomChange={editor.setZoom}
-            playbackRate={playbackRate}
-            onPlaybackRateChange={setPlaybackRate}
+            playbackRate={state.playback.kind === "playing" ? state.playback.rate : (state.playback.kind === "paused" ? state.playback.resumeRate : 1)}
+            onPlaybackRateChange={(rate) => editor.dispatchPlaybackEvent({ kind: "SET_RATE", rate })}
             volume={masterVolume}
             onVolumeChange={setMasterVolume}
             onToggleFullscreen={() => setIsFullscreen(true)}
             onPushHistory={editor.pushHistory}
+            onSplitAtPlayhead={editor.splitAtPlayhead}
+            onActivateRazor={() => editor.setRazorMode(!state.razorMode)}
+            razorMode={state.razorMode}
+            onRazorSplitClip={(index, atMs) => {
+              editor.splitClip(index, atMs);
+              editor.setRazorMode(false);
+            }}
+            onRazorSplitSubtitle={(index, atMs) => {
+              editor.splitSubtitle(index, atMs);
+              editor.setRazorMode(false);
+            }}
           />
         }
       />
@@ -929,16 +1020,19 @@ export function ShortsEditorPage() {
           onRemoveOverlay={editor.removeOverlay}
           onRemoveSubtitle={editor.removeSubtitle}
           playheadMs={state.playheadMs}
-          isPlaying={state.isPlaying}
+          playback={state.playback}
           totalDurationMs={state.totalDurationMs}
           selectedSubtitleIndex={state.selectedSubtitleIndex}
           onPlayheadChange={setPlayhead}
-          onPlayingChange={setPlaying}
+          dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
           onSelectSubtitle={selectSubtitle}
           onUpdateSubtitlePosition={handleSubtitlePositionChange}
           onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
           onClose={() => setIsFullscreen(false)}
           filename={title || meta?.video_title || undefined}
+          letterbox={state.letterbox}
+          layerOrder={state.layerOrder}
+          videoTransform={state.videoTransform}
         />
       )}
 
@@ -946,6 +1040,7 @@ export function ShortsEditorPage() {
         open={templateDialogOpen}
         onClose={() => setTemplateDialogOpen(false)}
         onSave={handleTemplateSave}
+        mode="composition"
       />
     </div>
   );

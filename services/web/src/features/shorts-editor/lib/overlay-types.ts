@@ -169,7 +169,7 @@ export type WireOverlay = WireTextOverlay | WireBackgroundOverlay;
 // Preset wire types (matches services/api/app/modules/subtitle_presets/schemas.py)
 // ---------------------------------------------------------------------------
 
-export type PresetKind = "text" | "background";
+export type PresetKind = "text" | "background" | "composition";
 
 export interface WirePreset {
   id: string;
@@ -190,5 +190,88 @@ export interface WirePreset {
 export interface WirePresetListResponse {
   items: WirePreset[];
   total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Composition preset payload (kind === "composition")
+// ---------------------------------------------------------------------------
+//
+// Composition presets snapshot the visual chrome that lives ABOVE the
+// scene-clip layer: subtitle style, every operator-added overlay, the
+// letterbox bars (if any), and the video transform. Scene clips are not
+// captured — those belong to the specific video the operator was
+// editing, while a composition preset is meant to be re-applied across
+// different videos.
+//
+// All four slots are optional from the apply side:
+//   * subtitleStyle null → don't touch existing subtitle styles
+//   * overlays empty    → don't add any overlays
+//   * letterbox null    → leave existing letterbox unchanged
+//   * videoTransform    → always present (defaults to centered 1×)
+//
+// Stored on the wire under WirePreset.style_json with snake_case keys
+// (see usePresets serialise/parse helpers).
+
+export interface CompositionPresetOverlayPayload {
+  // Snapshot of an EditorOverlay's visual + identity fields except its
+  // id (regenerated on apply) and its absolute timing (re-anchored to
+  // the apply-time playhead while preserving duration).
+  kind: "text" | "background";
+  layerIndex: number;
+  durationMs: number;
+  // Full overlay payload less id/start/end. The exact shape varies
+  // between text + background so we serialise as a generic dict and
+  // re-parse on apply.
+  payload: Record<string, unknown>;
+}
+
+export interface CompositionPresetSubtitleStylePayload {
+  fontFamily: string;
+  fontSizePx: number;
+  fontColor: string;
+  fontWeight: number;
+  positionX: number;
+  positionY: number;
+  backgroundColor: string | null;
+  backgroundOpacity: number;
+}
+
+export interface CompositionPresetLetterboxPayload {
+  topHeightPct: number;
+  bottomHeightPct: number;
+  fillColor: string;
+  borderColor: string | null;
+  borderWidthPx: number;
+}
+
+export interface CompositionPresetVideoTransformPayload {
+  x: number;
+  y: number;
+  scale: number;
+  // Rotation around the video centre, in degrees. Optional so legacy
+  // presets (saved before 2026-05-24) still parse cleanly — the apply
+  // reducer falls back to 0 (no rotation) when omitted.
+  rotationDeg?: number;
+  // Optional video-frame outline (윤곽선). ``null`` (or omitted on
+  // legacy presets) means no outline; apply-side reducer treats both
+  // identically.
+  outline?: { color: string; widthPx: number } | null;
+  // Optional drop shadow rendered around the video frame. ``null`` /
+  // missing → no shadow. Shape mirrors the overlay ShadowProps so the
+  // BackgroundPanel can reuse the existing shadow control row.
+  shadow?: {
+    color: string;
+    offsetX: number;
+    offsetY: number;
+    blurPx: number;
+    spreadPx: number;
+  } | null;
+}
+
+export interface CompositionPresetPayload {
+  subtitleStyle: CompositionPresetSubtitleStylePayload | null;
+  overlays: CompositionPresetOverlayPayload[];
+  letterbox: CompositionPresetLetterboxPayload | null;
+  videoTransform: CompositionPresetVideoTransformPayload;
 }
 

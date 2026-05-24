@@ -57,3 +57,34 @@ export function getActiveSubtitles<T extends { startMs: number; endMs: number }>
 ): T[] {
   return subtitles.filter((s) => timelineMs >= s.startMs && timelineMs < s.endMs);
 }
+
+/**
+ * Check whether a subtitle falls fully within at least one clip's
+ * visible window. A clip's visible window is
+ * `[clip.timelineStartMs, clip.timelineStartMs + clipDuration)`.
+ *
+ * Used at render time so trimming a clip hides subtitles outside
+ * the new window WITHOUT deleting them — extending the trim back
+ * restores them automatically.
+ */
+export function isSubtitleVisibleInClips<T extends { startMs: number; endMs: number }>(
+  sub: T,
+  clips: EditorClip[],
+): boolean {
+  return clips.some((clip) => {
+    const clipEnd = clip.timelineStartMs + getClipDuration(clip);
+    return sub.startMs >= clip.timelineStartMs && sub.endMs <= clipEnd;
+  });
+}
+
+/**
+ * Return only subtitles whose time range falls fully within at least
+ * one clip's visible window. Subtitles outside all clip windows are
+ * filtered out (hidden, not deleted).
+ */
+export function getVisibleSubtitles<T extends { startMs: number; endMs: number }>(
+  subtitles: T[],
+  clips: EditorClip[],
+): T[] {
+  return subtitles.filter((s) => isSubtitleVisibleInClips(s, clips));
+}

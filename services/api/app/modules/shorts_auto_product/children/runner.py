@@ -879,10 +879,13 @@ class ChildRunner:
             )
             await session.commit()
 
+        # Weighted progress: STT 0–40, planner (assembling) 40–60,
+        # render 60–100. Entering ASSEMBLING means STT contribution
+        # is done.
         lease = self._start_child_lease_renewer(
             child_id=child_id,
             stage=SCAN_STAGE_ASSEMBLING,
-            progress_pct=20,
+            progress_pct=40,
             progress_label="assembling",
         )
         try:
@@ -1039,9 +1042,10 @@ class ChildRunner:
         # collapsing into one render row — fixes the staging
         # 2026-05-06 collision where the LLM enumerator picked the
         # same product for clips 1 and 5.
+        # Planner contribution complete → entering render (60%).
         lease.set_stage(
             stage=SCAN_STAGE_RENDERING,
-            progress_pct=75,
+            progress_pct=60,
             progress_label="rendering",
         )
         if not await lease.heartbeat_now():
@@ -1249,9 +1253,10 @@ class ChildRunner:
         # both paths must forward ``scan_job_id`` so render dedupe
         # is scoped per scan_job (migration 057).
         async def _enqueue_render(spec) -> UUID:
+            # Planner contribution complete → entering render (60%).
             lease.set_stage(
                 stage=SCAN_STAGE_RENDERING,
-                progress_pct=75,
+                progress_pct=60,
                 progress_label="rendering",
             )
             if not await lease.heartbeat_now():
@@ -1600,8 +1605,9 @@ class ChildRunner:
 
         # Guard against a lost lease creating an orphan render (mirrors the
         # SAM2 + legacy STT paths: heartbeat immediately before enqueue).
+        # Planner contribution complete → entering render (60%).
         lease.set_stage(
-            stage=SCAN_STAGE_RENDERING, progress_pct=75, progress_label="rendering",
+            stage=SCAN_STAGE_RENDERING, progress_pct=60, progress_label="rendering",
         )
         if not await lease.heartbeat_now():
             logger.warning(

@@ -5,19 +5,14 @@
 // spec: gap=1 (separator=mx-1 1px), radius·padding 은 ToolbarButton/Dropdown primitive 사용
 
 import { useRef, useState } from "react";
-import {
-  TextAlignCenter,
-  TextAlignEnd,
-  TextAlignStart,
-} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { CanvasAlignPopover } from "../primitives/CanvasAlignPopover";
 import { ColorPalettePopover } from "../primitives/ColorPalettePopover";
 import { ColorPalettePortal } from "../primitives/ColorPalettePortal";
+import { TextAlignPopover } from "../primitives/TextAlignPopover";
 import {
   BoldIcon,
-  ChevronDownIcon,
   ItalicIcon,
   PaintBucketIcon,
   UnderlineIcon,
@@ -48,13 +43,6 @@ interface TextToolbarProps {
  */
 export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
   const isBold = overlay.fontWeight >= 600;
-
-  const AlignIcon =
-    overlay.textAlign === "left"
-      ? TextAlignStart
-      : overlay.textAlign === "right"
-      ? TextAlignEnd
-      : TextAlignCenter;
 
   const handleCanvasAlign = (
     axis: CanvasAlignAxis,
@@ -97,45 +85,21 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
 
       <span className="mx-1 h-5 w-px bg-grayscale-200" />
 
-      {/* Text alignment cycle — clicking advances left → center → right.
-          Icon swaps to the lucide text-align-start / center / end glyph
-          matching the current state. */}
-      <ToolbarButton
-        ariaLabel={t.text.align}
-        onClick={() => {
-          const next: EditorTextOverlay["textAlign"] =
-            overlay.textAlign === "left"
-              ? "center"
-              : overlay.textAlign === "center"
-              ? "right"
-              : "left";
-          onChange({ textAlign: next });
-        }}
-      >
-        <AlignIcon className="h-4 w-4" />
-      </ToolbarButton>
-      <button
-        type="button"
-        onClick={() => {
-          const next: EditorTextOverlay["textAlign"] =
-            overlay.textAlign === "left"
-              ? "center"
-              : overlay.textAlign === "center"
-              ? "right"
-              : "left";
-          onChange({ textAlign: next });
-        }}
-        aria-label={`${t.text.align} expand`}
-        className="text-grayscale-400 hover:text-grayscale-800"
-      >
-        <ChevronDownIcon className="h-3 w-3" />
-      </button>
+      {/* Text alignment dropdown (Figma 2031:329014) — trigger shows
+          the selected glyph + chevron-down; clicking opens a 3-icon
+          popover (left / center / right). Replaces the legacy
+          'cycle on click' affordance the operator found unclear. */}
+      <TextAlignPopover
+        value={overlay.textAlign}
+        onChange={(next) => onChange({ textAlign: next })}
+      />
 
       {/* Canvas-level alignment popover — six lucide direction icons
           arranged as two rows (x-axis / y-axis). The popover's onAlign
           callback measures the overlay's rendered box so start/end land
           flush against the canvas edge (anchor-corrected, per the
-          operator's 2026-05-20 "99% rule"). */}
+          operator's 2026-05-20 "99% rule"). Trigger now matches the
+          text-align trigger: icon + chevron-down. */}
       <CanvasAlignPopover onAlign={handleCanvasAlign} />
 
       <span className="mx-1 h-5 w-px bg-grayscale-200" />

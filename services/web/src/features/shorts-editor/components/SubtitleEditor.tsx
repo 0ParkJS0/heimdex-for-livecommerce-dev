@@ -238,6 +238,11 @@ interface SubtitleListNavProps {
   selectedSubtitleIndex: number | null;
   onSelectSubtitle: (index: number | null) => void;
   onSeek: (ms: number) => void;
+  // Inline-edit support (Figma 2031:329131). Clicking the body of a
+  // row opens a textarea on top of the text; Enter or blur commits
+  // the new content via this callback. Omit to disable inline edit
+  // (read-only contexts like the wizard's preview list).
+  onUpdateSubtitleText?: (index: number, text: string) => void;
 }
 
 function formatTimecode(ms: number): string {
@@ -256,8 +261,31 @@ export function SubtitleListNav({
   selectedSubtitleIndex,
   onSelectSubtitle,
   onSeek,
+  onUpdateSubtitleText,
 }: SubtitleListNavProps) {
   const [query, setQuery] = useState("");
+  // Which row's body is currently swapped to a textarea. ``null``
+  // means no row is being edited. Indices are the subtitles array's
+  // own (NOT the search-filtered ``order`` array's) so the edit
+  // state survives a search-query change.
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draftText, setDraftText] = useState("");
+
+  const beginEdit = (index: number, currentText: string) => {
+    if (!onUpdateSubtitleText) return;
+    setEditingIndex(index);
+    setDraftText(currentText);
+  };
+
+  const commitEdit = () => {
+    if (editingIndex == null || !onUpdateSubtitleText) return;
+    onUpdateSubtitleText(editingIndex, draftText);
+    setEditingIndex(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+  };
 
   const order = useMemo(() => {
     const indexes = subtitles
@@ -289,50 +317,99 @@ export function SubtitleListNav({
         {order.map((i) => {
           const sub = subtitles[i];
           const isSelected = i === selectedSubtitleIndex;
+          const isEditing = editingIndex === i;
           return (
-            <li key={sub.id}>
+            <li
+              key={sub.id}
+              className={cn(
+                // figma 1663:48041 selected: border-2 heimdex-navy-500
+                // figma 1663:48057 default: border neutral-h-100
+                "block w-full rounded-[10px] p-3 text-left transition-colors",
+                isSelected
+                  ? "border-2 border-heimdex-navy-500 bg-white"
+                  : "border border-neutral-h-100 bg-white hover:bg-grayscale-10",
+              )}
+            >
+              {/* Header — clicking selects + seeks to subtitle start.
+                  Pulled out of the body so the body click can own
+                  inline-edit instead of being intercepted. */}
               <button
                 type="button"
                 onClick={() => {
                   onSelectSubtitle(i);
-                  // 2026-05-18 — land the playhead ~1s past the
-                  // subtitle's start so the bar visibly sits inside
-                  // the block instead of straddling its left edge.
-                  // Capped at endMs - 100ms so we never overshoot
-                  // very short subtitles.
-                  const target = Math.min(
-                    sub.startMs + 1000,
-                    Math.max(sub.startMs, sub.endMs - 100),
-                  );
-                  onSeek(target);
+                  onSeek(sub.startMs);
                 }}
                 aria-pressed={isSelected}
-                className={cn(
-                  // figma 1663:48041 selected: border-2 heimdex-navy-500
-                  // figma 1663:48057 default: border neutral-h-100
-                  "block w-full rounded-[10px] p-3 text-left transition-colors",
-                  isSelected
-                    ? "border-2 border-heimdex-navy-500 bg-white"
-                    : "border border-neutral-h-100 bg-white hover:bg-grayscale-10",
-                )}
+                className="mb-1.5 flex w-full items-center gap-[10px] text-left"
               >
-                <div className="mb-1.5 flex items-center gap-[10px]">
-                  <span className="text-[12px] font-semibold tracking-[-0.3px] text-grayscale-800">
-                    #{i + 1}
-                  </span>
-                  <span className="rounded-[4px] bg-grayscale-100 px-1 py-0.5 text-[10px] font-medium tracking-[-0.25px] text-grayscale-500">
-                    {formatTimecode(sub.startMs)} - {formatTimecode(sub.endMs)}
-                  </span>
-                </div>
-                <p
+                <span className="text-[12px] font-semibold tracking-[-0.3px] text-grayscale-800">
+                  #{i + 1}
+                </span>
+                <span className="rounded-[4px] bg-grayscale-100 px-1 py-0.5 text-[10px] font-medium tracking-[-0.25px] text-grayscale-500">
+                  {formatTimecode(sub.startMs)} - {formatTimecode(sub.endMs)}
+                </span>
+              </button>
+              {/* Body — Figma 2031:329131. Clicking switches the <p>
+                  to a textarea inline so the host subtitle can be
+                  edited without leaving the wrapper. Enter commits,
+                  Escape cancels, blur commits (matching most inline
+                  editors' UX). */}
+              {isEditing ? (
+                <textarea
+                  autoFocus
+                  value={draftText}
+                  onChange={(e) => setDraftText(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      commitEdit();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                    }
+                  }}
+                  rows={2}
                   className={cn(
-                    "line-clamp-2 text-[14px] font-medium leading-[1.6] tracking-[-0.35px]",
-                    isSelected ? "text-heimdex-navy-500" : "text-grayscale-800",
+                    "w-full resize-none rounded-[6px] text-[14px] font-medium leading-[1.6] tracking-[-0.35px] focus:outline-none",
+                    isSelected
+                      ? "bg-grayscale-50 px-1 py-0.5 text-heimdex-navy-500"
+                      : "bg-white text-grayscale-800",
+                  )}
+                />
+              ) : (
+                <p
+                  role={onUpdateSubtitleText ? "button" : undefined}
+                  tabIndex={onUpdateSubtitleText ? 0 : undefined}
+                  onClick={() => {
+                    onSelectSubtitle(i);
+                    onSeek(sub.startMs);
+                    beginEdit(i, sub.text);
+                  }}
+                  onKeyDown={(e) => {
+                    if (
+                      onUpdateSubtitleText &&
+                      (e.key === "Enter" || e.key === " ")
+                    ) {
+                      e.preventDefault();
+                      beginEdit(i, sub.text);
+                    }
+                  }}
+                  className={cn(
+                    // figma 2026:325833 (선택 box body) — subtle
+                    // #F5F5F5 backing + navy-500 text + rounded-6.
+                    // Default body stays bg-transparent so the
+                    // contrast lands only on the active row.
+                    "line-clamp-2 rounded-[6px] text-[14px] font-medium leading-[1.6] tracking-[-0.35px]",
+                    onUpdateSubtitleText && "cursor-text",
+                    isSelected
+                      ? "bg-grayscale-50 px-1 py-0.5 text-heimdex-navy-500"
+                      : "text-grayscale-800",
                   )}
                 >
                   {sub.text || "(빈 자막)"}
                 </p>
-              </button>
+              )}
             </li>
           );
         })}

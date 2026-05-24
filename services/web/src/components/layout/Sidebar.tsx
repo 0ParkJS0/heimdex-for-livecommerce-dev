@@ -43,7 +43,7 @@ type NavGroupItem = {
 };
 type NavItem = NavLinkItem | NavGroupItem;
 
-const navItems: NavItem[] = [
+export const landingNavItems: NavItem[] = [
   { kind: "link", label: "동영상 검색", href: "/" },
   { kind: "link", label: "이미지 검색", href: "/images", badge: "Pro" },
   { kind: "link", label: "파일 동기화", href: "/sync" },
@@ -106,7 +106,7 @@ function isLinkActive(href: string, pathname: string): boolean {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
 }
 
-function NavLink({
+export function NavLink({
   label,
   href,
   badge,
@@ -148,7 +148,7 @@ function NavLink({
   );
 }
 
-function NavGroup({
+export function NavGroup({
   item,
   pathname,
 }: {
@@ -243,7 +243,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </div>
 
         <nav className="flex flex-col gap-0.5 px-2">
-          {navItems.map((item) =>
+          {landingNavItems.map((item) =>
             item.kind === "group" ? (
               <NavGroup key={item.label} item={item} pathname={pathname} />
             ) : (

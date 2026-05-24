@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { EditorSubtitle, HistoryEntry } from "../lib/types";
 import { msToPixels, pixelsToMs } from "../lib/timeline-math";
+import { getSnapThresholdMs, resolveSnap, type SnapPoint } from "../lib/snap";
 
 interface SubtitleBlockProps {
   subtitle: EditorSubtitle;
@@ -22,7 +23,15 @@ interface SubtitleBlockProps {
   // time-drag (start/end/move) gesture in one stroke. Optional so
   // callers that don't surface dragging (read-only embeds) skip it.
   onPushHistory?: (entry: HistoryEntry) => void;
+  // Magnetic snap targets (T4). Block filters its own edges out at
+  // drag time via sourceId === subtitle.id. Optional so read-only
+  // embeds can skip snapping.
+  snapPoints?: SnapPoint[];
+  razorMode?: boolean;
+  onRazorSplit?: (atMs: number) => void;
 }
+
+const FRAME_MS = 1000 / 30;
 
 export function SubtitleBlock({
   subtitle,
@@ -33,6 +42,9 @@ export function SubtitleBlock({
   onUpdate,
   onSeek,
   onPushHistory,
+  snapPoints,
+  razorMode = false,
+  onRazorSplit,
 }: SubtitleBlockProps) {
   const leftPx = msToPixels(subtitle.startMs, zoom);
   // Subtract a 2px gutter from the rendered width so back-to-back
@@ -66,15 +78,19 @@ export function SubtitleBlock({
   const startXRef = useRef(0);
   const startValuesRef = useRef({ startMs: 0, endMs: 0 });
 
-  // Latest callback/zoom mirrored into refs so the document-level
+  // Latest callback/zoom/snap mirrored into refs so the document-level
   // handler always reads fresh values without subscribing to them.
   const onUpdateRef = useRef(onUpdate);
   const zoomRef = useRef(zoom);
   const indexRef = useRef(index);
+  const snapPointsRef = useRef(snapPoints);
+  const idRef = useRef(subtitle.id);
   useEffect(() => {
     onUpdateRef.current = onUpdate;
     zoomRef.current = zoom;
     indexRef.current = index;
+    snapPointsRef.current = snapPoints;
+    idRef.current = subtitle.id;
   });
 
   const handlePointerDown = useCallback(
@@ -100,27 +116,44 @@ export function SubtitleBlock({
       const handleMove = (ev: PointerEvent) => {
         if (!draggingRef.current) return;
         const dx = ev.clientX - startXRef.current;
-        const deltaMs = pixelsToMs(dx, zoomRef.current);
+        const z = zoomRef.current;
+        const deltaMs = pixelsToMs(dx, z);
         const { startMs, endMs } = startValuesRef.current;
         const i = indexRef.current;
         const update = onUpdateRef.current;
+        // Filter our own edges out of the snap candidates so a subtitle
+        // can't snap to itself. Same pattern as TextOverlayBlock.
+        const candidates = (snapPointsRef.current ?? []).filter(
+          (p) => p.sourceId !== idRef.current,
+        );
+        const thresholdMs = getSnapThresholdMs(z);
 
         if (draggingRef.current === "move") {
-          const newStart = Math.max(0, Math.round(startMs + deltaMs));
+          const rawStart = Math.max(0, Math.round(startMs + deltaMs));
           const duration = endMs - startMs;
+          const snapped = resolveSnap(rawStart, candidates, thresholdMs);
+          const newStart = snapped?.ms ?? rawStart;
           update(i, { startMs: newStart, endMs: newStart + duration });
         } else if (draggingRef.current === "start") {
-          const newStart = Math.max(0, Math.round(startMs + deltaMs));
+          const rawStart = Math.max(0, Math.round(startMs + deltaMs));
+          const snapped = resolveSnap(rawStart, candidates, thresholdMs);
+          const newStart = snapped?.ms ?? rawStart;
           if (newStart < endMs - 100) {
             update(i, { startMs: newStart });
           }
         } else if (draggingRef.current === "end") {
-          const newEnd = Math.max(startMs + 100, Math.round(endMs + deltaMs));
-          update(i, { endMs: newEnd });
+          const rawEnd = Math.max(startMs + 100, Math.round(endMs + deltaMs));
+          const snapped = resolveSnap(rawEnd, candidates, thresholdMs);
+          const newEnd = snapped?.ms ?? rawEnd;
+          // Re-clamp after snap so the snap target can't violate the
+          // 100ms-min-duration invariant.
+          update(i, { endMs: Math.max(startMs + 100, newEnd) });
         }
       };
 
       const handleUp = () => {
+        // rowIndex commits live in handleMove so the visual position
+        // tracks the cursor; no extra dispatch needed on pointerup.
         draggingRef.current = null;
         document.removeEventListener("pointermove", handleMove);
         document.removeEventListener("pointerup", handleUp);
@@ -141,15 +174,27 @@ export function SubtitleBlock({
         // wanted feedback that the row is active. Drag/resize is still
         // wired through the (now-invisible) 8px-wide edge zones below.
         "group absolute bottom-1 top-1 flex items-center overflow-hidden rounded-[10px]",
+        // figma 2047:408685 (selected) — selected uses navy-100
+        // (lighter highlight) so the active chip stands out without
+        // dominating the row. Default keeps navy-300 from before.
         isSelected
-          ? "z-10 bg-heimdex-navy-500"
+          ? "z-10 bg-heimdex-navy-100 text-grayscale-900"
           : "bg-heimdex-navy-300 hover:brightness-110",
       )}
       style={{ left: leftPx, width: widthPx }}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect();
-        onSeek?.(subtitle.startMs);
+        if (razorMode && onRazorSplit) {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const offsetPx = e.clientX - rect.left;
+          const durationMs = subtitle.endMs - subtitle.startMs;
+          const rawMs = subtitle.startMs + (offsetPx / rect.width) * durationMs;
+          const atMs = Math.round(rawMs / FRAME_MS) * FRAME_MS;
+          onRazorSplit(atMs);
+        } else {
+          onSelect();
+          onSeek?.(subtitle.startMs);
+        }
       }}
     >
       {/* Left resize zone — invisible by default; hovering surfaces a
@@ -167,8 +212,26 @@ export function SubtitleBlock({
         className="flex-1 min-w-0 cursor-grab select-none px-[10px] py-[12px] active:cursor-grabbing"
         onPointerDown={handlePointerDown("move")}
       >
-        {widthPx > 30 && (
-          <p className="truncate text-[14px] font-semibold leading-[1.4] tracking-[-0.35px] text-white">
+        {widthPx >= 20 && (
+          // Hide text when the block narrows below ~20 px — even a
+          // single Korean glyph barely fits at that width, so showing
+          // it just produces flicker as the user zooms out. Matches
+          // the 'zoom out to a full hour fits' UX target.
+          <p
+            className={cn(
+              // Operator request 2026-05-24: auto-STT host subtitle
+              // blocks render their text centred inside the box.
+              // ``text-center`` combines cleanly with ``truncate``
+              // (overflow:hidden + ellipsis + nowrap) — the visible
+              // truncated portion stays centred in the available
+              // width.
+              "truncate text-center text-[14px] font-semibold leading-[1.4] tracking-[-0.35px]",
+              // navy-100 (selected) is too light for white text →
+              // switch to dark grayscale; navy-300 (default) stays
+              // white as before.
+              isSelected ? "text-grayscale-900" : "text-white",
+            )}
+          >
             {subtitle.text || "자막"}
           </p>
         )}

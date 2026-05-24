@@ -54,7 +54,7 @@ describe("useEditorState", () => {
     expect(result.current.state.isDirty).toBe(true);
   });
 
-  it("REMOVE_CLIP removes and recomputes", () => {
+  it("REMOVE_CLIP removes without recomputing positions", () => {
     const { result } = renderHook(() => useEditorState());
     const clips = [
       makeClip({ id: "c1", trimStartMs: 0, trimEndMs: 2000 }),
@@ -66,8 +66,9 @@ describe("useEditorState", () => {
 
     expect(result.current.state.clips).toHaveLength(1);
     expect(result.current.state.clips[0].id).toBe("c2");
-    expect(result.current.state.clips[0].timelineStartMs).toBe(0);
-    expect(result.current.state.totalDurationMs).toBe(3000);
+    // Gaps allowed — clip keeps its original timelineStartMs (2000)
+    expect(result.current.state.clips[0].timelineStartMs).toBe(2000);
+    expect(result.current.state.totalDurationMs).toBe(5000);
   });
 
   it("REMOVE_CLIP adjusts selectedClipIndex when removing before selected", () => {
@@ -122,7 +123,7 @@ describe("useEditorState", () => {
     expect(result.current.state.clips).toHaveLength(1);
   });
 
-  it("REORDER_CLIPS swaps and recomputes", () => {
+  it("REORDER_CLIPS swaps array order without recomputing positions", () => {
     const { result } = renderHook(() => useEditorState());
     const clips = [
       makeClip({ id: "c1", trimStartMs: 0, trimEndMs: 2000 }),
@@ -132,10 +133,13 @@ describe("useEditorState", () => {
     act(() => result.current.initFromScenes("v", "gdrive", clips));
     act(() => result.current.reorderClips(0, 1));
 
+    // Array order swapped; positions preserved from initial layout.
     expect(result.current.state.clips[0].id).toBe("c2");
     expect(result.current.state.clips[1].id).toBe("c1");
-    expect(result.current.state.clips[0].timelineStartMs).toBe(0);
-    expect(result.current.state.clips[1].timelineStartMs).toBe(5000);
+    // Clips keep their timelineStartMs from the initial packed layout
+    // (c2 was at 2000, c1 was at 0).
+    expect(result.current.state.clips[0].timelineStartMs).toBe(2000);
+    expect(result.current.state.clips[1].timelineStartMs).toBe(0);
     expect(result.current.state.selectedClipIndex).toBe(1);
   });
 
@@ -166,11 +170,14 @@ describe("useEditorState", () => {
     act(() => result.current.trimClip(0, undefined, 9000));
     expect(result.current.state.clips[0].trimEndMs).toBe(6000);
 
-    // Valid trim
+    // Valid trim — start trim shifts timelineStartMs forward
     act(() => result.current.trimClip(0, 2000, 4000));
     expect(result.current.state.clips[0].trimStartMs).toBe(2000);
     expect(result.current.state.clips[0].trimEndMs).toBe(4000);
-    expect(result.current.state.totalDurationMs).toBe(2000);
+    // timelineStartMs shifted by (2000-1000) = 1000, so clip starts at 1000
+    // totalDurationMs = 1000 + (4000-2000) = 3000
+    expect(result.current.state.clips[0].timelineStartMs).toBe(1000);
+    expect(result.current.state.totalDurationMs).toBe(3000);
   });
 
   it("TRIM_CLIP ensures start < end", () => {
@@ -245,10 +252,15 @@ describe("useEditorState", () => {
     expect(result.current.state.subtitles).toHaveLength(0);
   });
 
-  it("SET_ZOOM clamps to 25-300", () => {
+  it("SET_ZOOM clamps to 0.1-300 (lower floor allows 1hr-video full zoom-out)", () => {
+    // 2026-05-22 — floor reduced from 25 → 0.1 px/sec so a multi-minute
+    // / multi-hour clip can fully zoom out (1300 px viewport / 3600 s =
+    // 0.36 px/s for a 1 hr clip). UI-level minZoom is computed from the
+    // actual clip duration inside TimelineZoomControl; the reducer's
+    // floor only prevents negative or non-finite zooms.
     const { result } = renderHook(() => useEditorState());
-    act(() => result.current.setZoom(10));
-    expect(result.current.state.zoom).toBe(25);
+    act(() => result.current.setZoom(-5));
+    expect(result.current.state.zoom).toBe(0.1);
     act(() => result.current.setZoom(500));
     expect(result.current.state.zoom).toBe(300);
   });

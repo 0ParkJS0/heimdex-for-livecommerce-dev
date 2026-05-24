@@ -11,6 +11,7 @@ import { usePathname } from "next/navigation";
 import { PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HeimdexBrand } from "@/components/icons/figma";
+import { landingNavItems, NavGroup, NavLink } from "./Sidebar";
 
 function SettingsCubeIcon({ className }: { className?: string }) {
   return (
@@ -164,34 +165,56 @@ export function EditorSidebar({ collapsed }: EditorSidebarProps) {
           </button>
         </div>
 
-        <nav className="flex flex-col gap-1 px-2 pt-2">
-          {editorNavItems.map((item) => {
-            const active = isLinkActive(item.href, pathname);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={item.label}
-                aria-label={item.label}
-                className={cn(
-                  // 펼침 시 라벨 동반
-                  "flex h-10 items-center rounded-md transition-colors",
-                  expanded ? "w-full gap-3 px-3" : "w-12 justify-center",
-                  active
-                    ? "bg-grayscale-200 text-grayscale-800"
-                    : "text-grayscale-800 hover:bg-grayscale-100",
-                )}
-              >
-                <span className="flex-shrink-0">{item.icon}</span>
-                {expanded && (
-                  <span className="text-base font-medium text-grayscale-800">
-                    {item.label}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-        </nav>
+        {expanded ? (
+          // Expanded LNB mirrors the landing-page Sidebar nav (group + bullet
+          // list + 설정 footer). Operators get one consistent navigation
+          // surface across the app — the editor's collapsed 64px state
+          // is the only editor-specific affordance.
+          <>
+            <div className="px-5 pb-2 pt-2">
+              <span className="text-xs font-medium text-gray-400">메인</span>
+            </div>
+            <nav className="flex flex-col gap-0.5 px-2">
+              {landingNavItems.map((item) =>
+                item.kind === "group" ? (
+                  <NavGroup key={item.label} item={item} pathname={pathname} />
+                ) : (
+                  <NavLink
+                    key={item.href}
+                    label={item.label}
+                    href={item.href}
+                    badge={item.badge}
+                    pathname={pathname}
+                  />
+                ),
+              )}
+            </nav>
+          </>
+        ) : (
+          // Collapsed 64px state — editor-specific icon-only quick list.
+          // Same four anchors the editor has had since the LNB shrank.
+          <nav className="flex flex-col gap-1 px-2 pt-2">
+            {editorNavItems.map((item) => {
+              const active = isLinkActive(item.href, pathname);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  title={item.label}
+                  aria-label={item.label}
+                  className={cn(
+                    "flex h-10 w-12 items-center justify-center rounded-md transition-colors",
+                    active
+                      ? "bg-grayscale-200 text-grayscale-800"
+                      : "text-grayscale-800 hover:bg-grayscale-100",
+                  )}
+                >
+                  <span className="flex-shrink-0">{item.icon}</span>
+                </Link>
+              );
+            })}
+          </nav>
+        )}
 
         <div className="mt-auto border-t border-gray-200 px-2 py-3">
           <Link

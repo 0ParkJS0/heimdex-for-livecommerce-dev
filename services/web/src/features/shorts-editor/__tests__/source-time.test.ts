@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getSourceTime, getClipIndexAtTime, getActiveSubtitles } from "../lib/source-time";
+import { getSourceTime, getClipIndexAtTime, getActiveSubtitles, isSubtitleVisibleInClips, getVisibleSubtitles } from "../lib/source-time";
 import { recomputeTimeline } from "../lib/timeline-math";
 import type { EditorClip } from "../lib/types";
 
@@ -88,5 +88,93 @@ describe("getActiveSubtitles", () => {
 
   it("returns empty for empty array", () => {
     expect(getActiveSubtitles([], 0)).toHaveLength(0);
+  });
+});
+
+describe("isSubtitleVisibleInClips", () => {
+  it("returns true when subtitle falls fully within a clip", () => {
+    const clips = recomputeTimeline([makeClip(0, 10000, "v1", "c1")]);
+    expect(isSubtitleVisibleInClips({ startMs: 1000, endMs: 3000 }, clips)).toBe(true);
+  });
+
+  it("returns false when subtitle exceeds clip end", () => {
+    const clips = recomputeTimeline([makeClip(0, 5000, "v1", "c1")]);
+    // Subtitle ends at 7000 but clip ends at 5000
+    expect(isSubtitleVisibleInClips({ startMs: 4000, endMs: 7000 }, clips)).toBe(false);
+  });
+
+  it("returns false when subtitle starts before clip start", () => {
+    const clips = [{ ...makeClip(0, 5000, "v1", "c1"), timelineStartMs: 2000 }];
+    expect(isSubtitleVisibleInClips({ startMs: 1000, endMs: 3000 }, clips)).toBe(false);
+  });
+
+  it("returns true when subtitle fits in any of multiple clips", () => {
+    const clips = recomputeTimeline([
+      makeClip(0, 3000, "v1", "c1"),
+      makeClip(0, 5000, "v1", "c2"),
+    ]);
+    // Subtitle at 4000-6000 falls within clip 2 (timeline 3000-8000)
+    expect(isSubtitleVisibleInClips({ startMs: 4000, endMs: 6000 }, clips)).toBe(true);
+  });
+
+  it("returns false for empty clips", () => {
+    expect(isSubtitleVisibleInClips({ startMs: 0, endMs: 1000 }, [])).toBe(false);
+  });
+});
+
+describe("getVisibleSubtitles", () => {
+  it("trim shrink hides out-of-range subtitles, grow-back restores them", () => {
+    // Setup: clip [0, 10000] with three subtitles
+    const clips = recomputeTimeline([makeClip(0, 10000, "v1", "c1")]);
+    const subs = [
+      { startMs: 1000, endMs: 3000, text: "a" },
+      { startMs: 4000, endMs: 6000, text: "b" },
+      { startMs: 7000, endMs: 9000, text: "c" },
+    ];
+
+    // All visible initially
+    expect(getVisibleSubtitles(subs, clips)).toHaveLength(3);
+
+    // Trim right handle to [0, 5000] — only subtitle "a" visible
+    const trimmedClips = [{ ...clips[0], trimEndMs: 5000 }];
+    const visible = getVisibleSubtitles(subs, trimmedClips);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].text).toBe("a");
+
+    // Grow back to [0, 10000] — all three restored
+    const restoredClips = [{ ...clips[0], trimEndMs: 10000 }];
+    expect(getVisibleSubtitles(subs, restoredClips)).toHaveLength(3);
+  });
+
+  it("subtitle timestamps are unchanged after trim", () => {
+    const clips = recomputeTimeline([makeClip(0, 10000, "v1", "c1")]);
+    const subs = [
+      { startMs: 7000, endMs: 9000, text: "c" },
+    ];
+    // After trim to [0, 5000], sub is hidden but timestamps unchanged
+    const trimmedClips = [{ ...clips[0], trimEndMs: 5000 }];
+    const visible = getVisibleSubtitles(subs, trimmedClips);
+    expect(visible).toHaveLength(0);
+    // Original still has its timestamps
+    expect(subs[0].startMs).toBe(7000);
+    expect(subs[0].endMs).toBe(9000);
+  });
+});
+
+describe("MOVE_CLIP behavior (via getVisibleSubtitles)", () => {
+  it("moved clip changes which subtitles are visible", () => {
+    // Clip at [0, 5000]
+    const clips = [{ ...makeClip(0, 5000, "v1", "c1"), timelineStartMs: 0 }];
+    const subs = [
+      { startMs: 1000, endMs: 3000, text: "in-range" },
+      { startMs: 6000, endMs: 8000, text: "out-of-range" },
+    ];
+    expect(getVisibleSubtitles(subs, clips)).toHaveLength(1);
+
+    // Move clip to start at 5000 → window is [5000, 10000]
+    const movedClips = [{ ...clips[0], timelineStartMs: 5000 }];
+    const visible = getVisibleSubtitles(subs, movedClips);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].text).toBe("out-of-range");
   });
 });

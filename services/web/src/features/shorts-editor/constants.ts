@@ -23,21 +23,25 @@ export const DEFAULT_OUTPUT: CompositionOutputSpec = {
 // constant only controls the "add subtitle" affordance and the fall-
 // back synthesis path when ``comp.subtitles`` is empty.
 //
-// 2026-05-20 — operator review: the editor's manual-add subtitle now
-// targets a smaller visual footprint that reads as ~16px in the 1440
-// viewport editor preview (preview height ~626). Storage stays in
-// output (720h) reference coords so the backend PIL renderer keeps
-// using the value verbatim; the editor + fullscreen previews scale
-// down via CSS container queries (see PreviewPanel + OverlayRenderer):
+// 2026-05-22 — operator review (Item 11 / D11=A): the editor canvas
+// reference is 352×626 (exact 9:16 at integer-pixel resolution) and
+// the operator's mental model is "25px in that reference frame."
+// Storage stays in 720h output reference coords so the backend PIL
+// renderer keeps using the value verbatim; the editor + fullscreen
+// previews scale via CSS container queries (see PreviewPanel +
+// OverlayRenderer):
 //
 //   displayed_px = stored_px × (preview_height / 720)
 //
-// stored 18 → 18 × (626/720) ≈ 15.65 px in the 1440-anchor editor
-// preview, which rounds to the requested 16 px target. y=0.80
-// matches the new lower-third position the operator picked.
+// To hit a 25 px displayed target in the 626-tall editor preview the
+// stored value is 25 × (720 / 626) ≈ 28.75 → 29. The container-query
+// scale already gives the "viewport grows → visible font grows
+// proportionally, stored value unchanged" behaviour the operator
+// asked for — picking transform:scale vs cqh is an implementation
+// detail; both produce the same visual.
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   fontFamily: "Pretendard",
-  fontSizePx: 18,
+  fontSizePx: 29,
   fontColor: "#000000",
   fontWeight: 700,
   positionX: 0.5,

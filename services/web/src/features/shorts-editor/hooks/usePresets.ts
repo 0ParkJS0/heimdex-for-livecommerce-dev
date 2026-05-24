@@ -20,12 +20,14 @@ import {
   updatePreset as apiUpdate,
 } from "@/lib/api/subtitle-presets";
 import type {
+  CompositionPresetPayload,
   EditorBackgroundOverlay,
   EditorOverlay,
   EditorTextOverlay,
   PresetKind,
   WirePreset,
 } from "../lib/overlay-types";
+import type { EditorState } from "../lib/types";
 
 type TokenGetter = () => Promise<string | null>;
 
@@ -45,6 +47,14 @@ export interface PresetsApi {
     overlay: EditorOverlay,
     isShared: boolean,
   ) => Promise<WirePreset | null>;
+  // Composition presets — snapshot the global editor chrome (subtitle
+  // style, overlay set, letterbox, video transform). Backend already
+  // accepts kind="composition" with a generic style_json dict.
+  saveComposition: (
+    name: string,
+    payload: CompositionPresetPayload,
+    isShared: boolean,
+  ) => Promise<WirePreset | null>;
   rename: (presetId: string, name: string) => Promise<void>;
   setShared: (presetId: string, isShared: boolean) => Promise<void>;
   remove: (presetId: string) => Promise<void>;
@@ -52,6 +62,10 @@ export interface PresetsApi {
     overlay: O,
     preset: WirePreset,
   ) => O;
+  // Re-parse a preset's style_json into a CompositionPresetPayload
+  // ready for the APPLY_COMPOSITION_TEMPLATE reducer action. Returns
+  // null when the preset's kind is not "composition".
+  parseComposition: (preset: WirePreset) => CompositionPresetPayload | null;
 }
 
 export function usePresets({
@@ -112,6 +126,49 @@ export function usePresets({
       }
     },
     [getToken],
+  );
+
+  // Composition save — serialises the payload as snake_case JSON so
+  // the backend can store it under WirePreset.style_json verbatim,
+  // then prepends the returned preset to the list so the operator
+  // sees it immediately in the templates grid.
+  const saveComposition = useCallback(
+    async (
+      name: string,
+      payload: CompositionPresetPayload,
+      isShared: boolean,
+    ) => {
+      try {
+        const styleJson = serializeCompositionPayload(payload);
+        const created = await apiCreate(
+          {
+            name,
+            kind: "composition",
+            style_json: styleJson,
+            is_shared: isShared,
+          },
+          getToken,
+        );
+        setPresets((prev) => [created, ...prev]);
+        return created;
+      } catch (err) {
+        if (err instanceof PresetRateLimitError) {
+          setError(err.message);
+        } else {
+          setError(err instanceof Error ? err.message : "프리셋 저장 실패");
+        }
+        return null;
+      }
+    },
+    [getToken],
+  );
+
+  const parseComposition = useCallback(
+    (preset: WirePreset): CompositionPresetPayload | null => {
+      if (preset.kind !== "composition") return null;
+      return parseCompositionPayload(preset.style_json);
+    },
+    [],
   );
 
   const rename = useCallback(
@@ -175,10 +232,12 @@ export function usePresets({
     error,
     reload,
     save,
+    saveComposition,
     rename,
     setShared,
     remove,
     applyTo,
+    parseComposition,
   };
 }
 
@@ -363,4 +422,297 @@ function getBool(
 ): boolean {
   const v = obj[key];
   return typeof v === "boolean" ? v : fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Composition preset (de)serialisation
+// ---------------------------------------------------------------------------
+//
+// The wire format for kind="composition" is a single dict under
+// WirePreset.style_json with snake_case top-level keys mirroring the
+// CompositionPresetPayload shape. Overlay bodies are also serialised
+// in snake_case so a saved preset round-trips cleanly through the
+// backend's _validate_style_json (which only enforces "the JSON is an
+// object").
+
+/**
+ * Build a CompositionPresetPayload from the current editor state.
+ * Used by the GNB save flow (handleTemplateSave with mode="composition").
+ *
+ * Operator-confirmed shape (2026-05-24):
+ *   * subtitleStyle  → state.subtitles[0]?.style (operator only edits a
+ *                      single global style)
+ *   * overlays       → every operator-added overlay, stripped of id +
+ *                      absolute timing (duration retained)
+ *   * letterbox      → state.letterbox or null
+ *   * videoTransform → state.videoTransform
+ */
+export function buildCompositionPayloadFromState(
+  state: EditorState,
+): CompositionPresetPayload {
+  const firstSub = state.subtitles[0];
+  const subtitleStyle = firstSub
+    ? {
+        fontFamily: firstSub.style.fontFamily,
+        fontSizePx: firstSub.style.fontSizePx,
+        fontColor: firstSub.style.fontColor,
+        fontWeight: firstSub.style.fontWeight,
+        positionX: firstSub.style.positionX,
+        positionY: firstSub.style.positionY,
+        backgroundColor: firstSub.style.backgroundColor,
+        backgroundOpacity: firstSub.style.backgroundOpacity,
+      }
+    : null;
+
+  const overlays = state.overlays.map((o) => {
+    const durationMs = Math.max(1, o.endMs - o.startMs);
+    // Strip id / startMs / endMs / kind from the payload — the apply
+    // reducer regenerates id, kind is carried in the outer
+    // CompositionPresetOverlayPayload.kind, and timing is anchored to
+    // the apply-time playhead.
+    if (o.kind === "text") {
+      // Destructure to drop identity fields without mutating the
+      // source. Spreading first then deleting keeps tooling happy.
+      const {
+        id: _id,
+        kind: _kind,
+        startMs: _s,
+        endMs: _e,
+        layerIndex: _li,
+        ...rest
+      } = o;
+      void _id;
+      void _kind;
+      void _s;
+      void _e;
+      void _li;
+      return {
+        kind: "text" as const,
+        layerIndex: o.layerIndex,
+        durationMs,
+        payload: rest as unknown as Record<string, unknown>,
+      };
+    }
+    const {
+      id: _id,
+      kind: _kind,
+      startMs: _s,
+      endMs: _e,
+      layerIndex: _li,
+      ...rest
+    } = o;
+    void _id;
+    void _kind;
+    void _s;
+    void _e;
+    void _li;
+    return {
+      kind: "background" as const,
+      layerIndex: o.layerIndex,
+      durationMs,
+      payload: rest as unknown as Record<string, unknown>,
+    };
+  });
+
+  const letterbox = state.letterbox
+    ? {
+        topHeightPct: state.letterbox.topHeightPct,
+        bottomHeightPct: state.letterbox.bottomHeightPct,
+        fillColor: state.letterbox.fillColor,
+        borderColor: state.letterbox.borderColor,
+        borderWidthPx: state.letterbox.borderWidthPx,
+      }
+    : null;
+
+  return {
+    subtitleStyle,
+    overlays,
+    letterbox,
+    videoTransform: {
+      x: state.videoTransform.x,
+      y: state.videoTransform.y,
+      scale: state.videoTransform.scale,
+      rotationDeg: state.videoTransform.rotationDeg ?? 0,
+      outline: state.videoTransform.outline ?? null,
+      shadow: state.videoTransform.shadow ?? null,
+    },
+  };
+}
+
+function serializeCompositionPayload(
+  payload: CompositionPresetPayload,
+): Record<string, unknown> {
+  return {
+    subtitle_style: payload.subtitleStyle
+      ? {
+          font_family: payload.subtitleStyle.fontFamily,
+          font_size_px: payload.subtitleStyle.fontSizePx,
+          font_color: payload.subtitleStyle.fontColor,
+          font_weight: payload.subtitleStyle.fontWeight,
+          position_x: payload.subtitleStyle.positionX,
+          position_y: payload.subtitleStyle.positionY,
+          background_color: payload.subtitleStyle.backgroundColor,
+          background_opacity: payload.subtitleStyle.backgroundOpacity,
+        }
+      : null,
+    overlays: payload.overlays.map((o) => ({
+      kind: o.kind,
+      layer_index: o.layerIndex,
+      duration_ms: o.durationMs,
+      payload: o.payload,
+    })),
+    letterbox: payload.letterbox
+      ? {
+          top_height_pct: payload.letterbox.topHeightPct,
+          bottom_height_pct: payload.letterbox.bottomHeightPct,
+          fill_color: payload.letterbox.fillColor,
+          border_color: payload.letterbox.borderColor,
+          border_width_px: payload.letterbox.borderWidthPx,
+        }
+      : null,
+    video_transform: {
+      x: payload.videoTransform.x,
+      y: payload.videoTransform.y,
+      scale: payload.videoTransform.scale,
+      rotation_deg: payload.videoTransform.rotationDeg ?? 0,
+      outline: payload.videoTransform.outline
+        ? {
+            color: payload.videoTransform.outline.color,
+            width_px: payload.videoTransform.outline.widthPx,
+          }
+        : null,
+      shadow: payload.videoTransform.shadow
+        ? {
+            color: payload.videoTransform.shadow.color,
+            offset_x: payload.videoTransform.shadow.offsetX,
+            offset_y: payload.videoTransform.shadow.offsetY,
+            blur_px: payload.videoTransform.shadow.blurPx,
+            spread_px: payload.videoTransform.shadow.spreadPx,
+          }
+        : null,
+    },
+  };
+}
+
+function parseCompositionPayload(
+  raw: Record<string, unknown>,
+): CompositionPresetPayload {
+  // Subtitle style — every numeric field defaults reasonable so a
+  // malformed dict still produces an applicable payload.
+  const subRaw = raw["subtitle_style"];
+  const subtitleStyle =
+    subRaw && typeof subRaw === "object"
+      ? (() => {
+          const s = subRaw as Record<string, unknown>;
+          return {
+            fontFamily: getString(s, "font_family", "Pretendard"),
+            fontSizePx: getNumber(s, "font_size_px", 29),
+            fontColor: getString(s, "font_color", "#000000"),
+            fontWeight: getNumber(s, "font_weight", 700),
+            positionX: getNumber(s, "position_x", 0.5),
+            positionY: getNumber(s, "position_y", 0.8),
+            backgroundColor:
+              s["background_color"] === null
+                ? null
+                : getString(s, "background_color", "#FFFFFF") || null,
+            backgroundOpacity: getNumber(s, "background_opacity", 0.95),
+          };
+        })()
+      : null;
+
+  // Overlays — each entry carries its kind + layerIndex + durationMs +
+  // payload (the overlay body sans id/timing). Skip malformed entries
+  // so a partial wire dump still produces a usable apply.
+  const overlaysRaw = Array.isArray(raw["overlays"]) ? raw["overlays"] : [];
+  const overlays = overlaysRaw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const e = entry as Record<string, unknown>;
+      const kind = e["kind"];
+      if (kind !== "text" && kind !== "background") return null;
+      const body = e["payload"];
+      if (!body || typeof body !== "object") return null;
+      return {
+        kind,
+        layerIndex: getNumber(e, "layer_index", 0),
+        durationMs: getNumber(e, "duration_ms", 3000),
+        payload: body as Record<string, unknown>,
+      };
+    })
+    .filter(
+      (v): v is CompositionPresetPayload["overlays"][number] => v !== null,
+    );
+
+  // Letterbox — keep null when the raw value is null/missing so the
+  // reducer leaves the current letterbox unchanged on apply.
+  const lbRaw = raw["letterbox"];
+  const letterbox =
+    lbRaw && typeof lbRaw === "object"
+      ? (() => {
+          const l = lbRaw as Record<string, unknown>;
+          return {
+            topHeightPct: getNumber(l, "top_height_pct", 0),
+            bottomHeightPct: getNumber(l, "bottom_height_pct", 0),
+            fillColor: getString(l, "fill_color", "#000000"),
+            borderColor:
+              l["border_color"] === null
+                ? null
+                : getString(l, "border_color", "#000000") || null,
+            borderWidthPx: getNumber(l, "border_width_px", 0),
+          };
+        })()
+      : null;
+
+  // Video transform — always present, defaults to centred 1× so a
+  // legacy preset without the field still applies cleanly. ``outline``
+  // rides along on the same payload; ``null`` / missing → no outline.
+  const vtRaw = raw["video_transform"];
+  const videoTransform =
+    vtRaw && typeof vtRaw === "object"
+      ? (() => {
+          const v = vtRaw as Record<string, unknown>;
+          const outlineRaw = v["outline"];
+          const outline =
+            outlineRaw && typeof outlineRaw === "object"
+              ? (() => {
+                  const o = outlineRaw as Record<string, unknown>;
+                  return {
+                    color: getString(o, "color", "#000000"),
+                    widthPx: getNumber(o, "width_px", 0),
+                  };
+                })()
+              : null;
+          const shadowRaw = v["shadow"];
+          const shadow =
+            shadowRaw && typeof shadowRaw === "object"
+              ? (() => {
+                  const s = shadowRaw as Record<string, unknown>;
+                  return {
+                    color: getString(s, "color", "#000000"),
+                    offsetX: getNumber(s, "offset_x", 0),
+                    offsetY: getNumber(s, "offset_y", 4),
+                    blurPx: getNumber(s, "blur_px", 0),
+                    spreadPx: getNumber(s, "spread_px", 0),
+                  };
+                })()
+              : null;
+          return {
+            x: getNumber(v, "x", 0.5),
+            y: getNumber(v, "y", 0.5),
+            scale: getNumber(v, "scale", 1),
+            rotationDeg: getNumber(v, "rotation_deg", 0),
+            outline,
+            shadow,
+          };
+        })()
+      : {
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          rotationDeg: 0,
+          outline: null,
+          shadow: null,
+        };
+
+  return { subtitleStyle, overlays, letterbox, videoTransform };
 }

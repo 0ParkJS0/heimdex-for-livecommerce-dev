@@ -175,7 +175,12 @@ export function ResultCard({
     return () => {
       cancelled = true;
     };
-  }, [child.render_job_id, getAccessToken]);
+    // child.render_status is included so the effect re-runs when the
+    // backend flips the child from "rendering" → "completed". Without
+    // this, a card whose thumbnail_video_id was still null on the first
+    // fetch never re-fetches and the thumbnail slot stays on the
+    // placeholder forever — even after the render finishes.
+  }, [child.render_job_id, child.render_status, getAccessToken]);
 
   const thumbnailSrc = (() => {
     if (thumbStage === "placeholder") return null;
@@ -219,7 +224,7 @@ export function ResultCard({
 
   return (
     <article
-      className="relative flex h-[253px] w-[287px] items-start overflow-clip rounded-card border border-grayscale-100 bg-white"
+      className="relative flex h-[253px] w-[287px] items-start overflow-clip rounded-card border border-grayscale-100 bg-white transition-shadow hover:shadow-[2px_2px_20px_0_rgba(0,0,0,0.25)]"
       data-testid={`result-card-${ordinal}`}
     >
       <button

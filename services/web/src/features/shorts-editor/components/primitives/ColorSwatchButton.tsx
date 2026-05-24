@@ -10,7 +10,7 @@ interface ColorSwatchButtonProps {
   onChange: (color: string) => void;
   disabled?: boolean;
   ariaLabel: string;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
   className?: string;
 }
 
@@ -44,8 +44,12 @@ export function ColorSwatchButton({
         aria-haspopup="dialog"
         aria-expanded={open}
         className={cn(
-          "relative inline-flex cursor-pointer items-center justify-center rounded-lg border border-grayscale-200 bg-white p-0.5",
-          size === "sm" ? "h-7 w-7" : "h-9 w-9",
+          "relative inline-flex shrink-0 cursor-pointer items-center justify-center rounded-lg border border-grayscale-200 bg-white p-0.5",
+          // Figma stroke / shadow swatches are 40×40 (rounded-10 outer
+          // + inner 30×30 fill). The 'lg' size matches that exactly so
+          // the swatch lines up with the chevron-vertical stepper to
+          // its left at the same row height.
+          size === "sm" ? "h-7 w-7" : size === "lg" ? "h-10 w-10" : "h-9 w-9",
           disabled && "cursor-not-allowed opacity-40",
           className,
         )}

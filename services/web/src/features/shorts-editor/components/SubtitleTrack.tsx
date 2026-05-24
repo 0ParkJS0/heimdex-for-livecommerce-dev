@@ -5,6 +5,7 @@ import type { EditorSubtitle, HistoryEntry } from "../lib/types";
 import { msToPixels, pixelsToMs } from "../lib/timeline-math";
 import { DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { generateSubtitleId } from "../hooks/useEditorState";
+import type { SnapPoint } from "../lib/snap";
 import { SubtitleBlock } from "./SubtitleBlock";
 
 interface SubtitleTrackProps {
@@ -23,6 +24,11 @@ interface SubtitleTrackProps {
   onPushHistory?: (entry: HistoryEntry) => void;
   // figma: 1669:154010 (펼침) / 1669:49002 (접힘) — zoom 변동 시 자막 섹션 펼침/접힘
   expanded?: boolean;
+  // Magnetic snap targets (T4 second half). Forwarded straight to
+  // SubtitleBlock so each block can resolve snap during a drag.
+  snapPoints?: SnapPoint[];
+  razorMode?: boolean;
+  onRazorSplitSubtitle?: (index: number, atMs: number) => void;
 }
 
 export function SubtitleTrack({
@@ -35,6 +41,9 @@ export function SubtitleTrack({
   onAddSubtitle,
   onSeek,
   onPushHistory,
+  snapPoints,
+  razorMode = false,
+  onRazorSplitSubtitle,
 }: SubtitleTrackProps) {
   const totalWidth = msToPixels(totalDurationMs, zoom);
 
@@ -82,6 +91,9 @@ export function SubtitleTrack({
             onUpdate={onUpdateSubtitle}
             onSeek={onSeek}
             onPushHistory={onPushHistory}
+            snapPoints={snapPoints}
+            razorMode={razorMode}
+            onRazorSplit={onRazorSplitSubtitle ? (atMs) => onRazorSplitSubtitle(index, atMs) : undefined}
           />
         ))}
       </div>

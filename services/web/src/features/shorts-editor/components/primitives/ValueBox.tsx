@@ -35,7 +35,7 @@ export function ValueBox({
   return (
     <div
       className={cn(
-        "flex h-9 items-center justify-center gap-1 rounded-lg border border-grayscale-200 bg-white px-2",
+        "flex h-10 items-center justify-center gap-1 rounded-lg border border-grayscale-200 bg-white px-2",
         className,
       )}
     >
@@ -57,7 +57,10 @@ export function ValueBox({
           onChange(next);
         }}
         aria-label={ariaLabel}
-        className="w-full min-w-0 border-0 bg-transparent p-0 text-center text-sm text-grayscale-800 focus:outline-none"
+        // Explicit w-8 + min-w-0 so the input doesn't inherit the
+        // browser-default ~150 px min-width that pushed the parent
+        // grid cell past its 1fr allowance.
+        className="w-8 min-w-0 border-0 bg-transparent p-0 text-center text-sm text-grayscale-800 focus:outline-none"
       />
       {suffix ? (
         <span className="text-[10px] font-medium text-grayscale-400">{suffix}</span>
@@ -93,14 +96,15 @@ export function ValueBoxXY({
   className,
   ariaLabel,
 }: ValueBoxXYProps) {
-  // Tightened again on 2026-05-18 (round 2) — drop gap to 0 and slim
-  // padding to px-0.5 so 3-digit values (X 100 Y 100) no longer poke
-  // past the rounded container in the narrow 위치 column. Letter
-  // prefixes sit flush against the inputs.
+  // 2026-05-22 — pl-2 pr-0.5 (was px-0.5 symmetric) shifts the
+  // X/Y group ~6px right so the values read as visually centered
+  // inside the rounded container. The earlier symmetric padding
+  // left the inputs hugging the left wall because the prefix
+  // characters are narrower than the inputs they precede.
   return (
     <div
       className={cn(
-        "flex h-9 items-center justify-center gap-0 rounded-lg border border-grayscale-200 bg-white px-0.5",
+        "flex h-10 items-center justify-center gap-0.5 rounded-lg border border-grayscale-200 bg-white pl-2 pr-0.5",
         className,
       )}
       aria-label={ariaLabel}
@@ -144,7 +148,7 @@ export function ValueBoxWH({
   return (
     <div
       className={cn(
-        "flex h-9 items-center justify-center gap-1.5 rounded-lg border border-grayscale-200 bg-white px-2",
+        "flex h-10 items-center justify-center gap-1.5 rounded-lg border border-grayscale-200 bg-white px-2",
         className,
       )}
       aria-label={ariaLabel}

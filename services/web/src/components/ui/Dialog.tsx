@@ -4,6 +4,7 @@
 // node-name: 삭제 팝업 · spec: w=286, padding=24, gap=28, cornerRadius=20
 
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { InfoIcon, WarningIcon } from "@/components/icons/figma";
 import { Button } from "./Button";
@@ -46,12 +47,16 @@ export function Dialog({
   }, [open, onClose]);
 
   if (!open) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
+  // Render through a portal mounted on document.body so the dialog always
+  // wins the stacking order — fixed+z-50 alone is not enough when a
+  // parent creates a stacking context (transform / filter / opacity, etc).
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
       <div
@@ -102,6 +107,7 @@ export function Dialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
