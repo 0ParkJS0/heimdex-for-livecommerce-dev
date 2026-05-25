@@ -572,6 +572,39 @@ class Settings(BaseSettings):
     # take that long; surface as ``enumeration_llm_failed``.
     auto_shorts_product_v2_stt_enum_timeout_s: float = 90.0
 
+    # ---------- overlay-driven enumeration (parallel to vision / STT) ----------
+    #
+    # Discovers products from operator-placed overlay graphics
+    # (product cards, price banners) that the existing vision path
+    # filters out via ``LABEL_PROMPT_SYSTEM``'s
+    # ``is_product=false`` rule for on-screen graphics. Sibling of
+    # the STT enumeration block above.
+    #
+    # Module: ``app.modules.shorts_auto_product.enumerate_overlay``.
+    # Status: dormant -- not called from any production path yet.
+    auto_shorts_product_v2_overlay_track_enabled: bool = False
+    auto_shorts_product_v2_overlay_extraction_model: str = "gpt-4o-mini"
+    auto_shorts_product_v2_overlay_extraction_daily_budget_usd: float = 20.0
+    auto_shorts_product_v2_overlay_detector_score_threshold: float = 0.40
+    # S3 prefix the picker writes product crops to. Empty means the
+    # caller picks a per-video prefix at wiring time, e.g.
+    # ``s3://<bucket>/catalog/overlay/<video_drive_id>``.
+    auto_shorts_product_v2_overlay_crop_upload_prefix: str = ""
+
+    # ---------- overlay-driven shorts assembly (phase 4 of the track) ----------
+    #
+    # Consumes the OverlayEnumerationResult above and produces a
+    # slot-assembled shorts plan (HOOK / HERO / DEMO(s) / CLOSE).
+    # Renders no media -- the plan is meant for the existing
+    # ``shorts-render-worker`` to execute at phase 5.
+    #
+    # Module: ``app.modules.shorts_auto_product.overlay_shorts``.
+    # Status: dormant -- not called from any production path yet.
+    auto_shorts_product_v2_overlay_shorts_enabled: bool = False
+    auto_shorts_product_v2_overlay_shorts_default_duration_s: int = 60
+    auto_shorts_product_v2_overlay_shorts_silence_db: int = -28
+    auto_shorts_product_v2_overlay_shorts_silence_min_dur_s: float = 0.18
+
     # --- Auto-shorts: post-enumeration catalog consolidation ---
     #
     # One LLM call that does TWO things in lockstep on the union of
