@@ -86,12 +86,18 @@ export interface ProductScanRequest {
 
 /** Response for ``POST /api/shorts/auto/products/{video_id}/scan``. */
 export interface ProductScanResponse {
+  // Backend returns null for job_id when the tangibility gate skips the
+  // video. The gate is OFF today, so job_id is always present; typed string
+  // until the wizard implements the skip path. TODO: make nullable + handle
+  // skipped_reason when tangibility_gate_enabled ships.
   job_id: string;
   /**
    * True when an in-flight enumerate job already covers this video —
    * the same parent gets returned, no duplicate work / no extra cost.
    */
   deduped: boolean;
+  /** Set when the tangibility gate skips an intangible-product video. */
+  skipped_reason: 'intangible_product' | null;
 }
 
 /**
@@ -153,8 +159,14 @@ export interface ProductCatalogResponse {
 }
 
 export interface ScanOrderResponse {
+  // Backend returns null for parent_job_id when the tangibility gate skips
+  // the video. The gate is OFF today, so it's always present; typed string
+  // until the wizard implements the skip path. TODO: make nullable + handle
+  // skipped_reason when tangibility_gate_enabled ships.
   parent_job_id: string;
   deduped: boolean;
+  /** Set when the tangibility gate skips an intangible-product video. */
+  skipped_reason: 'intangible_product' | null;
 }
 
 // ----------------------------------------------------------------------

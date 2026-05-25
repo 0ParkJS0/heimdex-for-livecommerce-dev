@@ -167,6 +167,9 @@ services:
       # restart does NOT reload .env without these lines. Memory:
       # feedback_compose_env_passthrough_required.md.
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_ENABLED=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_ENABLED:-false}
+      # STT-grounding sub-flag (PR #252). config.py defaults True; mirror that
+      # here so it's disable-able via .env when consolidate is on (allowlist rule).
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_STT_GROUNDING_ENABLED=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_STT_GROUNDING_ENABLED:-true}
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_MODEL=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_MODEL:-gpt-4o}
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_TIMEOUT_S=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_TIMEOUT_S:-120}
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_GRACE_S=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_GRACE_S:-105}

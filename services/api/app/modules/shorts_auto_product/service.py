@@ -47,7 +47,6 @@ from app.modules.shorts_auto_product.repositories import (
     ProductScanDailyCostRepository,
     ProductScanJobRepository,
 )
-from app.modules.video_summary.repository import VideoSummaryRepository
 from app.modules.shorts_auto_product.schemas import (
     CatalogProductSummary,
     ClipResponse,
@@ -294,6 +293,13 @@ class ProductScanService:
         await self._require_budget(org_id)
 
         if self.settings.tangibility_gate_enabled:
+            # Loose-coupling carve-out: lazy import keeps the video_summary
+            # domain out of this module's module-level import graph (only
+            # auth/tenancy/users are top-level cross-imports here).
+            from app.modules.video_summary.repository import (
+                VideoSummaryRepository,
+            )
+
             vs_row = await VideoSummaryRepository(self.session).get_by_video(
                 org_id, str(video_id),
             )
@@ -686,6 +692,13 @@ class ProductScanService:
         await self._require_budget(org_id)
 
         if self.settings.tangibility_gate_enabled:
+            # Loose-coupling carve-out: lazy import keeps the video_summary
+            # domain out of this module's module-level import graph (only
+            # auth/tenancy/users are top-level cross-imports here).
+            from app.modules.video_summary.repository import (
+                VideoSummaryRepository,
+            )
+
             vs_row = await VideoSummaryRepository(self.session).get_by_video(
                 org_id, str(video_id),
             )

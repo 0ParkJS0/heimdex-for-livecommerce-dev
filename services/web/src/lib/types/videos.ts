@@ -113,6 +113,13 @@ export interface VideoSummaryResponse {
   scene_count: number;
   generated_at: string | null;
   edited_at: string | null;
+  // Tangibility classification (video-level product-scan gate). Mirrors
+  // backend VideoSummaryResponse; all null unless tangibility_gate_enabled.
+  tangibility: string | null;
+  tangibility_source: string | null;
+  tangibility_p_intangible: number | null;
+  tangibility_model_version: string | null;
+  tangibility_mode: string | null;
 }
 
 export interface VideoStats {

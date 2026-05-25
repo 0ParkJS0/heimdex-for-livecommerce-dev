@@ -18,6 +18,12 @@ from typing import Any
 import numpy as np
 import pytest
 
+# The overlay enumeration modules import cv2 (opencv), which is NOT a declared
+# API dependency — the overlay feature is dormant and slated to move into a
+# dedicated worker (see .claude/plans). Skip the module cleanly when cv2 is
+# absent so a bare `pytest` run / the shadow core lane doesn't error on collection.
+pytest.importorskip("cv2")
+
 from app.modules.shorts_auto_product.enumerate_overlay.image_picker import (
     pick_product_images_for_scene,
 )
