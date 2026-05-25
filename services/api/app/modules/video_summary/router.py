@@ -39,6 +39,7 @@ def _get_service(
         repo=repo,
         scene_client=scene_client,
         openai_client=openai_client,
+        settings=settings,
         model=settings.video_summary_model,
     )
 

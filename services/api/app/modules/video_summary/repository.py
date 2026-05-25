@@ -32,6 +32,12 @@ class VideoSummaryRepository:
         prompt_version: str,
         scene_count: int,
         input_hash: str,
+        *,
+        tangibility: str | None = None,
+        tangibility_source: str | None = None,
+        tangibility_p_intangible: float | None = None,
+        tangibility_model_version: str | None = None,
+        tangibility_mode: str | None = None,
     ) -> VideoSummary:
         existing = await self.get_by_video(org_id, video_id)
         if existing is not None:
@@ -40,6 +46,12 @@ class VideoSummaryRepository:
             existing.prompt_version = prompt_version
             existing.scene_count = scene_count
             existing.input_hash = input_hash
+            if tangibility is not None:
+                existing.tangibility = tangibility
+                existing.tangibility_source = tangibility_source
+                existing.tangibility_p_intangible = tangibility_p_intangible
+                existing.tangibility_model_version = tangibility_model_version
+                existing.tangibility_mode = tangibility_mode
             return existing
 
         record = VideoSummary(
@@ -50,6 +62,11 @@ class VideoSummaryRepository:
             prompt_version=prompt_version,
             scene_count=scene_count,
             input_hash=input_hash,
+            tangibility=tangibility,
+            tangibility_source=tangibility_source,
+            tangibility_p_intangible=tangibility_p_intangible,
+            tangibility_model_version=tangibility_model_version,
+            tangibility_mode=tangibility_mode,
         )
         self._session.add(record)
         await self._session.flush()

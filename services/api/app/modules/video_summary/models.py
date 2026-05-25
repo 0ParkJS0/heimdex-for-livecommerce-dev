@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,12 @@ class VideoSummary(UUIDMixin, TimestampMixin, Base):
     # Metadata
     scene_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
+    # --- Tangibility classification (video-level product scan gate) ---
+    tangibility: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tangibility_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tangibility_p_intangible: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tangibility_model_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tangibility_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("org_id", "video_id", name="uq_video_summaries_org_video"),

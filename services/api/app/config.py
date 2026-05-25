@@ -700,6 +700,23 @@ class Settings(BaseSettings):
     # ``auto_shorts_product_v2_storyboard_mode_enabled`` is True.
     auto_shorts_product_v2_storyboard_shadow_mode: bool = False
 
+    # --- Tangibility gate (video-level intangible filter for product scan) ---
+    tangibility_gate_enabled: bool = False
+    # "hybrid"   — LR + LLM routing (default)
+    # "lr_only"  — LR only, external dependency 0, cost 0, latency <= 1ms
+    # "llm_only" — LLM only, skip LR
+    tangibility_mode: Literal["hybrid", "lr_only", "llm_only"] = "hybrid"
+    tangibility_classifier_version: str = "v1"
+    # if LR confidence is in 0.5±threshold -> LLM (gap < 0.15 ≡ max(p) < 0.65)
+    tangibility_lr_gap_threshold: float = 0.15
+    # if classified as intangible but p_intangible is below this threshold, 
+    # do not block — false positive mitigation
+    tangibility_min_confidence_to_block: float = 0.7
+    tangibility_llm_model: str = "gpt-4o-mini"
+    tangibility_llm_prompt_version: str = "v1"
+    tangibility_llm_timeout_s: float = 5.0
+    tangibility_llm_daily_budget_usd: float = 5.0
+
     # --- Auto-shorts: OCR re-rank in mention_extractor ---
     # Plan: ``.claude/plans/ocr-mention-extractor-rerank.md``.
     #

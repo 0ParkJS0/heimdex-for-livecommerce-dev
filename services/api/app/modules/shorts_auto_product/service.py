@@ -47,6 +47,7 @@ from app.modules.shorts_auto_product.repositories import (
     ProductScanDailyCostRepository,
     ProductScanJobRepository,
 )
+from app.modules.video_summary.repository import VideoSummaryRepository
 from app.modules.shorts_auto_product.schemas import (
     CatalogProductSummary,
     ClipResponse,
@@ -291,6 +292,30 @@ class ProductScanService:
     ) -> ScanResponse:
         self._require_enabled_for_org(org_id)
         await self._require_budget(org_id)
+
+        if self.settings.tangibility_gate_enabled:
+            vs_row = await VideoSummaryRepository(self.session).get_by_video(
+                org_id, str(video_id),
+            )
+            if (
+                vs_row is not None
+                and vs_row.tangibility == "intangible"
+                and vs_row.tangibility_p_intangible is not None
+                and vs_row.tangibility_p_intangible
+                    >= self.settings.tangibility_min_confidence_to_block
+            ):
+                logger.info(
+                    "product_v2_scan_skipped_intangible "
+                    "org_id=%s video_id=%s p_intangible=%.3f source=%s",
+                    str(org_id), str(video_id),
+                    vs_row.tangibility_p_intangible,
+                    vs_row.tangibility_source,
+                )
+                return ScanResponse(
+                    job_id=None,
+                    deduped=False,
+                    skipped_reason="intangible_product",
+                )
 
         # Idempotency: same (org, video, user) within window → return existing.
         # ``org_id`` is mandatory (codex defensive fix; see repositories/job.py).
@@ -659,6 +684,30 @@ class ProductScanService:
         """
         self._require_enabled_for_org(org_id)
         await self._require_budget(org_id)
+
+        if self.settings.tangibility_gate_enabled:
+            vs_row = await VideoSummaryRepository(self.session).get_by_video(
+                org_id, str(video_id),
+            )
+            if (
+                vs_row is not None
+                and vs_row.tangibility == "intangible"
+                and vs_row.tangibility_p_intangible is not None
+                and vs_row.tangibility_p_intangible
+                    >= self.settings.tangibility_min_confidence_to_block
+            ):
+                logger.info(
+                    "product_v2_scan_order_skipped_intangible "
+                    "org_id=%s video_id=%s p_intangible=%.3f source=%s",
+                    str(org_id), str(video_id),
+                    vs_row.tangibility_p_intangible,
+                    vs_row.tangibility_source,
+                )
+                return ScanOrderResponse(
+                    parent_job_id=None,
+                    deduped=False,
+                    skipped_reason="intangible_product",
+                )
 
         # Service-layer validation that complements the DB CHECKs with
         # better error messages for the frontend.

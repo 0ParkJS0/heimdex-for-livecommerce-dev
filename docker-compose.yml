@@ -242,6 +242,26 @@ services:
       - ENUM_LABEL_MERGE_TOKEN_JACCARD=${ENUM_LABEL_MERGE_TOKEN_JACCARD:-0.6}
       - ENUM_LABEL_MERGE_COSINE_FLOOR=${ENUM_LABEL_MERGE_COSINE_FLOOR:-0.70}
       - ENUM_LABEL_MERGE_LLM_ENABLED=${ENUM_LABEL_MERGE_LLM_ENABLED:-false}
+      # Tangibility classifier flags
+      # The classifier is a hybrid of a lightweight LR model (fast, low-cost, low-recall)
+      # + an optional LLM adjudicator (slow, higher-cost, higher-recall) that runs only 
+      # on clips the LR flags as borderline. The master flag is TANGIBILITY_GATE_ENABLED; 
+      # when false the API ignores the classifier and serves all clips as normal. When true, 
+      # the API applies the LR model to every clip and blocks clips that score above 
+      # TANGIBILITY_LR_GAP_THRESHOLD with confidence above TANGIBILITY_MIN_CONFIDENCE_TO_BLOCK. 
+      # Clips that fall into the "borderline" gap between the two thresholds are sent to the 
+      # LLM for a second opinion; the LLM's decision is final regardless of confidence. All
+      # flags default to false or 0 except for TANGIBILITY_MODE=hybrid (LR+LLM) and 
+      # TANGIBILITY_LLM_MODEL=gpt-4o-mini. 
+      - TANGIBILITY_GATE_ENABLED=${TANGIBILITY_GATE_ENABLED:-false}
+      - TANGIBILITY_MODE=${TANGIBILITY_MODE:-hybrid}
+      - TANGIBILITY_CLASSIFIER_VERSION=${TANGIBILITY_CLASSIFIER_VERSION:-v1}
+      - TANGIBILITY_LR_GAP_THRESHOLD=${TANGIBILITY_LR_GAP_THRESHOLD:-0.15}
+      - TANGIBILITY_MIN_CONFIDENCE_TO_BLOCK=${TANGIBILITY_MIN_CONFIDENCE_TO_BLOCK:-0.7}
+      - TANGIBILITY_LLM_MODEL=${TANGIBILITY_LLM_MODEL:-gpt-4o-mini}
+      - TANGIBILITY_LLM_PROMPT_VERSION=${TANGIBILITY_LLM_PROMPT_VERSION:-v1}
+      - TANGIBILITY_LLM_TIMEOUT_S=${TANGIBILITY_LLM_TIMEOUT_S:-5.0}
+      - TANGIBILITY_LLM_DAILY_BUDGET_USD=${TANGIBILITY_LLM_DAILY_BUDGET_USD:-5.0}
       # Phase 1 live-block filter (only source clips from scenes
       # where the host was actively talking). See
       # ``config.py::auto_shorts_product_v2_live_only_enabled``.
