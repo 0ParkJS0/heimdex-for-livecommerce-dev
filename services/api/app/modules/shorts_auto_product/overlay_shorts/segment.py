@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from app.modules.shorts_auto_product.enumerate_overlay.service import (
+from app.modules.shorts_auto_product.overlay_shorts.enumeration_result import (
     OverlayAppearance,
     OverlayProduct,
 )

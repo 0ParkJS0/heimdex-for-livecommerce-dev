@@ -134,6 +134,29 @@ class WorkerSettings(BaseSettings):
     # the cost without a precision win on the current golden set.
     enum_label_merge_llm_enabled: bool = False
 
+    # ---------- overlay enumeration (mode=vision+overlay / overlay) ----------
+    #
+    # Ported from the (now-deleted) in-API
+    # ``shorts_auto_product.enumerate_overlay`` config knobs — overlay
+    # enumeration is worker-side now. The overlay pass reads on-screen
+    # info-overlay graphics (price cards, product callouts) via
+    # gpt-4o-mini, crops with the already-loaded OWLv2, embeds with the
+    # already-loaded SigLIP2, and clusters with the SAME cosine clusterer
+    # the vision path uses. The classical cv2 detector decides which
+    # keyframes even carry an overlay before any LLM cost is spent.
+    overlay_extraction_model: str = "gpt-4o-mini"
+    # Per-UTC-day spend ceiling on the overlay extraction LLM. Crossing
+    # it stops further extraction calls; already-extracted candidates
+    # still flow through the rest of the pass.
+    overlay_extraction_daily_budget_usd: float = 20.0
+    # Classical-detector score cutoff: a keyframe must score at or above
+    # this to be considered overlay-bearing (gates LLM cost).
+    overlay_detector_score_threshold: float = 0.40
+    # SigLIP2 cluster cosine threshold for the overlay path. Defaults to
+    # the vision path's threshold so the same-frame disjointness
+    # invariant + consolidate hook behave identically across sources.
+    overlay_cluster_cosine_threshold: float = 0.85
+
     # ---------- safety ----------
 
     product_v2_enabled: bool = False

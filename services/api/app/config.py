@@ -576,20 +576,15 @@ class Settings(BaseSettings):
     #
     # Discovers products from operator-placed overlay graphics
     # (product cards, price banners) that the existing vision path
-    # filters out via ``LABEL_PROMPT_SYSTEM``'s
-    # ``is_product=false`` rule for on-screen graphics. Sibling of
-    # the STT enumeration block above.
-    #
-    # Module: ``app.modules.shorts_auto_product.enumerate_overlay``.
-    # Status: dormant -- not called from any production path yet.
+    # filters out via the per-crop ``is_product=false`` rule for
+    # on-screen graphics. Overlay ENUMERATION runs in the
+    # ``product-enumerate-worker`` as a SECOND pass of the enumerate job
+    # (mode ``vision+overlay``); the worker owns the extraction model /
+    # budget / detector-threshold knobs now. This flag is the API gate:
+    # when on, ``ProductScanService`` enqueues with
+    # ``enumeration_mode="vision+overlay"``. Default off = legacy
+    # single-pass ``vision``.
     auto_shorts_product_v2_overlay_track_enabled: bool = False
-    auto_shorts_product_v2_overlay_extraction_model: str = "gpt-4o-mini"
-    auto_shorts_product_v2_overlay_extraction_daily_budget_usd: float = 20.0
-    auto_shorts_product_v2_overlay_detector_score_threshold: float = 0.40
-    # S3 prefix the picker writes product crops to. Empty means the
-    # caller picks a per-video prefix at wiring time, e.g.
-    # ``s3://<bucket>/catalog/overlay/<video_drive_id>``.
-    auto_shorts_product_v2_overlay_crop_upload_prefix: str = ""
 
     # ---------- overlay-driven shorts assembly (phase 4 of the track) ----------
     #

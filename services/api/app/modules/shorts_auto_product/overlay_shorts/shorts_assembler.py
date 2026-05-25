@@ -13,7 +13,7 @@ import re
 import unicodedata
 from typing import Literal
 
-from app.modules.shorts_auto_product.enumerate_overlay.service import (
+from app.modules.shorts_auto_product.overlay_shorts.enumeration_result import (
     OverlayProduct,
 )
 from app.modules.shorts_auto_product.overlay_shorts.service import (

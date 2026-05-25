@@ -193,6 +193,13 @@ services:
       # child that does NOT replace the parent. Default off; flip on
       # staging only.
       - AUTO_SHORTS_PRODUCT_V2_OVERLAY_MODE_ENABLED=${AUTO_SHORTS_PRODUCT_V2_OVERLAY_MODE_ENABLED:-false}
+      # Auto-shorts overlay ENUMERATION gate (distinct from overlay
+      # caption mode above). ON => ProductScanService enqueues the
+      # enumerate job with enumeration_mode="vision+overlay" so the
+      # product-enumerate-worker runs a second overlay pass. Default
+      # off => legacy single-pass vision. compose env: is an allowlist
+      # so this needs an explicit line to propagate from .env.
+      - AUTO_SHORTS_PRODUCT_V2_OVERLAY_TRACK_ENABLED=${AUTO_SHORTS_PRODUCT_V2_OVERLAY_TRACK_ENABLED:-false}
       # Auto-shorts storyboard composition (Tier B / Tier C). Plan
       # in ``track_stt/storyboard/__init__.py``. Default-off; flip
       # on staging via .env. Same allowlist rule as the whisper

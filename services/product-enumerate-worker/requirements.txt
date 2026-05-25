@@ -40,6 +40,13 @@ transformers==5.5.4
 # The fp32 file is fetched via huggingface_hub (already pinned above).
 onnxruntime-gpu==1.24.4
 
+# Classical (CPU-only) overlay detector lives in
+# ``heimdex_media_pipelines.product_enum.overlay_detector`` and is called
+# from the worker's overlay enumeration pass (mode=vision+overlay/overlay).
+# It does resize / Canny / findContours / cvtColor on host RAM — no VRAM.
+# numpy is already pinned above; headless avoids the GUI X11 deps.
+opencv-python-headless>=4.8
+
 # Heimdex shared libs:
 # * worker-sdk: pinned to PyPI version, installed by Dockerfile BEFORE
 #   this requirements file.

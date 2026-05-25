@@ -117,6 +117,15 @@ class ProductScanService:
                 detail="product mode v2 is not enabled for this org",
             )
 
+    def _enumeration_mode(self) -> str:
+        """Enumeration mode for the worker enqueue. Overlay enumeration
+        runs as a SECOND pass inside the same worker invocation when the
+        flag is on (``vision+overlay``); off (default) preserves the
+        legacy single-pass ``vision`` behavior byte-identically."""
+        if self.settings.auto_shorts_product_v2_overlay_track_enabled:
+            return "vision+overlay"
+        return "vision"
+
     async def _require_budget(self, org_id: UUID) -> Decimal:
         """402 if today's cost exceeds the cap. Returns the running
         cost so the caller can include it in logs."""
@@ -367,6 +376,7 @@ class ProductScanService:
                 enumeration_prompt_version=self.settings.auto_shorts_product_v2_enumeration_prompt_version,
                 max_keyframes=self.settings.auto_shorts_product_v2_max_keyframes_per_video,
                 callback_base_url=self.settings.auto_shorts_product_v2_callback_base_url,
+                enumeration_mode=self._enumeration_mode(),
             )
         except Exception:
             logger.exception(
@@ -605,6 +615,7 @@ class ProductScanService:
                 enumeration_prompt_version=self.settings.auto_shorts_product_v2_enumeration_prompt_version,
                 max_keyframes=self.settings.auto_shorts_product_v2_max_keyframes_per_video,
                 callback_base_url=self.settings.auto_shorts_product_v2_callback_base_url,
+                enumeration_mode=self._enumeration_mode(),
             )
         except Exception:
             logger.exception(

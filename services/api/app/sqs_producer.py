@@ -1001,6 +1001,7 @@ def publish_product_enumerate_job(
     enumeration_prompt_version: str,
     max_keyframes: int,
     callback_base_url: str,
+    enumeration_mode: str = "vision",
 ) -> None:
     """Publish a shorts-auto-product enumeration job.
 
@@ -1008,6 +1009,10 @@ def publish_product_enumerate_job(
     ``product_scan_jobs`` row is flushed. Fire-and-forget; the caller
     marks the job ``failed`` if publish blows up so the user sees an
     error instead of a permanently stuck ``queued`` row.
+
+    ``enumeration_mode`` ("vision" / "vision+overlay" / "overlay")
+    selects the worker pass(es). Default "vision" preserves the legacy
+    single-pass behavior for every caller that doesn't pass it.
 
     Body shape MUST match
     ``heimdex_media_contracts.product.ProductEnumerateJob``.
@@ -1025,6 +1030,7 @@ def publish_product_enumerate_job(
         "enumeration_prompt_version": enumeration_prompt_version,
         "max_keyframes": max_keyframes,
         "callback_base_url": callback_base_url,
+        "enumeration_mode": enumeration_mode,
     }
     dedup_id = f"{job_id}:product-enum:{now.strftime('%Y%m%dT%H%M')}"
     _publish_required("product_enumerate", body, dedup_id)

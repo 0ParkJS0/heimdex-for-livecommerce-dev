@@ -208,6 +208,11 @@ class _CatalogEntryPayload(BaseModel):
     prominence_score: float = Field(..., ge=0.0, le=1.0)
     enumeration_version: str = Field(..., min_length=1)
     enumeration_prompt_version: str = Field(..., min_length=1)
+    # Per-row provenance declared by the worker. Optional with a
+    # back-compat default so a pre-overlay sender (no field) still
+    # persists as 'vision'. The DB CHECK constraint locks the allowed
+    # set; "overlay" was added in migration 064.
+    enumeration_source: str = Field(default="vision", min_length=1)
 
 
 class _AppearancePayload(BaseModel):
@@ -362,14 +367,12 @@ async def complete(
                 "prominence_score": entry.prominence_score,
                 "enumeration_version": entry.enumeration_version,
                 "enumeration_prompt_version": entry.enumeration_prompt_version,
-                # v0.16.0 — explicit provenance. The DB default is
-                # 'vision' so omitting this would produce the same
-                # row, but provenance is semantic data the worker is
-                # responsible for, not a schema convenience. Drift on
-                # the default would silently mislabel rows; explicit
-                # write means a future migration that changes the
-                # default doesn't change observed behavior.
-                "enumeration_source": "vision",
+                # Provenance declared by the worker per row — the worker
+                # owns this semantic ("vision" / "overlay"), the API
+                # stops hardcoding it. Back-compat: a sender that omits
+                # the field defaults to "vision" at the schema layer.
+                # The DB CHECK constraint (migration 064) gates the set.
+                "enumeration_source": entry.enumeration_source,
             })
         rows = await catalog_repo.bulk_insert(entries=catalog_dicts)
         persisted_catalog = len(rows)

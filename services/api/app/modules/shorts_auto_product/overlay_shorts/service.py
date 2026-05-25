@@ -12,8 +12,9 @@ End-to-end for a single product:
 The assembly is a plan only -- ffmpeg rendering is delegated to a
 downstream worker.
 
-Loose-coupling: this module imports ONLY from :mod:`app.config`,
-:mod:`shorts_auto_product.enumerate_overlay`, and own-module symbols.
+Loose-coupling: this module imports ONLY from :mod:`app.config`, the
+sibling :mod:`shorts_auto_product.overlay_shorts.enumeration_result`,
+and own-module symbols.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from app.modules.shorts_auto_product.enumerate_overlay.service import (
+from app.modules.shorts_auto_product.overlay_shorts.enumeration_result import (
     OverlayEnumerationResult,
     OverlayProduct,
 )
@@ -129,8 +130,9 @@ async def run_overlay_shorts(
     Args:
         product_id: The product to assemble. Must exist in
             ``enumeration_result.products``.
-        enumeration_result: Output of
-            :func:`enumerate_overlay.service.run_overlay_enumeration`.
+        enumeration_result: Overlay enumeration output, hydrated from
+            the persisted overlay-source catalog (the worker's overlay
+            pass produces these rows).
         video_duration_s: Source video duration in seconds. Caller
             supplies this so the module does not need ffprobe.
         source_video_locator: Echoed onto the assembly so a downstream
