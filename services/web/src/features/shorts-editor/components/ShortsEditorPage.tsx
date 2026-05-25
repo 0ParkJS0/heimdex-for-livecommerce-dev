@@ -805,39 +805,50 @@ export function ShortsEditorPage() {
           </div>
         }
         preview={
-          <PreviewPanel
-            clips={state.clips}
-            subtitles={state.subtitles}
-            overlays={state.overlays}
-            selectedOverlayId={state.selectedOverlayId}
-            onSelectOverlay={editor.selectOverlay}
-            onUpdateOverlay={editor.updateOverlay}
-            onRemoveOverlay={editor.removeOverlay}
-            onRemoveSubtitle={editor.removeSubtitle}
-            playheadMs={state.playheadMs}
-            playback={state.playback}
-            totalDurationMs={state.totalDurationMs}
-            selectedSubtitleIndex={state.selectedSubtitleIndex}
-            onPlayheadChange={setPlayhead}
-            dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
-            onSelectSubtitle={selectSubtitle}
-            onUpdateSubtitlePosition={handleSubtitlePositionChange}
-            onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
-            videoTransform={state.videoTransform}
-            onUpdateVideoPosition={editor.updateVideoPosition}
-            onUpdateVideoScale={editor.updateVideoScale}
-            onUpdateVideoRotation={editor.updateVideoRotation}
-            layerOrder={state.layerOrder}
-            letterbox={state.letterbox}
-            onUpdateLetterbox={editor.setLetterbox}
-            onPushHistory={editor.pushHistory}
-            selectedVideo={state.selectedVideo}
-            selectedLetterbox={state.selectedLetterbox}
-            onSelectVideo={editor.selectVideo}
-            onSelectLetterbox={editor.selectLetterbox}
-            onClearSelections={editor.clearAllSelections}
-            muted={isFullscreen}
-          />
+          // 2026-05-25 — Unmount the inline PreviewPanel while the
+          // FullscreenOverlay is open. Both surfaces share a
+          // ``usePlaybackSync`` instance pointed at the same playback
+          // URL; mounting them simultaneously means two <video>
+          // elements race for the same signed/CDN source, and the
+          // fullscreen modal's video can stay on a black first-frame
+          // until the inline one finishes its own ``video.load()``.
+          // Hiding the inline panel entirely guarantees the modal owns
+          // the source. When the operator closes fullscreen the panel
+          // re-mounts and reloads from the current playhead.
+          isFullscreen ? null : (
+            <PreviewPanel
+              clips={state.clips}
+              subtitles={state.subtitles}
+              overlays={state.overlays}
+              selectedOverlayId={state.selectedOverlayId}
+              onSelectOverlay={editor.selectOverlay}
+              onUpdateOverlay={editor.updateOverlay}
+              onRemoveOverlay={editor.removeOverlay}
+              onRemoveSubtitle={editor.removeSubtitle}
+              playheadMs={state.playheadMs}
+              playback={state.playback}
+              totalDurationMs={state.totalDurationMs}
+              selectedSubtitleIndex={state.selectedSubtitleIndex}
+              onPlayheadChange={setPlayhead}
+              dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
+              onSelectSubtitle={selectSubtitle}
+              onUpdateSubtitlePosition={handleSubtitlePositionChange}
+              onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+              videoTransform={state.videoTransform}
+              onUpdateVideoPosition={editor.updateVideoPosition}
+              onUpdateVideoScale={editor.updateVideoScale}
+              onUpdateVideoRotation={editor.updateVideoRotation}
+              layerOrder={state.layerOrder}
+              letterbox={state.letterbox}
+              onUpdateLetterbox={editor.setLetterbox}
+              onPushHistory={editor.pushHistory}
+              selectedVideo={state.selectedVideo}
+              selectedLetterbox={state.selectedLetterbox}
+              onSelectVideo={editor.selectVideo}
+              onSelectLetterbox={editor.selectLetterbox}
+              onClearSelections={editor.clearAllSelections}
+            />
+          )
         }
         rightPanel={
           // figma: 1607:65302 right column (텍스트/배경/템플릿 3탭)

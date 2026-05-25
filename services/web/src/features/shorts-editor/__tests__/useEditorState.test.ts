@@ -699,6 +699,53 @@ describe("APPLY_COMPOSITION_TEMPLATE", () => {
     );
     expect(inLayerOrder).toBe(true);
   });
+
+  it("round-trips a preset layerOrder: rewrites overlay ids + preserves cross-background order", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+
+    // Two backgrounds. The preset's layerOrder lists B *before* A — the
+    // reverse of their layerIndex — so this asserts the new id-rewrite
+    // branch actually drives the result. The legacy (no-layerOrder)
+    // branch sorts backgrounds by layerIndex and would yield A-before-B,
+    // so this test fails if the layerOrder branch is removed.
+    const bg = (id: string, layerIndex: number) => ({
+      kind: "background" as const,
+      id,
+      layerIndex,
+      durationMs: 1000,
+      payload: {
+        fillColor: "#000000",
+        imageUrl: null,
+        transform: { x: 0.5, y: 0.5, rotationDeg: 0, widthPx: 100, heightPx: 100 },
+        effects: { opacity: 1, stroke: null, shadow: null },
+      },
+    });
+
+    act(() =>
+      result.current.dispatch({
+        type: "APPLY_COMPOSITION_TEMPLATE",
+        payload: makeTemplatePayload({
+          overlays: [bg("p-a", 0), bg("p-b", 1)],
+          layerOrder: [
+            { kind: "video" },
+            { kind: "overlay", id: "p-b" },
+            { kind: "overlay", id: "p-a" },
+            { kind: "subtitles" },
+          ],
+        }),
+      }),
+    );
+
+    // appendedOverlays[i] ↔ p.overlays[i], appended in payload order.
+    const freshA = result.current.state.overlays[0].id;
+    const freshB = result.current.state.overlays[1].id;
+    const overlaySlotIds = result.current.state.layerOrder
+      .filter((l): l is { kind: "overlay"; id: string } => l.kind === "overlay")
+      .map((l) => l.id);
+    // Preset order (B before A) preserved via the id map — NOT layerIndex order.
+    expect(overlaySlotIds).toEqual([freshB, freshA]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -788,10 +835,17 @@ describe("INIT_FROM_COMPOSITION", () => {
 // ---------------------------------------------------------------------------
 
 describe("REORDER_LAYER", () => {
-  it("'forward' moves the entry one step toward the top", () => {
+  // Stack policy (operator request 2026-05-25): the segment order
+  //   video → letterbox? → backgrounds → subtitles → text overlays
+  // is invariant. Reorder requests that would break it either no-op
+  // outright (subtitles + text-overlay slots) or are snapped back by
+  // the normaliser at the end of the reducer (video / background).
+
+  it("'forward' on the video slot does NOT cross the subtitles slot", () => {
     const { result } = renderHook(() => useEditorState());
     act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
-    // Default: [video, subtitles]. Move video forward → [subtitles, video].
+    // Default: [video, subtitles]. The normaliser pins video at the
+    // bottom even when the operator tries to move it forward.
     act(() =>
       result.current.dispatch({
         type: "REORDER_LAYER",
@@ -799,14 +853,15 @@ describe("REORDER_LAYER", () => {
         direction: "forward",
       }),
     );
-    expect(result.current.state.layerOrder[0].kind).toBe("subtitles");
-    expect(result.current.state.layerOrder[1].kind).toBe("video");
+    expect(result.current.state.layerOrder[0].kind).toBe("video");
+    expect(result.current.state.layerOrder[1].kind).toBe("subtitles");
   });
 
-  it("'backward' moves the entry one step toward the bottom", () => {
+  it("'backward' on the subtitles slot is rejected", () => {
     const { result } = renderHook(() => useEditorState());
     act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
-    // Default: [video, subtitles]. Move subtitles backward → [subtitles, video].
+    // Subtitles + text overlays are pinned to the top — reducer rejects
+    // any move on them up front so the dispatch never mutates state.
     act(() =>
       result.current.dispatch({
         type: "REORDER_LAYER",
@@ -814,8 +869,9 @@ describe("REORDER_LAYER", () => {
         direction: "backward",
       }),
     );
-    expect(result.current.state.layerOrder[0].kind).toBe("subtitles");
-    expect(result.current.state.layerOrder[1].kind).toBe("video");
+    expect(result.current.state.layerOrder[0].kind).toBe("video");
+    expect(result.current.state.layerOrder[1].kind).toBe("subtitles");
+    expect(result.current.state.isDirty).toBe(false);
   });
 
   it("no-ops when already at boundary (front/back)", () => {
@@ -836,7 +892,7 @@ describe("REORDER_LAYER", () => {
     expect(result.current.state.isDirty).toBe(false);
   });
 
-  it("'front' moves entry to top of stack", () => {
+  it("'front' on the video slot is snapped back to bottom by the normaliser", () => {
     const { result } = renderHook(() => useEditorState());
     act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
     act(() =>
@@ -846,11 +902,12 @@ describe("REORDER_LAYER", () => {
         direction: "front",
       }),
     );
-    const order = result.current.state.layerOrder;
-    expect(order[order.length - 1].kind).toBe("video");
+    // Policy guarantee: video stays at index 0 regardless of the
+    // attempted direction.
+    expect(result.current.state.layerOrder[0].kind).toBe("video");
   });
 
-  it("'back' moves entry to bottom of stack", () => {
+  it("'back' on the subtitles slot is rejected (stays above any background)", () => {
     const { result } = renderHook(() => useEditorState());
     act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
     act(() =>
@@ -860,7 +917,8 @@ describe("REORDER_LAYER", () => {
         direction: "back",
       }),
     );
-    expect(result.current.state.layerOrder[0].kind).toBe("subtitles");
+    expect(result.current.state.layerOrder[0].kind).toBe("video");
+    expect(result.current.state.layerOrder[1].kind).toBe("subtitles");
   });
 });
 
@@ -1050,5 +1108,34 @@ describe("SET_VIDEO_OUTLINE", () => {
       }),
     );
     expect(result.current.state.videoTransform.outline?.widthPx).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// layerOrder segment policy (B1) — subtitles/text always above backgrounds
+// ---------------------------------------------------------------------------
+
+describe("layerOrder segment policy (B1)", () => {
+  it("ADD_OVERLAY keeps a background BELOW subtitles and text ABOVE (the reported drop bug)", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+    // The reported bug: dropping a background overlay pushed the
+    // subtitles slot behind it. After the fix, ADD_OVERLAY runs through
+    // normalizeLayerOrder, so a background lands under subtitles and a
+    // text overlay lands above.
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+    act(() => result.current.addTextOverlayAtPlayhead());
+
+    const lo = result.current.state.layerOrder;
+    const bgId = result.current.state.overlays.find((o) => o.kind === "background")!.id;
+    const textId = result.current.state.overlays.find((o) => o.kind === "text")!.id;
+    const idxBg = lo.findIndex((l) => l.kind === "overlay" && l.id === bgId);
+    const idxText = lo.findIndex((l) => l.kind === "overlay" && l.id === textId);
+    const idxSubtitles = lo.findIndex((l) => l.kind === "subtitles");
+
+    expect(idxBg).toBeGreaterThanOrEqual(0);
+    expect(idxText).toBeGreaterThanOrEqual(0);
+    expect(idxBg).toBeLessThan(idxSubtitles); // background under subtitles (the fix)
+    expect(idxText).toBeGreaterThan(idxSubtitles); // text above subtitles
   });
 });

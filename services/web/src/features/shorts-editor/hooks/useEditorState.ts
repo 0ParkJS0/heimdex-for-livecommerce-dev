@@ -74,20 +74,72 @@ function clampVolume(v: number): number {
 }
 
 // Build a canonical layerOrder from overlays + letterbox presence.
-// Default stack bottom→top: video, letterbox (if present), subtitles, overlays.
-// Overlays follow the order of the overlays array (already sorted by layerIndex).
+//
+// Stack policy (operator request 2026-05-25):
+//   bottom → top
+//   1) video
+//   2) letterbox (when present)
+//   3) background overlays (sorted by layerIndex)
+//   4) subtitles  ← always above any background
+//   5) text overlays (sorted by layerIndex)  ← always at the very top
+//
+// Subtitles and text overlays must never be hidden behind a background
+// the operator just dropped on the canvas. ``REORDER_LAYER`` enforces
+// the same invariant by rejecting any move that would put a non-text
+// slot above the subtitles slot (see the case below).
 function buildLayerOrder(
   overlays: EditorOverlay[],
   hasLetterbox: boolean,
 ): LayerOrderId[] {
   const base: LayerOrderId[] = [{ kind: "video" }];
   if (hasLetterbox) base.push({ kind: "letterbox" });
+  const bgSorted = overlays
+    .filter((o) => o.kind === "background")
+    .sort((a, b) => a.layerIndex - b.layerIndex);
+  for (const o of bgSorted) {
+    base.push({ kind: "overlay", id: o.id });
+  }
   base.push({ kind: "subtitles" });
-  const sorted = [...overlays].sort((a, b) => a.layerIndex - b.layerIndex);
-  for (const o of sorted) {
+  const textSorted = overlays
+    .filter((o) => o.kind === "text")
+    .sort((a, b) => a.layerIndex - b.layerIndex);
+  for (const o of textSorted) {
     base.push({ kind: "overlay", id: o.id });
   }
   return base;
+}
+
+// Re-sort a layerOrder so it respects buildLayerOrder's policy without
+// dropping any slot the caller already had. Used by mutators that
+// touch layerOrder directly (ADD_OVERLAY, REORDER_LAYER, APPLY_*)
+// where simply rebuilding from scratch would discard valid state.
+function normalizeLayerOrder(
+  layerOrder: LayerOrderId[],
+  overlays: EditorOverlay[],
+): LayerOrderId[] {
+  const kindOf = new Map(overlays.map((o) => [o.id, o.kind] as const));
+  const out: LayerOrderId[] = [];
+  // 1) video — exactly one (insert if missing).
+  out.push({ kind: "video" });
+  // 2) letterbox — keep iff present in input.
+  if (layerOrder.some((l) => l.kind === "letterbox")) {
+    out.push({ kind: "letterbox" });
+  }
+  // 3) backgrounds — preserve their original relative order.
+  for (const l of layerOrder) {
+    if (l.kind === "overlay" && kindOf.get(l.id) === "background") {
+      out.push({ kind: "overlay", id: l.id });
+    }
+  }
+  // 4) subtitles — exactly one.
+  out.push({ kind: "subtitles" });
+  // 5) text overlays — preserve their original relative order.
+  for (const l of layerOrder) {
+    if (l.kind === "overlay" && kindOf.get(l.id) === "text") {
+      out.push({ kind: "overlay", id: l.id });
+    }
+  }
+  return out;
 }
 
 function layerOrderIdMatches(a: LayerOrderId, b: LayerOrderId): boolean {
@@ -489,13 +541,14 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       // that confuses downstream assertions and the reorder logic.
       const sorted = [...overlays].sort((a, b) => a.layerIndex - b.layerIndex);
       overlays = sorted.map((o, i) => ({ ...o, layerIndex: i }));
-      // Append the new overlay slot to the top of the layer stack so
-      // freshly-added elements sit above everything by default. The
-      // operator can reorder afterward via REORDER_LAYER.
-      const layerOrder: LayerOrderId[] = [
-        ...state.layerOrder,
-        { kind: "overlay", id: positioned.id },
-      ];
+      // Append the new overlay slot, then normalise. The normaliser
+      // routes background overlays under the subtitles slot and text
+      // overlays above it so subtitles + text are guaranteed to stay
+      // on top of any newly-added background (operator policy 2026-05-25).
+      const layerOrder = normalizeLayerOrder(
+        [...state.layerOrder, { kind: "overlay", id: positioned.id }],
+        overlays,
+      );
       return {
         ...state,
         overlays,
@@ -616,6 +669,16 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
 
     case "REORDER_LAYER": {
       const { layer, direction } = action;
+      // 2026-05-25 — subtitles + text-overlay slots are pinned to the
+      // top of the stack (above any background overlay) and may not be
+      // reordered. Reject those attempts up front so the popover's
+      // dispatch is a silent no-op even if the UI's disabled guard is
+      // bypassed.
+      if (layer.kind === "subtitles") return state;
+      if (layer.kind === "overlay") {
+        const overlay = state.overlays.find((o) => o.id === layer.id);
+        if (overlay && overlay.kind === "text") return state;
+      }
       const idx = state.layerOrder.findIndex((l) => layerOrderIdMatches(l, layer));
       if (idx < 0) return state;
       const next = [...state.layerOrder];
@@ -637,7 +700,12 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       if (targetIdx === idx) return state;
       const [moved] = next.splice(idx, 1);
       next.splice(targetIdx, 0, moved);
-      return { ...state, layerOrder: next, isDirty: true };
+      // Renormalise so a reorder that would otherwise push a background
+      // overlay above the subtitles slot snaps back into the segment
+      // boundaries (background → subtitles → text). Within-segment
+      // ordering is preserved by normaliseLayerOrder.
+      const normalised = normalizeLayerOrder(next, state.overlays);
+      return { ...state, layerOrder: normalised, isDirty: true };
     }
 
     case "UPDATE_VIDEO_POSITION": {
@@ -975,22 +1043,75 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         shadow: p.videoTransform.shadow ?? null,
       };
 
-      // Rebuild layerOrder so the appended overlay slots land at the
-      // top of the stack and the letterbox slot is consistent with the
-      // (possibly newly-set) letterbox state.
-      const layerOrder: LayerOrderId[] = [
-        ...state.layerOrder.filter(
-          (l) => !(l.kind === "letterbox" && letterbox == null),
-        ),
-      ];
-      if (letterbox && !layerOrder.some((l) => l.kind === "letterbox")) {
-        const videoIdx = layerOrder.findIndex((l) => l.kind === "video");
-        const insertAt = videoIdx >= 0 ? videoIdx + 1 : 0;
-        layerOrder.splice(insertAt, 0, { kind: "letterbox" });
+      // Rebuild layerOrder.
+      //
+      // When the preset carries a ``layerOrder`` snapshot (2026-05-25
+      // round-trip), use it as the new stack base: overlay slot ids
+      // get rewritten via an index-aligned old→new id map (preset
+      // overlays[i] ↔ appendedOverlays[i]). Existing overlay slots
+      // that the operator already had on the canvas are appended on
+      // top so applying a preset is additive, not destructive.
+      // Letterbox slot is normalised against the (possibly newly-set)
+      // letterbox state.
+      //
+      // When the preset has no layerOrder (legacy presets pre-2026-05-25),
+      // fall back to the previous behaviour: keep state.layerOrder and
+      // simply append the new overlay slots on top.
+      let layerOrder: LayerOrderId[];
+      if (p.layerOrder && p.layerOrder.length > 0) {
+        const idMap = new Map<string, string>();
+        for (let i = 0; i < p.overlays.length; i += 1) {
+          const presetId = p.overlays[i].id;
+          if (presetId) idMap.set(presetId, appendedOverlays[i].id);
+        }
+        const mappedPresetOrder = p.layerOrder
+          .map((l): LayerOrderId | null => {
+            if (l.kind === "overlay") {
+              const newId = idMap.get(l.id);
+              return newId ? { kind: "overlay", id: newId } : null;
+            }
+            return { kind: l.kind };
+          })
+          .filter((l): l is LayerOrderId => l !== null);
+        // Existing overlay slots (operator had overlays before applying)
+        // — preserve order, drop any duplicates with appended ids.
+        const appendedIds = new Set(appendedOverlays.map((o) => o.id));
+        const existingOverlaySlots = state.layerOrder.filter(
+          (l): l is LayerOrderId =>
+            l.kind === "overlay" && !appendedIds.has(l.id),
+        );
+        layerOrder = [...mappedPresetOrder, ...existingOverlaySlots];
+        // Letterbox slot consistency: if letterbox is now null, strip
+        // any letterbox slot the preset may have carried. If letterbox
+        // is set but the mapped order didn't include it, insert above
+        // the video slot.
+        if (letterbox == null) {
+          layerOrder = layerOrder.filter((l) => l.kind !== "letterbox");
+        } else if (!layerOrder.some((l) => l.kind === "letterbox")) {
+          const videoIdx = layerOrder.findIndex((l) => l.kind === "video");
+          const insertAt = videoIdx >= 0 ? videoIdx + 1 : 0;
+          layerOrder.splice(insertAt, 0, { kind: "letterbox" });
+        }
+      } else {
+        layerOrder = [
+          ...state.layerOrder.filter(
+            (l) => !(l.kind === "letterbox" && letterbox == null),
+          ),
+        ];
+        if (letterbox && !layerOrder.some((l) => l.kind === "letterbox")) {
+          const videoIdx = layerOrder.findIndex((l) => l.kind === "video");
+          const insertAt = videoIdx >= 0 ? videoIdx + 1 : 0;
+          layerOrder.splice(insertAt, 0, { kind: "letterbox" });
+        }
+        for (const o of appendedOverlays) {
+          layerOrder.push({ kind: "overlay", id: o.id });
+        }
       }
-      for (const o of appendedOverlays) {
-        layerOrder.push({ kind: "overlay", id: o.id });
-      }
+
+      // Final normalise — guarantees subtitles + text overlays sit
+      // above any background overlay regardless of how the preset
+      // captured them (operator policy 2026-05-25).
+      const normalisedLayerOrder = normalizeLayerOrder(layerOrder, overlays);
 
       return {
         ...state,
@@ -998,7 +1119,7 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         overlays,
         letterbox,
         videoTransform,
-        layerOrder,
+        layerOrder: normalisedLayerOrder,
         isDirty: true,
       };
     }

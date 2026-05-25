@@ -13,6 +13,11 @@ import { resolveFontFamily } from "@/lib/fonts";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
 import { getThumbnailAspectClass, type ThumbnailAspectRatio } from "@/lib/thumbnailUtils";
 
+// Floor for the inverse-scale applied to resize/rotation handles so they keep
+// a constant px size while the video wrapper scales. Guards against 1/0 (and
+// absurd magnification) when the video scale `vs` approaches zero.
+const MIN_INVERSE_SCALE = 0.01;
+
 interface PreviewPanelProps {
   clips: EditorClip[];
   subtitles: EditorSubtitle[];
@@ -94,10 +99,6 @@ interface PreviewPanelProps {
   // when true, the preview container expands to the 352×626 iPhone
   // mockup size used inside FullscreenOverlay. Layout/logic otherwise identical.
   fullscreen?: boolean;
-  // when true, the main video element is muted — used while the
-  // FullscreenOverlay is open so the user doesn't hear two audio
-  // tracks (one from this panel + one from the fullscreen preview).
-  muted?: boolean;
 }
 
 function PlayIcon() {
@@ -148,7 +149,6 @@ export function PreviewPanel({
   onSelectLetterbox,
   onClearSelections,
   fullscreen = false,
-  muted = false,
 }: PreviewPanelProps) {
   const isPlaying = playback.kind === "playing";
 
@@ -827,11 +827,25 @@ export function PreviewPanel({
           // rings (heimdex-navy-500). The existing CSS ``outline`` for
           // the operator-added 윤곽선 sits OUTSIDE the box, so the two
           // don't collide visually.
+          // 2026-05-25 — wrapper-transform pattern so the 4 resize
+          // handles and the rotation handle ride the video's actual
+          // visual bbox, not the static canvas inset. Previously the
+          // wrapper was ``absolute inset-0`` (canvas-sized) and only
+          // the <video> received the transform — the handles stayed
+          // glued to the canvas corners as the video shrunk. Now the
+          // wrapper itself carries the scale/translate/rotate transform
+          // so its children (the video AND the corner/rotation handles)
+          // all move together with the video. Handles add an inverse
+          // ``scale(1/vs)`` so they stay constant px size while their
+          // anchor (transformOrigin) keeps them pinned to the matching
+          // video corner / top edge.
           return (
             <div
               className="absolute inset-0"
               style={{
                 ...(videoZIndex != null ? { zIndex: videoZIndex } : {}),
+                transform: `scale(${vs}) translate(${(vx - 0.5) * 100}%, ${(vy - 0.5) * 100}%) rotate(${vRot}deg)`,
+                transformOrigin: "center center",
                 // ``filter: drop-shadow`` applied on the wrapper so the
                 // shadow includes the operator-added outline; if
                 // applied on the <video> itself the outline would sit
@@ -849,12 +863,6 @@ export function PreviewPanel({
                     "ring-2 ring-heimdex-navy-500 ring-inset",
                 )}
                 style={{
-                  // scale → translate (move within scaled space) →
-                  // rotate (around the post-translate centre). Order
-                  // matters: rotating first would tilt the translate
-                  // axis. Anchor stays at the element centre because
-                  // <video> has no transform-origin override.
-                  transform: `scale(${vs}) translate(${(vx - 0.5) * 100}%, ${(vy - 0.5) * 100}%) rotate(${vRot}deg)`,
                   // CSS ``outline`` instead of ``border`` so the line
                   // doesn't push the video element when the operator
                   // dials the width — the outline sits OUTSIDE the
@@ -864,7 +872,6 @@ export function PreviewPanel({
                     : {}),
                 }}
                 playsInline
-                muted={muted}
                 onSeeked={onSeeked}
                 onEnded={onEnded}
                 onPointerDown={onUpdateVideoPosition ? handleVideoPointerDown : undefined}
@@ -890,8 +897,7 @@ export function PreviewPanel({
                   overlay selection affordance so the UX matches across
                   the canvas. Each corner uses the standard nesw/nwse
                   cursor pair. The rotation handle sits just outside
-                  the top-right corner so it doesn't overlap the
-                  resize dot, matching OverlayRenderer's layout. */}
+                  the top edge so it doesn't overlap the resize dot. */}
               {onUpdateVideoScale && selectedVideo && (
                 <>
                   {(["nw", "ne", "sw", "se"] as const).map((corner) => (
@@ -904,6 +910,23 @@ export function PreviewPanel({
                         corner === "sw" && "-bottom-1.5 -left-1.5 cursor-nesw-resize",
                         corner === "se" && "-bottom-1.5 -right-1.5 cursor-nwse-resize",
                       )}
+                      style={{
+                        // Inverse-scale so the handle stays a constant
+                        // px size while the wrapper scales the video.
+                        // transform-origin anchors the handle to the
+                        // matching corner so the -1.5px offset still
+                        // sits on the actual video edge after the
+                        // 1/vs scale.
+                        transform: `scale(${1 / Math.max(vs, MIN_INVERSE_SCALE)})`,
+                        transformOrigin:
+                          corner === "nw"
+                            ? "top left"
+                            : corner === "ne"
+                              ? "top right"
+                              : corner === "sw"
+                                ? "bottom left"
+                                : "bottom right",
+                      }}
                       onPointerDown={handleVideoResizePointerDown}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
@@ -912,7 +935,14 @@ export function PreviewPanel({
                   {onUpdateVideoRotation && (
                     <div
                       aria-label="비디오 회전"
-                      className="absolute -top-7 left-1/2 z-10 -translate-x-1/2 h-3 w-3 cursor-grab rounded-full border-2 border-white bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.15)]"
+                      className="absolute -top-7 left-1/2 z-10 h-3 w-3 cursor-grab rounded-full border-2 border-white bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.15)]"
+                      style={{
+                        // Bottom-center origin pins the handle to the
+                        // video's top edge after inverse-scale, mirroring
+                        // OverlayRenderer's rotation-handle anchoring.
+                        transform: `translateX(-50%) scale(${1 / Math.max(vs, MIN_INVERSE_SCALE)})`,
+                        transformOrigin: "bottom center",
+                      }}
                       onPointerDown={handleVideoRotatePointerDown}
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}

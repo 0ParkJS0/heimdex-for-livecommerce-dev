@@ -189,6 +189,12 @@ export function FullscreenOverlay({
                   return layers.join(" ");
                 })()
               : undefined;
+            // 2026-05-25 — wrapper-transform pattern matching the
+            // editor PreviewPanel. The wrapper carries scale/translate/
+            // rotate so its visual bbox tracks the video (read-only
+            // here, no handles to anchor, but staying in sync with
+            // PreviewPanel keeps the drop-shadow + outline math
+            // identical across surfaces — required for render-fidelity).
             return (
               <div
                 className="absolute inset-0"
@@ -196,6 +202,8 @@ export function FullscreenOverlay({
                   ...(videoZIndex != null && videoZIndex >= 0
                     ? { zIndex: videoZIndex }
                     : {}),
+                  transform: `scale(${vs}) translate(${(vx - 0.5) * 100}%, ${(vy - 0.5) * 100}%) rotate(${vRot}deg)`,
+                  transformOrigin: "center center",
                   ...(dropShadowCss ? { filter: dropShadowCss } : {}),
                 }}
               >
@@ -203,13 +211,22 @@ export function FullscreenOverlay({
                   ref={videoRef}
                   className="h-full w-full object-contain"
                   style={{
-                    transform: `scale(${vs}) translate(${(vx - 0.5) * 100}%, ${(vy - 0.5) * 100}%) rotate(${vRot}deg)`,
                     ...(vOutline && vOutline.widthPx > 0
                       ? {
                           outline: `${vOutline.widthPx}px solid ${vOutline.color}`,
                         }
                       : {}),
                   }}
+                  // ``muted`` is required for the autoplay policy to
+                  // honor usePlaybackSync's ``video.play()`` call when
+                  // the modal first mounts — without it Chrome rejects
+                  // play() and the element stays on a black first-frame.
+                  // ``preload="auto"`` makes the browser fetch enough
+                  // data to paint the first frame even when paused, so
+                  // the modal opens to the actual frame instead of
+                  // black-until-play.
+                  muted
+                  preload="auto"
                   playsInline
                   onSeeked={onSeeked}
                   onEnded={onEnded}

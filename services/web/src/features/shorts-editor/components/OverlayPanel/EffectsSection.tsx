@@ -4,7 +4,6 @@
 // 효과 섹션 — 불투명도 LabeledSlider + 윤곽선(BorderControl) + 그림자(ShadowControl)
 // 텍스트·배경 패널 공용. radius·padding 은 primitive 에 위임.
 
-import { useEffect } from "react";
 import { LabeledSlider } from "../primitives/LabeledSlider";
 import { BorderControl } from "./BorderControl";
 import { ShadowControl } from "./ShadowControl";
@@ -33,16 +32,19 @@ interface EffectsSectionProps {
 // picks a colour, at which point the stroke is materialised into
 // state with width seeded to 5 px (DEFAULT_STROKE_WIDTH_PX).
 //
-// Shadow keeps its mount-time materialisation so the sliders show
-// live values from the first paint. Operator request 2026-05-24:
-// default is a simple drop shadow — black, +5/+5 offset, no blur,
-// no spread — so the overlay reads as a duplicate glyph layer
-// behind the foreground until the operator dials something else.
+// Shadow is opt-in alongside stroke (operator request 2026-05-25): a
+// freshly added text overlay carries ``effects.shadow === null`` so
+// the canvas shows no drop. The first interaction in ShadowControl
+// (most commonly picking a colour from the palette) materialises the
+// shadow into state using DEFAULT_SHADOW. The default offset is
+// +1/+1 px — a tight halo that reads as "just barely visible" so the
+// operator notices the shadow turned on without it overpowering the
+// glyph. Earlier defaults (+5/+5 px) felt like a heavy second copy.
 export const DEFAULT_STROKE_WIDTH_PX = 5;
 const DEFAULT_SHADOW: ShadowProps = {
   color: "#000000",
-  offsetX: 5,
-  offsetY: 5,
+  offsetX: 1,
+  offsetY: 1,
   blurPx: 0,
   spreadPx: 0,
 };
@@ -69,23 +71,13 @@ export function EffectsSection({ effects, onChange, hideStroke = false }: Effect
     onChange({ ...effects, ...patch });
   };
 
-  // Materialise SHADOW only into state on first render so the sliders
-  // start from a non-null model and any drag immediately produces
-  // visible CSS. Stroke stays opt-in (null) — BorderControl renders
-  // the OFF placeholder when stroke is null and the first colour pick
-  // materialises the stroke into state with the Q4 default width.
-  useEffect(() => {
-    if (effects.shadow === null) {
-      onChange({
-        ...effects,
-        shadow: DEFAULT_SHADOW,
-      });
-    }
-    // Only run on mount — intentionally excludes effects/onChange from
-    // deps to avoid infinite update loops.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // Shadow stays opt-in to match stroke (operator request 2026-05-25:
+  // a freshly added text overlay must render with NO shadow, not the
+  // 5/5 black drop the mount-time materialiser used to inject). Render
+  // the controls against DEFAULT values when shadow is null so the
+  // sliders show numbers; the first user interaction in ShadowControl
+  // calls onChange with a full ShadowProps and materialises the
+  // shadow into state.
   const stroke = effects.stroke ?? STROKE_OFF_PLACEHOLDER;
   const shadow = effects.shadow ?? DEFAULT_SHADOW;
   const strokeOff = effects.stroke === null;

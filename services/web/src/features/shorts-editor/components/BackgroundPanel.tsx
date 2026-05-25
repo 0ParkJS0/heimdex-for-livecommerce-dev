@@ -223,14 +223,14 @@ export function BackgroundPanel({
       const widthPx = outline?.widthPx ?? 0;
       // Shadow row materialises a default on first mount so the
       // sliders immediately show numbers — same UX the overlay
-      // EffectsSection uses (DEFAULT_SHADOW: black, +5/+5 offset).
+      // EffectsSection uses (DEFAULT_SHADOW: black, +1/+1 offset).
       // Until the operator dials a value, ``onSetVideoShadow`` is
       // dispatched with that default so any later edit only patches
       // the existing object.
       const shadow = state.videoTransform.shadow ?? {
         color: "#000000",
-        offsetX: 5,
-        offsetY: 5,
+        offsetX: 1,
+        offsetY: 1,
         blurPx: 0,
         spreadPx: 0,
       };

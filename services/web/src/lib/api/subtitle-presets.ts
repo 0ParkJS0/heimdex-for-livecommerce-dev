@@ -14,7 +14,7 @@ import type {
   WirePreset,
   WirePresetListResponse,
 } from "@/features/shorts-editor/lib/overlay-types";
-import { getApiBaseUrl } from "./utils";
+import { formatErrorDetail, getApiBaseUrl } from "./utils";
 
 type TokenGetter = () => Promise<string | null>;
 
@@ -44,10 +44,11 @@ async function handleResponse<T>(res: Response, action: string): Promise<T> {
     );
   }
   if (!res.ok) {
-    let detail = `${action} failed: HTTP ${res.status}`;
+    const fallback = `${action} failed: HTTP ${res.status}`;
+    let detail = fallback;
     try {
       const body = await res.json();
-      if (typeof body?.detail === "string") detail = body.detail;
+      detail = formatErrorDetail(body?.detail, fallback);
     } catch {
       /* response wasn't JSON — keep the default detail */
     }

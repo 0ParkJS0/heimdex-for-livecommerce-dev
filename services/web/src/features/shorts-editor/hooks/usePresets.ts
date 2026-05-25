@@ -466,13 +466,14 @@ export function buildCompositionPayloadFromState(
 
   const overlays = state.overlays.map((o) => {
     const durationMs = Math.max(1, o.endMs - o.startMs);
-    // Strip id / startMs / endMs / kind from the payload — the apply
+    // Strip startMs / endMs / kind from the payload — the apply
     // reducer regenerates id, kind is carried in the outer
     // CompositionPresetOverlayPayload.kind, and timing is anchored to
-    // the apply-time playhead.
+    // the apply-time playhead. The original ``id`` is kept on the
+    // preset overlay (NOT inside ``payload``) so the saved layerOrder
+    // can reference it and the apply reducer can rewrite it to the
+    // freshly-issued overlay id.
     if (o.kind === "text") {
-      // Destructure to drop identity fields without mutating the
-      // source. Spreading first then deleting keeps tooling happy.
       const {
         id: _id,
         kind: _kind,
@@ -488,6 +489,7 @@ export function buildCompositionPayloadFromState(
       void _li;
       return {
         kind: "text" as const,
+        id: o.id,
         layerIndex: o.layerIndex,
         durationMs,
         payload: rest as unknown as Record<string, unknown>,
@@ -508,6 +510,7 @@ export function buildCompositionPayloadFromState(
     void _li;
     return {
       kind: "background" as const,
+      id: o.id,
       layerIndex: o.layerIndex,
       durationMs,
       payload: rest as unknown as Record<string, unknown>,
@@ -536,6 +539,13 @@ export function buildCompositionPayloadFromState(
       outline: state.videoTransform.outline ?? null,
       shadow: state.videoTransform.shadow ?? null,
     },
+    // Stack order snapshot. Overlay slot ids reference the preset's
+    // own overlay ids (saved on each overlays[i].id above), so the
+    // apply reducer can rewrite them to the freshly issued ids of the
+    // appended overlays.
+    layerOrder: state.layerOrder.map((l) =>
+      l.kind === "overlay" ? { kind: "overlay" as const, id: l.id } : { kind: l.kind },
+    ),
   };
 }
 
@@ -557,10 +567,14 @@ function serializeCompositionPayload(
       : null,
     overlays: payload.overlays.map((o) => ({
       kind: o.kind,
+      id: o.id,
       layer_index: o.layerIndex,
       duration_ms: o.durationMs,
       payload: o.payload,
     })),
+    layer_order: payload.layerOrder?.map((l) =>
+      l.kind === "overlay" ? { kind: "overlay", id: l.id } : { kind: l.kind },
+    ),
     letterbox: payload.letterbox
       ? {
           top_height_pct: payload.letterbox.topHeightPct,
@@ -632,8 +646,11 @@ function parseCompositionPayload(
       if (kind !== "text" && kind !== "background") return null;
       const body = e["payload"];
       if (!body || typeof body !== "object") return null;
+      const idRaw = e["id"];
+      const id = typeof idRaw === "string" ? idRaw : undefined;
       return {
         kind,
+        ...(id ? { id } : {}),
         layerIndex: getNumber(e, "layer_index", 0),
         durationMs: getNumber(e, "duration_ms", 3000),
         payload: body as Record<string, unknown>,
@@ -642,6 +659,37 @@ function parseCompositionPayload(
     .filter(
       (v): v is CompositionPresetPayload["overlays"][number] => v !== null,
     );
+
+  // Layer order — optional. Each entry is ``{ kind, id? }`` (snake-case
+  // ``layer_order`` on the wire). Overlay-kind entries carry the
+  // preset-time id which the apply reducer rewrites to the new
+  // overlay id. Skip malformed entries so a partial wire dump still
+  // applies cleanly. Returns ``undefined`` when missing so the apply
+  // reducer can fall back to existing layerOrder.
+  const layerOrderRaw = Array.isArray(raw["layer_order"])
+    ? raw["layer_order"]
+    : null;
+  const layerOrder = layerOrderRaw
+    ? (layerOrderRaw
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") return null;
+          const l = entry as Record<string, unknown>;
+          const kind = l["kind"];
+          if (kind === "overlay") {
+            const idRaw = l["id"];
+            if (typeof idRaw !== "string") return null;
+            return { kind: "overlay" as const, id: idRaw };
+          }
+          if (kind === "video" || kind === "letterbox" || kind === "subtitles") {
+            return { kind };
+          }
+          return null;
+        })
+        .filter(
+          (v): v is NonNullable<CompositionPresetPayload["layerOrder"]>[number] =>
+            v !== null,
+        ))
+    : undefined;
 
   // Letterbox — keep null when the raw value is null/missing so the
   // reducer leaves the current letterbox unchanged on apply.
@@ -714,5 +762,11 @@ function parseCompositionPayload(
           shadow: null,
         };
 
-  return { subtitleStyle, overlays, letterbox, videoTransform };
+  return {
+    subtitleStyle,
+    overlays,
+    letterbox,
+    videoTransform,
+    ...(layerOrder ? { layerOrder } : {}),
+  };
 }
