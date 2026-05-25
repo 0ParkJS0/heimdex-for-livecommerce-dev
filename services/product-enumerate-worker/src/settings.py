@@ -120,9 +120,18 @@ class WorkerSettings(BaseSettings):
     # the OWLv2 threshold) or remove the floor entirely.
     enum_min_confidence: float = 0.6
 
-    enum_label_merge_enabled: bool = False
+    # Rule-based label-merge is on by default — token-Jaccard (>= 0.6)
+    # plus cluster-cosine (>= 0.7) collapses surface-form variants the
+    # SigLIP2 clusterer left split ('핑크 세럼' / '분홍 세럼'). The
+    # cosine floor keeps brand collisions out (same word, different
+    # product). Tighten the env vars if false-merges show up on the
+    # consolidation goldens.
+    enum_label_merge_enabled: bool = True
     enum_label_merge_token_jaccard: float = 0.6
     enum_label_merge_cosine_floor: float = 0.70
+    # LLM-based label-merge is still off by default — it overlaps with
+    # the API-side ``CatalogConsolidator`` (gpt-4o) and would double
+    # the cost without a precision win on the current golden set.
     enum_label_merge_llm_enabled: bool = False
 
     # ---------- safety ----------
