@@ -89,6 +89,7 @@ jobs:
             tests/test_track_stt_segmentation.py \
             tests/test_shorts_auto_product_enumeration_source.py \
             tests/test_shorts_auto_product_enumerate_stt.py \
+            tests/test_eval_shorts_auto_product.py \
             tests/test_whisper_transcribe_schemas.py \
             tests/test_whisper_transcribe_budget.py \
             tests/test_whisper_transcribe_client.py \
