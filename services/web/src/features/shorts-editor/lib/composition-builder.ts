@@ -1,4 +1,20 @@
 import type { EditorState, CompositionSpec, CompositionLayerOrder, CompositionLetterbox, CompositionVideoTransform } from "./types";
+
+/**
+ * Normalise a colour string into the hex form the backend validator
+ * accepts (``#RRGGBB`` or ``#RRGGBBAA``). The editor stores the CSS
+ * keyword ``"transparent"`` for image-backed background overlays and
+ * for ColorPalette "off" picks; the renderer's contracts validator
+ * rejects anything that isn't hex, so convert here at the wire boundary.
+ *
+ * Anything that already starts with ``#`` is passed through verbatim
+ * (we don't try to validate the hex digits — the backend does that and
+ * the operator sees a precise message via formatErrorDetail).
+ */
+function normaliseWireHex(color: string): string {
+  if (color === "transparent") return "#00000000";
+  return color;
+}
 import type {
   EditorBackgroundOverlay,
   EditorTextOverlay,
@@ -55,8 +71,11 @@ export function buildCompositionSpec(
     ? {
         top_height_pct: state.letterbox.topHeightPct,
         bottom_height_pct: state.letterbox.bottomHeightPct,
-        fill_color: state.letterbox.fillColor,
-        border_color: state.letterbox.borderColor,
+        fill_color: normaliseWireHex(state.letterbox.fillColor),
+        border_color:
+          state.letterbox.borderColor != null
+            ? normaliseWireHex(state.letterbox.borderColor)
+            : null,
         border_width_px: state.letterbox.borderWidthPx,
       }
     : undefined;
@@ -267,6 +286,6 @@ function serializeBackgroundOverlay(o: EditorBackgroundOverlay): WireBackgroundO
           }
         : null,
     },
-    fill_color: o.fillColor,
+    fill_color: normaliseWireHex(o.fillColor),
   };
 }

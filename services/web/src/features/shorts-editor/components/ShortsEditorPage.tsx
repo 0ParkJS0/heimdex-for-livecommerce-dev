@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
@@ -26,11 +26,13 @@ import { buildCompositionPayloadFromState, usePresets } from "../hooks/usePreset
 import { EditorLayout } from "./EditorLayout";
 import { FullscreenOverlay } from "./FullscreenOverlay";
 import { PreviewPanel } from "./PreviewPanel";
+import { RenderCompleteDialog } from "./RenderCompleteDialog";
 import { TimelinePanel } from "./TimelinePanel";
 import { OverlayPanel } from "./OverlayPanel";
 import { SubtitleListNav } from "./SubtitleEditor";
 import { TemplateSaveDialog } from "./TemplateSaveDialog";
 import { TemplateSaveMenu } from "./TemplateSaveMenu";
+import { UnsavedExitDialog } from "./UnsavedExitDialog";
 import type { EditorSubtitle } from "../lib/types";
 import { getVisibleSubtitles } from "../lib/source-time";
 import type { EditorOverlay, EditorTextOverlay } from "../lib/overlay-types";
@@ -100,6 +102,13 @@ export function ShortsEditorPage() {
   const [didAutoOpenPreview, setDidAutoOpenPreview] = useState(false);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  // figma 2107:410685 — 렌더 완료 후 다이얼로그 (계속 편집 / 내 쇼츠로 이동).
+  // 저장하기 흐름에서만 띄우고 내보내기 흐름은 다운로드 + 즉시 redirect 유지.
+  const [showRenderCompleteDialog, setShowRenderCompleteDialog] = useState(false);
+  // figma 2105:410610 / 2107:410657 — 미저장 변경사항이 있을 때 GNB
+  // 뒤로가기 / beforeunload 가 띄우는 3-action 모달. variant 는 shortId
+  // 유무로 결정 (신규 vs 편집 재진입).
+  const [showUnsavedExitDialog, setShowUnsavedExitDialog] = useState(false);
   // Playback rate derived from the state machine; the operator changes
   // it via the SpeedPopover which dispatches SET_RATE.
   // figma: 1670:185907 — 마스터 볼륨 (하단 컨트롤 슬라이더와 동기화)
@@ -158,6 +167,7 @@ export function ShortsEditorPage() {
     renderStatus,
     renderJob,
     renderError,
+    submitMode,
     submitComposition,
     reset: resetRender,
   } = useCompositionExport({
@@ -303,8 +313,13 @@ export function ShortsEditorPage() {
   // figma: 1602:37719 — editor GNB merges into the global TopHeader.
   // Back lives in the dedicated back slot, title/scene-count in the left
   // actions slot, render controls in the right actions slot.
+  //
+  // 미저장 변경사항이 있으면 UnsavedExitDialog 를 띄운다. variant 는
+  // shortId 유무로 분기 (신규 vs 편집 재진입). 깨끗한 상태 (isDirty=
+  // false) 면 바로 /export/shorts 로 이동.
   const handleHeaderBack = useCallback(() => {
-    if (state.isDirty && !window.confirm("저장하지 않은 변경사항이 있습니다. 나가시겠습니까?")) {
+    if (state.isDirty) {
+      setShowUnsavedExitDialog(true);
       return;
     }
     router.push("/export/shorts");
@@ -362,6 +377,75 @@ export function ShortsEditorPage() {
     document.body.removeChild(a);
   }, [renderJob]);
 
+  // When the render finishes:
+  //   * 내보내기 (submitMode === "export") — MP4 다운로드 + 즉시
+  //     /export/shorts 로 이동 (기존 동작 유지).
+  //   * 저장하기 (submitMode === "save") — RenderCompleteDialog 를
+  //     띄워 사용자가 "계속 편집" 또는 "내 쇼츠로 이동" 을 선택하게
+  //     한다 (figma 2107:410685). UnsavedExitDialog 의 "저장하고
+  //     나가기" 분기도 submitComposition("save") 후 이 다이얼로그를
+  //     공유한다.
+  // ``didPostRenderRef`` keeps the effect single-shot per render.
+  const didPostRenderRef = useRef(false);
+  useEffect(() => {
+    if (renderStatus !== "completed") {
+      didPostRenderRef.current = false;
+      return;
+    }
+    if (didPostRenderRef.current) return;
+    didPostRenderRef.current = true;
+    if (submitMode === "export") {
+      handleRenderDownload();
+      router.push("/export/shorts");
+      return;
+    }
+    setShowRenderCompleteDialog(true);
+  }, [renderStatus, submitMode, handleRenderDownload, router]);
+
+  // figma 2107:410685 — RenderCompleteDialog 액션. 계속 편집 시
+  // resetRender 로 상태를 idle 로 돌려 다시 저장이 가능하게 한다.
+  const handleRenderCompleteContinue = useCallback(() => {
+    setShowRenderCompleteDialog(false);
+    resetRender();
+  }, [resetRender]);
+
+  const handleRenderCompleteGoToShorts = useCallback(() => {
+    setShowRenderCompleteDialog(false);
+    router.push("/export/shorts");
+  }, [router]);
+
+  // figma 2105:410610 / 2107:410657 — UnsavedExitDialog 액션.
+  //   * 저장 안 함 → 변경사항 폐기하고 /export/shorts 로 이동.
+  //   * 저장하고 나가기 → submitComposition("save") 트리거.
+  //     렌더가 끝나면 위 useEffect 가 RenderCompleteDialog 를 띄우고,
+  //     사용자가 "내 쇼츠로 이동" 을 누르면 최종 redirect 가 일어난다.
+  const handleUnsavedExitCancel = useCallback(() => {
+    setShowUnsavedExitDialog(false);
+  }, []);
+
+  const handleUnsavedExitDiscard = useCallback(() => {
+    setShowUnsavedExitDialog(false);
+    router.push("/export/shorts");
+  }, [router]);
+
+  const handleUnsavedExitSaveAndExit = useCallback(() => {
+    setShowUnsavedExitDialog(false);
+    submitComposition("save");
+  }, [submitComposition]);
+
+  // 브라우저 탭 닫기 / 새로고침 가드. 우리 커스텀 다이얼로그는 native
+  // beforeunload 안에서 띄울 수 없으므로 기본 브라우저 prompt 만 트리거
+  // 한다 (returnValue 를 세팅하면 브라우저가 자체 confirm 을 띄움).
+  useEffect(() => {
+    if (!state.isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [state.isDirty]);
+
   const headerRightSlot = useMemo(() => {
     if (isLoading || loadError) return null;
     // figma: 1602:37719 — right side buttons h=32 px=10 py=6 r=8 fs=12.
@@ -406,22 +490,44 @@ export function ShortsEditorPage() {
           </button>
         )}
         {renderStatus !== "completed" && (
-          <button
-            type="button"
-            onClick={submitComposition}
-            disabled={!canRender}
-            className={cn(
-              "inline-flex h-8 items-center gap-2 rounded-[8px] px-[10px] py-[6px] text-[12px] font-semibold leading-none transition-colors",
-              canRender
-                ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
-                : "cursor-not-allowed bg-neutral-h-100 text-neutral-h-300",
-            )}
-          >
-            {isRenderWorking && (
-              <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-            )}
-            {RENDER_STATUS_LABELS[renderStatus]}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => submitComposition("export")}
+              disabled={!canRender}
+              className={cn(
+                "inline-flex h-8 items-center gap-2 rounded-[8px] px-[10px] py-[6px] text-[12px] font-semibold leading-none transition-colors",
+                canRender
+                  ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                  : "cursor-not-allowed bg-neutral-h-100 text-neutral-h-300",
+              )}
+            >
+              {isRenderWorking && submitMode === "export" && (
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+              {isRenderWorking && submitMode === "export"
+                ? RENDER_STATUS_LABELS[renderStatus]
+                : "내보내기"}
+            </button>
+            <button
+              type="button"
+              onClick={() => submitComposition("save")}
+              disabled={!canRender}
+              className={cn(
+                "inline-flex h-8 items-center gap-2 rounded-[8px] px-[10px] py-[6px] text-[12px] font-semibold leading-none transition-colors",
+                canRender
+                  ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                  : "cursor-not-allowed bg-neutral-h-100 text-neutral-h-300",
+              )}
+            >
+              {isRenderWorking && submitMode === "save" && (
+                <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+              {isRenderWorking && submitMode === "save"
+                ? RENDER_STATUS_LABELS[renderStatus]
+                : RENDER_STATUS_LABELS.idle}
+            </button>
+          </>
         )}
       </div>
     );
@@ -432,6 +538,7 @@ export function ShortsEditorPage() {
     selectedOverlay,
     renderStatus,
     renderJob,
+    submitMode,
     handleRenderDownload,
     resetRender,
     submitComposition,
@@ -1052,6 +1159,20 @@ export function ShortsEditorPage() {
         onClose={() => setTemplateDialogOpen(false)}
         onSave={handleTemplateSave}
         mode="composition"
+      />
+
+      <RenderCompleteDialog
+        open={showRenderCompleteDialog}
+        onContinueEditing={handleRenderCompleteContinue}
+        onGoToShorts={handleRenderCompleteGoToShorts}
+      />
+
+      <UnsavedExitDialog
+        open={showUnsavedExitDialog}
+        variant={shortId ? "existing" : "new"}
+        onCancel={handleUnsavedExitCancel}
+        onDiscard={handleUnsavedExitDiscard}
+        onSaveAndExit={handleUnsavedExitSaveAndExit}
       />
     </div>
   );

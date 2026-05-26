@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditorClip, EditorSubtitle, EditorState, LayerOrderId, Playback, PlaybackEvent } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
@@ -72,6 +72,12 @@ export function FullscreenOverlay({
   videoTransform,
 }: FullscreenOverlayProps) {
   const isPlaying = playback.kind === "playing";
+  // The host <video> opens muted so the browser's autoplay policy
+  // honours the autoPlay attribute and commits a first-frame paint
+  // on mount. The operator can toggle audio on via the volume button
+  // in the transport row below — that flips the ``muted`` state, and
+  // the click counts as the user gesture Chrome needs to start audio.
+  const [muted, setMuted] = useState(true);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -230,7 +236,7 @@ export function FullscreenOverlay({
                   //   The pause useEffect in usePlaybackSync immediately
                   //   pauses again when the editor isn't playing, but the
                   //   first frame is now committed.
-                  muted
+                  muted={muted}
                   preload="auto"
                   autoPlay
                   playsInline
@@ -426,6 +432,21 @@ export function FullscreenOverlay({
                   <SkipForward className="h-5 w-5" />
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => setMuted((m) => !m)}
+                aria-label={muted ? "음소거 해제" : "음소거"}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full text-white",
+                  "bg-[rgba(38,38,38,0.5)] hover:bg-[rgba(38,38,38,0.7)]",
+                )}
+              >
+                {muted ? (
+                  <VolumeX className="h-5 w-5" />
+                ) : (
+                  <Volume2 className="h-5 w-5" />
+                )}
+              </button>
               <div className="flex h-8 items-center rounded-full bg-[rgba(38,38,38,0.5)] px-2">
                 <span className="text-[14px] font-medium leading-[1.4] tracking-[-0.35px] text-white">
                   {formatTimelineTimestamp(playheadMs)} /{" "}

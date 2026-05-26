@@ -120,8 +120,12 @@ export function createDefaultBackgroundOverlay(args: {
     },
     effects: { ...DEFAULT_EFFECTS },
     // Images render on top of a transparent fill by default so the
-    // picture isn't tinted by an accidental black backing.
-    fillColor: args.fillColor ?? (isImage ? "transparent" : "#000000"),
+    // picture isn't tinted by an accidental black backing. Stored as
+    // ``#00000000`` (RRGGBBAA, alpha 0) — the renderer's contracts
+    // validator only accepts hex, so the older ``"transparent"``
+    // keyword now bounces with a 422. UI surfaces that read the value
+    // still treat alpha-0 hex as visually transparent.
+    fillColor: args.fillColor ?? (isImage ? "#00000000" : "#000000"),
     imageUrl: args.imageUrl ?? null,
   };
 }

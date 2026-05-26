@@ -32,7 +32,15 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ExportModal } from "@/features/basket/ExportModal";
 import type { BasketItem } from "@/features/basket/useSceneBasket";
 import { getRenderJobStatus, type RenderJobResponse } from "@/lib/api/highlight-reel";
-import { generateRenderJobSummary } from "@/lib/api/shorts-render";
+import {
+  downloadRenderJob,
+  generateRenderJobSummary,
+} from "@/lib/api/shorts-render";
+import {
+  isCompletedRender,
+  isFailedRender,
+  isRenderingRender,
+} from "../lib/render-status";
 import { Pagination } from "@/components/ui/Pagination";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button, Snackbar } from "@/components/ui/figma-index";
@@ -495,9 +503,25 @@ export function SavedShortsPage() {
     } catch {}
   };
 
-  const isRendering = (item: DisplayItem) => item.type === "render" && (item.status === "queued" || item.status === "rendering");
-  const isCompleted = (item: DisplayItem) => item.type === "render" && item.status === "completed";
-  const isFailed = (item: DisplayItem) => item.type === "render" && item.status === "failed";
+  const handleDownload = async (item: DisplayItem) => {
+    if (item.type !== "render" || item.status !== "completed") return;
+    const filename = item.title || `short_${item.id}`;
+    try {
+      await downloadRenderJob(item.id, filename, getAccessToken);
+    } catch {
+      // Silent fail — the API client already surfaces the error via
+      // formatErrorDetail when a download URL has expired or the job
+      // has been removed; we don't have a toast pipeline here yet.
+    }
+  };
+
+  // Render-status branches moved to features/shorts/lib/render-status.ts
+  // so the dot-3 menu's gating logic (Download item visibility) can be
+  // unit-tested without mounting the page. Local aliases keep the JSX
+  // below readable.
+  const isRendering = isRenderingRender;
+  const isCompleted = isCompletedRender;
+  const isFailed = isFailedRender;
 
   const exportDisabled = selectedIds.size === 0 || exportProgress !== null;
 
@@ -881,6 +905,22 @@ export function SavedShortsPage() {
                             >
                               편집
                             </Link>
+                          )}
+                          {isCompleted(item) && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setOpenMenuId(null);
+                                void handleDownload(item);
+                              }}
+                              className="block w-full px-[12px] py-[8px] text-left text-[12px] text-grayscale-800 hover:bg-neutral-h-50"
+                              data-testid="saved-shorts-render-download"
+                            >
+                              다운로드
+                            </button>
                           )}
                           <button
                             type="button"

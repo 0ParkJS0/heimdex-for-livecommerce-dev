@@ -9,7 +9,7 @@
 
 import { useId, useState } from "react";
 
-import { Check, Plus, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 
 import { resolveFontFamily } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
@@ -50,11 +50,19 @@ export function TemplatePanel({
   return (
     <div className="flex h-full flex-col gap-4 rounded-dialog bg-white p-5">
       <ActionRow
+        selected={selected}
         selectedName={selected?.name ?? null}
         disabled={!selected}
         onApply={() => {
           if (selected) onApply(selected);
         }}
+        onDelete={
+          onDelete
+            ? () => {
+                if (selected) onDelete(selected);
+              }
+            : undefined
+        }
         presets={presets}
         onPickPreset={(id) => onSelect(id)}
         starterTemplates={starterTemplates}
@@ -189,17 +197,21 @@ function StarterTemplateCard({
 }
 
 function ActionRow({
+  selected,
   selectedName,
   disabled,
   onApply,
+  onDelete,
   presets,
   onPickPreset,
   starterTemplates = [],
   onPickStarter,
 }: {
+  selected: WirePreset | null;
   selectedName: string | null;
   disabled: boolean;
   onApply: () => void;
+  onDelete?: () => void;
   presets: WirePreset[];
   onPickPreset: (id: string) => void;
   starterTemplates?: readonly StarterTemplate[];
@@ -293,6 +305,27 @@ function ActionRow({
       >
         적용하기
       </button>
+
+      {/* figma 2107:410711 / 2015:246806 — 선택된 템플릿을 ActionRow
+          에서 바로 삭제. 카드-hover trash 와 같은 onDelete 를 공유한다.
+          선택이 없으면 disabled 로 회색 처리. Ctrl+Z 미지원 (operator
+          confirmed). */}
+      {onDelete && (
+        <button
+          type="button"
+          onClick={() => {
+            if (selected) onDelete();
+          }}
+          disabled={!selected}
+          aria-label={
+            selected ? `${selected.name} 템플릿 삭제` : "템플릿 삭제"
+          }
+          data-testid="template-action-delete"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-card border border-red-h-500 text-red-h-500 transition-colors hover:bg-red-h-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-h-500 disabled:cursor-not-allowed disabled:border-grayscale-200 disabled:text-grayscale-300 disabled:hover:bg-transparent"
+        >
+          <Trash2 className="h-5 w-5" strokeWidth={2} />
+        </button>
+      )}
     </div>
   );
 }
@@ -410,22 +443,6 @@ function CheckerPattern() {
       </defs>
       <rect width="100%" height="100%" fill={`url(#${patternId})`} />
     </svg>
-  );
-}
-
-function EmptyState({ onOpenSaveDialog }: { onOpenSaveDialog: () => void }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
-      <p className="text-xs text-grayscale-500">저장된 템플릿이 없습니다.</p>
-      <button
-        type="button"
-        onClick={onOpenSaveDialog}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-grayscale-200 bg-white px-3 py-2 text-xs font-medium text-grayscale-800 transition-colors hover:border-heimdex-navy-500 hover:text-heimdex-navy-500"
-      >
-        <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-        현재 스타일 저장
-      </button>
-    </div>
   );
 }
 

@@ -552,4 +552,169 @@ describe("buildCompositionSpec", () => {
       ]);
     });
   });
+
+  // The contracts validator rejects the CSS keyword "transparent" — the
+  // wire only accepts #RRGGBB / #RRGGBBAA. The editor still stores
+  // "transparent" on image-backed overlays (legacy) and could store it
+  // via colour palette "off" picks, so the builder converts at the wire
+  // boundary. These fixtures lock that boundary so a regression
+  // immediately re-triggers the 422 we just fixed.
+  describe("transparent → #00000000 wire normalisation", () => {
+    function bgOverlay(fillColor: string) {
+      return {
+        kind: "background" as const,
+        id: "ov_bg",
+        startMs: 0,
+        endMs: 1000,
+        layerIndex: 0,
+        transform: {
+          x: 0.5,
+          y: 0.5,
+          rotationDeg: 0,
+          widthPx: 100,
+          heightPx: 100,
+        },
+        effects: { opacity: 1, stroke: null, shadow: null },
+        fillColor,
+        imageUrl: null,
+      };
+    }
+
+    it("converts a background overlay's CSS-keyword fill to alpha-0 hex", () => {
+      const state = makeState({ overlays: [bgOverlay("transparent")] });
+      const spec = buildCompositionSpec(state);
+      expect(spec.overlays[0].kind).toBe("background");
+      expect(
+        (spec.overlays[0] as { fill_color: string }).fill_color,
+      ).toBe("#00000000");
+    });
+
+    it("passes already-hex fill colors through unchanged", () => {
+      const state = makeState({ overlays: [bgOverlay("#112233")] });
+      const spec = buildCompositionSpec(state);
+      expect(
+        (spec.overlays[0] as { fill_color: string }).fill_color,
+      ).toBe("#112233");
+    });
+
+    it("normalises letterbox fill + border when one is the transparent keyword", () => {
+      const state = makeState({
+        letterbox: {
+          topHeightPct: 10,
+          bottomHeightPct: 10,
+          fillColor: "transparent",
+          borderColor: "transparent",
+          borderWidthPx: 2,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.letterbox?.fill_color).toBe("#00000000");
+      expect(spec.letterbox?.border_color).toBe("#00000000");
+    });
+
+    it("forwards every editor-supported font family verbatim", () => {
+      // The render worker only matches subtitle styling to what we put
+      // on the wire; we lock the font name passthrough here so a
+      // rename or typo doesn't silently fall back to Pretendard.
+      const fonts = [
+        "Pretendard",
+        "Noto Sans KR",
+        "S-Core Dream",
+        "NanumSquare",
+        "SUIT",
+        "KoPubWorldDotum",
+        "Onglyph Positive",
+        "A2Z",
+      ];
+      for (const fontFamily of fonts) {
+        const state = makeState({
+          clips: [
+            {
+              id: "c",
+              sceneId: "s",
+              videoId: "v",
+              sourceType: "gdrive",
+              originalStartMs: 0,
+              originalEndMs: 5000,
+              trimStartMs: 0,
+              trimEndMs: 5000,
+              timelineStartMs: 0,
+              volume: 1.0,
+            },
+          ],
+          subtitles: [
+            {
+              id: "sub",
+              text: "예시",
+              startMs: 0,
+              endMs: 1000,
+              style: { ...DEFAULT_SUBTITLE_STYLE, fontFamily },
+            },
+          ],
+        });
+        const spec = buildCompositionSpec(state);
+        expect(spec.subtitles[0].style.font_family).toBe(fontFamily);
+      }
+    });
+
+    it("serialises the full video_transform (rotation + outline + shadow) when set", () => {
+      const state = makeState({
+        clips: [
+          {
+            id: "c",
+            sceneId: "s",
+            videoId: "v",
+            sourceType: "gdrive",
+            originalStartMs: 0,
+            originalEndMs: 5000,
+            trimStartMs: 0,
+            trimEndMs: 5000,
+            timelineStartMs: 0,
+            volume: 1.0,
+          },
+        ],
+        videoTransform: {
+          x: 0.45,
+          y: 0.55,
+          scale: 0.9,
+          rotationDeg: 8,
+          outline: { color: "#FF00FF", widthPx: 3 },
+          shadow: {
+            color: "#000000",
+            offsetX: 2,
+            offsetY: 4,
+            blurPx: 6,
+            spreadPx: 1,
+          },
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.video_transform?.rotation_deg).toBe(8);
+      expect(spec.video_transform?.outline).toEqual({
+        color: "#FF00FF",
+        width_px: 3,
+      });
+      expect(spec.video_transform?.shadow).toEqual({
+        color: "#000000",
+        offset_x: 2,
+        offset_y: 4,
+        blur_px: 6,
+        spread_px: 1,
+      });
+    });
+
+    it("keeps letterbox borderColor as null when explicitly null (no normalisation)", () => {
+      const state = makeState({
+        letterbox: {
+          topHeightPct: 5,
+          bottomHeightPct: 5,
+          fillColor: "#000000",
+          borderColor: null,
+          borderWidthPx: 0,
+        },
+      });
+      const spec = buildCompositionSpec(state);
+      expect(spec.letterbox?.border_color).toBeNull();
+    });
+  });
 });

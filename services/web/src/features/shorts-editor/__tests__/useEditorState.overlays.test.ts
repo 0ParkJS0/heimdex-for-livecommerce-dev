@@ -117,6 +117,64 @@ describe("useEditorState — V2 overlays", () => {
     expect(moved.layerIndex).toBe(1);
   });
 
+  it("media segment: background overlays default below the letterbox; send-to-front lifts above", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+    const lo1 = result.current.state.layerOrder;
+    const idxBg1 = lo1.findIndex((l) => l.kind === "overlay" && l.id === bgId);
+    const idxLb1 = lo1.findIndex((l) => l.kind === "letterbox");
+    expect(idxBg1).toBeLessThan(idxLb1);
+    // send-to-front: bg slot rises above the letterbox
+    act(() =>
+      result.current.reorderLayer({ kind: "overlay", id: bgId }, "front"),
+    );
+    const lo2 = result.current.state.layerOrder;
+    const idxBg2 = lo2.findIndex((l) => l.kind === "overlay" && l.id === bgId);
+    const idxLb2 = lo2.findIndex((l) => l.kind === "letterbox");
+    const idxSub2 = lo2.findIndex((l) => l.kind === "subtitles");
+    expect(idxBg2).toBeGreaterThan(idxLb2);
+    expect(idxBg2).toBeLessThan(idxSub2);
+  });
+
+  it("media segment: REORDER_LAYER on video can rise above the letterbox (template style)", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+    // default: video at the bottom of the media segment
+    const lo1 = result.current.state.layerOrder;
+    const idxVideo1 = lo1.findIndex((l) => l.kind === "video");
+    const idxLb1 = lo1.findIndex((l) => l.kind === "letterbox");
+    expect(idxVideo1).toBeLessThan(idxLb1);
+
+    act(() => result.current.reorderLayer({ kind: "video" }, "forward"));
+    const lo2 = result.current.state.layerOrder;
+    const idxVideo2 = lo2.findIndex((l) => l.kind === "video");
+    const idxLb2 = lo2.findIndex((l) => l.kind === "letterbox");
+    const idxSub2 = lo2.findIndex((l) => l.kind === "subtitles");
+    expect(idxVideo2).toBeGreaterThan(idxLb2);
+    // Subtitles still pinned above the entire media segment.
+    expect(idxVideo2).toBeLessThan(idxSub2);
+  });
+
   it("reorderOverlay 'forward' is a single-step swap", () => {
     const { result } = setupWithDuration(10_000);
     act(() => {
