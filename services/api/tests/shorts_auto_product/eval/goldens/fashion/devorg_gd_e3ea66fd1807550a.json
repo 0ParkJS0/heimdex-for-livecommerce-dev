@@ -1,0 +1,160 @@
+{
+  "$schema_version": "1",
+  "_comment": "Auto-derived from annotator-supplied exposure xlsx/csv on 2026-05-26. Source: Hedges.xlsx (annotator: hj). expected_clip_for_product + expected_negatives are EMPTY — they need a Phase-B human pass (scrub the video, mark ideal 30/60/90s windows + host-accessory negatives). The enumeration-recall and enumeration-precision gates work without Phase B; the Window-IoU gate is OFF until Phase B lands.",
+  "video_id": "gd_e3ea66fd1807550a",
+  "org_slug": "devorg",
+  "category": "fashion",
+  "authored_at": "2026-05-26T00:00:00Z",
+  "authored_by": "claude+ljin0906@gmail.com",
+  "enumeration_prompt_version": "v1.0",
+  "enumeration_version": "v1.0",
+  "tracker_version": "v1.0",
+  "_corrections_applied": [
+    "C3: Hedges.eval_mentions row idx=21 (D 후드 숏 패딩점퍼 첫 소개) end corrected 00:25:00 → 00:27:00 (start=00:26:56)",
+    "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
+  ],
+  "_todo_phase_b": [
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s).",
+    "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
+  ],
+  "expected_products": [
+    {
+      "label_kr": "스웨이드 패브릭 헤링턴 점퍼",
+      "first_appearance_ms": 711000,
+      "expected_appearance_count_min": 20,
+      "expected_total_seconds_min": 750,
+      "category_hint": "outerwear",
+      "annotator_product_id": "A"
+    },
+    {
+      "label_kr": "초경량 하이넥 구스다운점퍼",
+      "first_appearance_ms": 945000,
+      "expected_appearance_count_min": 8,
+      "expected_total_seconds_min": 247,
+      "category_hint": "outerwear",
+      "annotator_product_id": "B"
+    },
+    {
+      "label_kr": "초경량 하이넥 구스다운점퍼",
+      "first_appearance_ms": 3165000,
+      "expected_appearance_count_min": 2,
+      "expected_total_seconds_min": 100,
+      "category_hint": "outerwear",
+      "annotator_product_id": "B-1"
+    },
+    {
+      "label_kr": "후드 숏 퀄팅점퍼",
+      "first_appearance_ms": 1136000,
+      "expected_appearance_count_min": 10,
+      "expected_total_seconds_min": 251,
+      "category_hint": "outerwear",
+      "annotator_product_id": "C"
+    },
+    {
+      "label_kr": "후드 숏 퀄팅점퍼",
+      "first_appearance_ms": 3046000,
+      "expected_appearance_count_min": 2,
+      "expected_total_seconds_min": 174,
+      "category_hint": "outerwear",
+      "annotator_product_id": "C-1"
+    },
+    {
+      "label_kr": "후드 숏 패딩점퍼",
+      "first_appearance_ms": 1383000,
+      "expected_appearance_count_min": 5,
+      "expected_total_seconds_min": 73,
+      "category_hint": "outerwear",
+      "annotator_product_id": "D"
+    },
+    {
+      "label_kr": "탈착후드 면혼방 후드점퍼",
+      "first_appearance_ms": 1589000,
+      "expected_appearance_count_min": 10,
+      "expected_total_seconds_min": 343,
+      "category_hint": "outerwear",
+      "annotator_product_id": "E"
+    },
+    {
+      "label_kr": "탈착후드 면혼방 후드점퍼",
+      "first_appearance_ms": 1897000,
+      "expected_appearance_count_min": 2,
+      "expected_total_seconds_min": 16,
+      "category_hint": "outerwear",
+      "annotator_product_id": "E-1"
+    },
+    {
+      "label_kr": "탈착후드 면혼방 후드점퍼",
+      "first_appearance_ms": 1954000,
+      "expected_appearance_count_min": 2,
+      "expected_total_seconds_min": 6,
+      "category_hint": "outerwear",
+      "annotator_product_id": "E-2"
+    },
+    {
+      "label_kr": "울폴리 테일러드 자켓",
+      "first_appearance_ms": 1996000,
+      "expected_appearance_count_min": 2,
+      "expected_total_seconds_min": 59,
+      "category_hint": "outerwear",
+      "annotator_product_id": "F"
+    },
+    {
+      "label_kr": "울폴리 테일러드 자켓",
+      "first_appearance_ms": 2056000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 23,
+      "category_hint": "outerwear",
+      "annotator_product_id": "F-1"
+    },
+    {
+      "label_kr": "트위드 자켓",
+      "first_appearance_ms": 2134000,
+      "expected_appearance_count_min": 6,
+      "expected_total_seconds_min": 123,
+      "category_hint": "outerwear",
+      "annotator_product_id": "G"
+    },
+    {
+      "label_kr": "헌팅 퀄팅 점퍼",
+      "first_appearance_ms": 2200000,
+      "expected_appearance_count_min": 5,
+      "expected_total_seconds_min": 186,
+      "category_hint": "outerwear",
+      "annotator_product_id": "H"
+    },
+    {
+      "label_kr": "헌팅 퀄팅 점퍼",
+      "first_appearance_ms": 2340000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 49,
+      "category_hint": "outerwear",
+      "annotator_product_id": "H-1"
+    },
+    {
+      "label_kr": "부클레 블레이저 네이비",
+      "first_appearance_ms": 2442000,
+      "expected_appearance_count_min": 2,
+      "expected_total_seconds_min": 37,
+      "category_hint": "outerwear",
+      "annotator_product_id": "I"
+    },
+    {
+      "label_kr": "벨티드 리얼 레더 자켓",
+      "first_appearance_ms": 2495000,
+      "expected_appearance_count_min": 11,
+      "expected_total_seconds_min": 291,
+      "category_hint": "outerwear",
+      "annotator_product_id": "J"
+    },
+    {
+      "label_kr": "벨티드 리얼 레더 자켓",
+      "first_appearance_ms": 4094000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 38,
+      "category_hint": "outerwear",
+      "annotator_product_id": "J-1"
+    }
+  ],
+  "expected_clip_for_product": [],
+  "expected_negatives": []
+}
