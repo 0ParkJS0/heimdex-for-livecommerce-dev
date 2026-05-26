@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import type { EditorSubtitle, HistoryEntry } from "../lib/types";
-import { msToPixels, pixelsToMs } from "../lib/timeline-math";
+import { computeTrackLaneWidth, pixelsToMs } from "../lib/timeline-math";
 import { DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { generateSubtitleId } from "../hooks/useEditorState";
 import type { SnapPoint } from "../lib/snap";
@@ -29,6 +29,11 @@ interface SubtitleTrackProps {
   snapPoints?: SnapPoint[];
   razorMode?: boolean;
   onRazorSplitSubtitle?: (index: number, atMs: number) => void;
+  // B12 (2026-05-26) — lane background widens to at least this so the
+  // lane stays painted across the full ruler extent when the content
+  // is shorter than the visible scroll viewport. Omit for a content-
+  // only width (the historical behaviour).
+  containerWidthPx?: number;
 }
 
 export function SubtitleTrack({
@@ -44,8 +49,14 @@ export function SubtitleTrack({
   snapPoints,
   razorMode = false,
   onRazorSplitSubtitle,
+  containerWidthPx,
 }: SubtitleTrackProps) {
-  const totalWidth = msToPixels(totalDurationMs, zoom);
+  // B12 (2026-05-26): clamp the lane background to at least the
+  // container's visible width so a short clip doesn't leave the lane
+  // blank past totalDurationMs while the ruler keeps extending tick
+  // labels out. Block positions are still computed off
+  // ``msToPixels(startMs)`` — this only widens the painted lane.
+  const totalWidth = computeTrackLaneWidth(totalDurationMs, zoom, containerWidthPx);
 
   const handleTrackDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -75,6 +86,7 @@ export function SubtitleTrack({
           row on zoom-out. ``expanded`` prop is kept on the interface so
           callers don't break but no longer drives layout. */}
       <div
+        data-testid="subtitle-lane"
         className="relative h-12 bg-grayscale-10"
         style={{ width: totalWidth }}
         onDoubleClick={handleTrackDoubleClick}

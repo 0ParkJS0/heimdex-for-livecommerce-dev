@@ -217,16 +217,22 @@ export function FullscreenOverlay({
                         }
                       : {}),
                   }}
-                  // ``muted`` is required for the autoplay policy to
-                  // honor usePlaybackSync's ``video.play()`` call when
-                  // the modal first mounts — without it Chrome rejects
-                  // play() and the element stays on a black first-frame.
-                  // ``preload="auto"`` makes the browser fetch enough
-                  // data to paint the first frame even when paused, so
-                  // the modal opens to the actual frame instead of
-                  // black-until-play.
+                  // B9 (2026-05-26): muted + preload + autoPlay together
+                  // make the modal open to the actual first frame.
+                  // * ``muted`` clears the autoplay-policy hurdle so
+                  //   ``video.play()`` (from usePlaybackSync OR the
+                  //   autoPlay attribute) is allowed.
+                  // * ``preload="auto"`` lets the browser fetch enough
+                  //   data to paint a frame even while paused.
+                  // * ``autoPlay`` forces the element to actually paint
+                  //   the first frame on mount instead of sitting at
+                  //   ``buffered=0`` black until the operator hits play.
+                  //   The pause useEffect in usePlaybackSync immediately
+                  //   pauses again when the editor isn't playing, but the
+                  //   first frame is now committed.
                   muted
                   preload="auto"
+                  autoPlay
                   playsInline
                   onSeeked={onSeeked}
                   onEnded={onEnded}

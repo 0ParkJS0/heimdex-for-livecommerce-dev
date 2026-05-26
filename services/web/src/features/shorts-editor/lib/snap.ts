@@ -120,6 +120,26 @@ export function boundarySnapPoints(totalMs: number): SnapPoint[] {
 }
 
 /**
+ * Convenience wrapper for the playhead drag/click path: apply snap when
+ * a hit lands within ``thresholdMs`` of ``targetMs``, otherwise pass the
+ * value through unchanged. The TimelinePanel composes its snap pool +
+ * threshold once per render and uses this to wrap ``onSeek``; a unit
+ * test of this function locks the wrap's behaviour without needing to
+ * render the panel itself (TimelinePanel still calls it inline so
+ * removing the helper here would break that test).
+ *
+ * Returns the ms the caller should pass downstream — never null.
+ */
+export function applyPlayheadSnap(
+  targetMs: number,
+  snapPoints: SnapPoint[],
+  thresholdMs: number,
+): number {
+  const hit = resolveSnap(targetMs, snapPoints, thresholdMs);
+  return hit ? hit.ms : targetMs;
+}
+
+/**
  * Scan snap points for the nearest hit within ``thresholdMs``. Returns
  * the snapped ms + the matched SnapPoint (so the caller can paint a
  * snap indicator). Returns null when nothing's within reach so callers

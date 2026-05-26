@@ -746,6 +746,68 @@ describe("APPLY_COMPOSITION_TEMPLATE", () => {
     // Preset order (B before A) preserved via the id map — NOT layerIndex order.
     expect(overlaySlotIds).toEqual([freshB, freshA]);
   });
+
+  it("B8 policy: applied bg overlay + letterbox land in the media-bg segment with subtitles still on top", () => {
+    // Operator policy 2026-05-26 (B8): backgrounds sit BELOW the
+    // letterbox by default, both inside a single "media-bg" segment
+    // beneath the pinned subtitles + text overlay top. This test feeds
+    // a preset containing one bg + a letterbox and asserts the
+    // normaliser routes them into the correct segment.
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.initFromScenes("v", "gdrive", [makeClip()]));
+
+    act(() =>
+      result.current.dispatch({
+        type: "APPLY_COMPOSITION_TEMPLATE",
+        payload: makeTemplatePayload({
+          overlays: [
+            {
+              kind: "background",
+              id: "p-bg-policy",
+              layerIndex: 0,
+              durationMs: 1000,
+              payload: {
+                fillColor: "#000000",
+                imageUrl: null,
+                transform: {
+                  x: 0.5,
+                  y: 0.5,
+                  rotationDeg: 0,
+                  widthPx: 100,
+                  heightPx: 100,
+                },
+                effects: { opacity: 1, stroke: null, shadow: null },
+              },
+            },
+          ],
+          letterbox: {
+            topHeightPct: 8,
+            bottomHeightPct: 8,
+            fillColor: "#000000",
+            borderColor: null,
+            borderWidthPx: 0,
+          },
+        }),
+      }),
+    );
+
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+    const lo = result.current.state.layerOrder;
+    const idx = {
+      video: lo.findIndex((l) => l.kind === "video"),
+      bg: lo.findIndex((l) => l.kind === "overlay" && l.id === bgId),
+      letterbox: lo.findIndex((l) => l.kind === "letterbox"),
+      subtitles: lo.findIndex((l) => l.kind === "subtitles"),
+    };
+    // video at the bottom; bg → letterbox → subtitles in segment order.
+    expect(idx.video).toBeLessThan(idx.bg);
+    expect(idx.bg).toBeLessThan(idx.letterbox);
+    expect(idx.letterbox).toBeLessThan(idx.subtitles);
+    // No text overlays in this preset, so subtitles is the top slot.
+    expect(idx.subtitles).toBe(lo.length - 1);
+  });
 });
 
 // ---------------------------------------------------------------------------

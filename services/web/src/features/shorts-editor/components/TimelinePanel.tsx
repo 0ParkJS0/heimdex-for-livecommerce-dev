@@ -7,14 +7,16 @@ import { createPortal } from "react-dom";
 import { Maximize, Pause, SquareSplitHorizontal, Trash2, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditorClip, EditorSubtitle, Playback, PlaybackRate } from "../lib/types";
-import { msToPixels, formatVideoTimestampHMS } from "../lib/timeline-math";
+import { computeTrackLaneWidth, msToPixels, formatVideoTimestampHMS } from "../lib/timeline-math";
 import { TimelineRuler } from "./TimelineRuler";
 import { ClipTrack } from "./ClipTrack";
 import { SubtitleTrack } from "./SubtitleTrack";
 import { TextOverlayBlock } from "./TextOverlayBlock";
 import {
+  applyPlayheadSnap,
   boundarySnapPoints,
   clipEdgeSnapPoints,
+  getSnapThresholdMs,
   overlayEdgeSnapPoints,
   playheadSnapPoint,
   subtitleEdgeSnapPoints,
@@ -433,6 +435,36 @@ export function TimelinePanel({
     return Array.from(set).sort((a, b) => a - b);
   }, [clips, totalDurationMs]);
 
+  // B10 (2026-05-26) — playhead drag/click magnetic snap.
+  //
+  // Build the same snap-point pool the clip/subtitle/overlay drag
+  // handlers use (subtitle edges + clip edges + 0/totalDuration
+  // boundaries + text-overlay edges) and wrap ``onSeek`` so any seek
+  // that lands within the zoom-aware threshold of one of those points
+  // locks to it. Transport jumps (skipPrev/skipNext) already land on
+  // boundaries by construction so they keep using raw ``onSeek``.
+  //
+  // The snap source build excludes nothing — there is no "dragging
+  // element" identity for the playhead itself, so every edge is fair
+  // game. Threshold uses ``getSnapThresholdMs(zoom)`` so the 10-px
+  // pull radius stays constant in screen space.
+  const playheadSnapPoints: SnapPoint[] = useMemo(() => {
+    return [
+      ...subtitleEdgeSnapPoints(subtitles),
+      ...clipEdgeSnapPoints(clips),
+      ...overlayEdgeSnapPoints(textOverlaysForTimeline ?? []),
+      ...boundarySnapPoints(totalDurationMs),
+    ];
+  }, [subtitles, clips, textOverlaysForTimeline, totalDurationMs]);
+  const handleSeekWithSnap = useCallback(
+    (ms: number) => {
+      onSeek(
+        applyPlayheadSnap(ms, playheadSnapPoints, getSnapThresholdMs(zoom)),
+      );
+    },
+    [onSeek, playheadSnapPoints, zoom],
+  );
+
   const handleSkipPrev = useCallback(() => {
     const target = [...boundaries].reverse().find((b) => b < playheadMs - SEEK_TOLERANCE_MS) ?? 0;
     onSeek(target);
@@ -647,7 +679,7 @@ export function TimelinePanel({
           <TimelineRuler
             totalDurationMs={totalDurationMs}
             zoom={zoom}
-            onSeek={onSeek}
+            onSeek={handleSeekWithSnap}
             minWidthPx={containerWidth}
             viewportLeftPx={scrollLeft}
             viewportRightPx={scrollLeft + containerWidth}
@@ -698,7 +730,7 @@ export function TimelinePanel({
             return (
               <div
                 className="mb-1 flex flex-col gap-0.5"
-                style={{ width: `${Math.max(containerWidth, msToPixels(totalDurationMs, zoom))}px` }}
+                style={{ width: `${computeTrackLaneWidth(totalDurationMs, zoom, containerWidth)}px` }}
               >
                 {rows.map((row) => {
                   const overlaysHere = overlaysByRow.get(row) ?? [];
@@ -749,6 +781,7 @@ export function TimelinePanel({
             snapPoints={snapPoints}
             razorMode={razorMode}
             onRazorSplitSubtitle={onRazorSplitSubtitle}
+            containerWidthPx={containerWidth}
           />
 
           {/* Clip track — figma 1669:49030: scene row below the subtitle row */}
@@ -759,6 +792,7 @@ export function TimelinePanel({
             selectedClipIndex={selectedClipIndex}
             totalDurationMs={totalDurationMs}
             playheadMs={playheadMs}
+            containerWidthPx={containerWidth}
             onSelectClip={onSelectClip}
             onTrimClip={onTrimClip}
             onMoveClip={onMoveClip}
@@ -787,7 +821,7 @@ export function TimelinePanel({
               playheadMs={playheadMs}
               zoom={zoom}
               height={trackHeight}
-              onSeek={onSeek}
+              onSeek={handleSeekWithSnap}
               showTooltip
             />
           </div>

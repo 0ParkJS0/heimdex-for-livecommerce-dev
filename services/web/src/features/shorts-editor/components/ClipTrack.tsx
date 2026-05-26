@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import type { EditorClip, EditorSubtitle } from "../lib/types";
-import { msToPixels, pixelsToMs } from "../lib/timeline-math";
+import { computeTrackLaneWidth, msToPixels, pixelsToMs } from "../lib/timeline-math";
 import { ClipBlock } from "./ClipBlock";
 import {
   boundarySnapPoints,
@@ -28,6 +28,10 @@ interface ClipTrackProps {
   onSeek: (ms: number) => void;
   razorMode?: boolean;
   onRazorSplitClip?: (index: number, atMs: number) => void;
+  // B12 (2026-05-26) — see SubtitleTrack: clamp the lane background
+  // to at least this width so the lane stays painted across the full
+  // ruler extent on short clips.
+  containerWidthPx?: number;
 }
 
 export function ClipTrack({
@@ -43,8 +47,13 @@ export function ClipTrack({
   onSeek,
   razorMode = false,
   onRazorSplitClip,
+  containerWidthPx,
 }: ClipTrackProps) {
-  const totalWidth = msToPixels(totalDurationMs, zoom);
+  const totalWidth = computeTrackLaneWidth(
+    totalDurationMs,
+    zoom,
+    containerWidthPx,
+  );
 
   // Shared snap targets — playhead + boundaries + every subtitle edge
   // (operator request: trim-edge should latch onto subtitle ends).
@@ -73,6 +82,7 @@ export function ClipTrack({
 
   return (
     <div
+      data-testid="clip-lane"
       className="relative h-12"
       style={{ width: totalWidth }}
       onClick={handleTrackClick}

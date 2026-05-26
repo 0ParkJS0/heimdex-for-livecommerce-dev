@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  applyPlayheadSnap,
   getSnapThresholdMs,
   resolveSnap,
   overlayEdgeSnapPoints,
@@ -107,5 +108,56 @@ describe("snap — source builders", () => {
     const b = boundarySnapPoints(10_000);
     expect(b.map((p) => p.ms)).toEqual([0, 10_000]);
     expect(b.every((p) => p.kind === "boundary")).toBe(true);
+  });
+});
+
+// B10 (2026-05-26) — end-to-end playhead drag snap. TimelinePanel
+// wraps ``onSeek`` so a target landing within the zoom-aware threshold
+// of a subtitle / overlay / clip / boundary edge snaps to it. These
+// cases drive the same helpers TimelinePanel composes (build sources →
+// resolveSnap) so the wrapper's behaviour is locked at the helper
+// boundary rather than relying on a render-level test.
+describe("snap — playhead drag end-to-end", () => {
+  it("snaps to a subtitle edge when the playhead lands within threshold", () => {
+    const subs = [
+      { id: "s1", startMs: 1_000, endMs: 3_000 } as SnapPoint extends infer _ ? never : never,
+    ];
+    const points = subtitleEdgeSnapPoints(subs as never);
+    const threshold = getSnapThresholdMs(100); // ≈ 100 ms
+    const near = resolveSnap(1_050, points, threshold);
+    expect(near).not.toBeNull();
+    expect(near!.ms).toBe(1_000);
+    expect(near!.point.kind).toBe("element-start");
+    // 1_500 ms is 500 ms past start, 1_500 ms before end → out of reach.
+    expect(resolveSnap(1_500, points, threshold)).toBeNull();
+  });
+
+  it("applyPlayheadSnap snaps near hit; passes through outside threshold", () => {
+    // Direct test of the wrap TimelinePanel composes around onSeek so the
+    // wiring breakage (e.g. someone replaces applyPlayheadSnap with a
+    // plain passthrough) is caught at the helper boundary.
+    const points = subtitleEdgeSnapPoints([
+      { id: "s1", startMs: 2_000, endMs: 4_000 } as never,
+    ]);
+    expect(applyPlayheadSnap(2_050, points, 100)).toBe(2_000);
+    expect(applyPlayheadSnap(2_500, points, 100)).toBe(2_500); // outside reach
+  });
+
+  it("snaps to the nearer hit when clip + subtitle edges compete", () => {
+    const clips = [
+      { id: "c1", timelineStartMs: 0, trimStartMs: 0, trimEndMs: 5_000 } as never,
+    ];
+    const subs = [
+      // Subtitle end at 5_100 — slightly farther from the seek target
+      // than the clip's 5_000 end. resolveSnap picks the nearer hit.
+      { id: "s1", startMs: 4_000, endMs: 5_100 } as never,
+    ];
+    const points = [
+      ...clipEdgeSnapPoints(clips),
+      ...subtitleEdgeSnapPoints(subs),
+    ];
+    const r = resolveSnap(4_970, points, 100);
+    expect(r).not.toBeNull();
+    expect(r!.ms).toBe(5_000);
   });
 });

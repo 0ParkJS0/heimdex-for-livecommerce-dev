@@ -33,6 +33,22 @@ interface SubtitleBlockProps {
 
 const FRAME_MS = 1000 / 30;
 
+// Hide the subtitle preview text once the block narrows below this
+// width. Operator request 2026-05-26: raised from 20 → 45 px because
+// at 20 px only ~1-2 characters survive the truncate ellipsis, which
+// reads as noise during a zoom-out gesture. 45 px keeps the text
+// affordance only when the block is wide enough for a useful preview.
+export const MIN_BLOCK_WIDTH_PX_FOR_TEXT = 45;
+
+// Pure predicate so the boundary is unit-testable without rendering
+// the whole component. Exported alongside the constant so tests can
+// assert behaviour around the threshold rather than the literal
+// number (catches "someone tweaked the constant but forgot to update
+// the comparison").
+export function shouldShowSubtitleBlockText(widthPx: number): boolean {
+  return widthPx >= MIN_BLOCK_WIDTH_PX_FOR_TEXT;
+}
+
 export function SubtitleBlock({
   subtitle,
   index,
@@ -212,11 +228,14 @@ export function SubtitleBlock({
         className="flex-1 min-w-0 cursor-grab select-none px-[10px] py-[12px] active:cursor-grabbing"
         onPointerDown={handlePointerDown("move")}
       >
-        {widthPx >= 20 && (
-          // Hide text when the block narrows below ~20 px — even a
-          // single Korean glyph barely fits at that width, so showing
-          // it just produces flicker as the user zooms out. Matches
-          // the 'zoom out to a full hour fits' UX target.
+        {shouldShowSubtitleBlockText(widthPx) && (
+          // Hide subtitle text when the block narrows below the
+          // legibility floor. Operator request 2026-05-26: raised to
+          // 45 px (was 20) — at 20 px a Korean glyph fits but only
+          // ~1-2 characters show through the truncate ellipsis, which
+          // reads as noise during a zoom-out gesture. 45 px keeps the
+          // text affordance only when the block is wide enough to
+          // surface a useful preview of the caption.
           <p
             className={cn(
               // Operator request 2026-05-24: auto-STT host subtitle

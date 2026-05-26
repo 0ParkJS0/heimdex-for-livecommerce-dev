@@ -75,30 +75,40 @@ function clampVolume(v: number): number {
 
 // Build a canonical layerOrder from overlays + letterbox presence.
 //
-// Stack policy (operator request 2026-05-25):
+// Stack policy (operator request 2026-05-26):
 //   bottom → top
 //   1) video
-//   2) letterbox (when present)
-//   3) background overlays (sorted by layerIndex)
-//   4) subtitles  ← always above any background
-//   5) text overlays (sorted by layerIndex)  ← always at the very top
+//   2) ━━ media-background segment ━━
+//        Backgrounds and the letterbox share one segment with FREE
+//        ordering inside it. Default insert puts backgrounds BELOW
+//        letterbox so a freshly-added background tucks behind the
+//        letterbox bars (the operator's stated default). REORDER_LAYER
+//        can promote a background ABOVE the letterbox via send-to-front,
+//        which is exactly the "letterbox 위로도 올라올 수 있어야 한다"
+//        request that broke the previous bg-pinned-above-letterbox
+//        policy.
+//   3) subtitles  ← always above any media-background
+//   4) text overlays (sorted by layerIndex)  ← always at the very top
 //
-// Subtitles and text overlays must never be hidden behind a background
-// the operator just dropped on the canvas. ``REORDER_LAYER`` enforces
-// the same invariant by rejecting any move that would put a non-text
-// slot above the subtitles slot (see the case below).
+// Subtitles and text overlays remain pinned to the top (B1, 2026-05-25).
+// REORDER_LAYER still rejects any move on the subtitles slot or a
+// text-kind overlay slot up front so the operator's "always-top" guarantee
+// holds regardless of which input dispatches the popover.
 function buildLayerOrder(
   overlays: EditorOverlay[],
   hasLetterbox: boolean,
 ): LayerOrderId[] {
   const base: LayerOrderId[] = [{ kind: "video" }];
-  if (hasLetterbox) base.push({ kind: "letterbox" });
+  // media-bg segment default: backgrounds first (lower zIndex), then
+  // letterbox. Sorted by layerIndex so the operator's add-order is
+  // preserved within the background group.
   const bgSorted = overlays
     .filter((o) => o.kind === "background")
     .sort((a, b) => a.layerIndex - b.layerIndex);
   for (const o of bgSorted) {
     base.push({ kind: "overlay", id: o.id });
   }
+  if (hasLetterbox) base.push({ kind: "letterbox" });
   base.push({ kind: "subtitles" });
   const textSorted = overlays
     .filter((o) => o.kind === "text")
@@ -113,6 +123,12 @@ function buildLayerOrder(
 // dropping any slot the caller already had. Used by mutators that
 // touch layerOrder directly (ADD_OVERLAY, REORDER_LAYER, APPLY_*)
 // where simply rebuilding from scratch would discard valid state.
+//
+// Critically the media-background segment (backgrounds + letterbox) is
+// preserved as a single ordered subsequence — input order is the source
+// of truth inside that band. That is what lets the operator's
+// send-to-front gesture promote a background above the letterbox while
+// still keeping subtitles + text overlays pinned to the very top.
 function normalizeLayerOrder(
   layerOrder: LayerOrderId[],
   overlays: EditorOverlay[],
@@ -121,19 +137,21 @@ function normalizeLayerOrder(
   const out: LayerOrderId[] = [];
   // 1) video — exactly one (insert if missing).
   out.push({ kind: "video" });
-  // 2) letterbox — keep iff present in input.
-  if (layerOrder.some((l) => l.kind === "letterbox")) {
-    out.push({ kind: "letterbox" });
-  }
-  // 3) backgrounds — preserve their original relative order.
+  // 2) media-bg segment: backgrounds + letterbox interleaved in
+  //    INPUT order. This is what lets REORDER_LAYER on a background
+  //    or the letterbox change the bg-vs-letterbox stacking — the
+  //    relative position in the input is the relative position in the
+  //    output.
   for (const l of layerOrder) {
-    if (l.kind === "overlay" && kindOf.get(l.id) === "background") {
+    if (l.kind === "letterbox") {
+      out.push({ kind: "letterbox" });
+    } else if (l.kind === "overlay" && kindOf.get(l.id) === "background") {
       out.push({ kind: "overlay", id: l.id });
     }
   }
-  // 4) subtitles — exactly one.
+  // 3) subtitles — exactly one.
   out.push({ kind: "subtitles" });
-  // 5) text overlays — preserve their original relative order.
+  // 4) text overlays — preserve their original relative order.
   for (const l of layerOrder) {
     if (l.kind === "overlay" && kindOf.get(l.id) === "text") {
       out.push({ kind: "overlay", id: l.id });
@@ -541,14 +559,43 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       // that confuses downstream assertions and the reorder logic.
       const sorted = [...overlays].sort((a, b) => a.layerIndex - b.layerIndex);
       overlays = sorted.map((o, i) => ({ ...o, layerIndex: i }));
-      // Append the new overlay slot, then normalise. The normaliser
-      // routes background overlays under the subtitles slot and text
-      // overlays above it so subtitles + text are guaranteed to stay
-      // on top of any newly-added background (operator policy 2026-05-25).
-      const layerOrder = normalizeLayerOrder(
-        [...state.layerOrder, { kind: "overlay", id: positioned.id }],
-        overlays,
-      );
+      // 2026-05-26 — backgrounds default BELOW the letterbox so the
+      // operator's "send-to-front lifts a bg above the letterbox"
+      // gesture has somewhere to lift from. For backgrounds we splice
+      // the new slot in just before the letterbox slot (or before the
+      // subtitles slot when there is no letterbox); for text/other
+      // overlays we keep the previous "append on top, normalise sorts
+      // it into the right segment" path.
+      let pendingLayerOrder: LayerOrderId[];
+      if (isBackground) {
+        pendingLayerOrder = [...state.layerOrder];
+        const lbIdx = pendingLayerOrder.findIndex(
+          (l) => l.kind === "letterbox",
+        );
+        const subIdx = pendingLayerOrder.findIndex(
+          (l) => l.kind === "subtitles",
+        );
+        const insertAt =
+          lbIdx >= 0
+            ? lbIdx
+            : subIdx >= 0
+              ? subIdx
+              : pendingLayerOrder.length;
+        pendingLayerOrder.splice(insertAt, 0, {
+          kind: "overlay",
+          id: positioned.id,
+        });
+      } else {
+        pendingLayerOrder = [
+          ...state.layerOrder,
+          { kind: "overlay", id: positioned.id },
+        ];
+      }
+      // Normalise so subtitles + text overlays stay pinned above the
+      // media-bg segment (B1 policy from 2026-05-25). Inside the
+      // media-bg segment input order is preserved, so the splice
+      // position above survives the normaliser.
+      const layerOrder = normalizeLayerOrder(pendingLayerOrder, overlays);
       return {
         ...state,
         overlays,
@@ -804,20 +851,23 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         0,
         Math.min(50, action.letterbox.borderWidthPx),
       );
-      // Insert the letterbox slot at index 1 (above video, below everything
-      // else) only when the operator is adding it for the first time.
-      // If already present (operator is adjusting height/color), leave
-      // layerOrder unchanged so a manual reorder is not clobbered.
+      // 2026-05-26 — first-add default: letterbox sits ABOVE existing
+      // backgrounds (so a freshly-added background tucks behind the
+      // letterbox bars; send-to-front lifts it above per B8). For an
+      // adjust (operator changing height/color) leave layerOrder alone
+      // so a manual reorder is not clobbered.
       const hasLetterboxSlot = state.layerOrder.some(
         (l) => l.kind === "letterbox",
       );
       const layerOrderForLetterbox: LayerOrderId[] = hasLetterboxSlot
         ? state.layerOrder
-        : [
-            state.layerOrder[0] ?? { kind: "video" },
-            { kind: "letterbox" },
-            ...state.layerOrder.slice(1),
-          ];
+        : (() => {
+            const next = [...state.layerOrder];
+            const subIdx = next.findIndex((l) => l.kind === "subtitles");
+            const insertAt = subIdx >= 0 ? subIdx : next.length;
+            next.splice(insertAt, 0, { kind: "letterbox" });
+            return next;
+          })();
       return {
         ...state,
         letterbox: {
@@ -1099,12 +1149,33 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
           ),
         ];
         if (letterbox && !layerOrder.some((l) => l.kind === "letterbox")) {
-          const videoIdx = layerOrder.findIndex((l) => l.kind === "video");
-          const insertAt = videoIdx >= 0 ? videoIdx + 1 : 0;
+          // First-add default: letterbox above existing backgrounds,
+          // just below the subtitles slot — mirrors SET_LETTERBOX's
+          // 2026-05-26 placement so APPLY and SET_LETTERBOX yield the
+          // same media-bg segment ordering.
+          const subIdx = layerOrder.findIndex((l) => l.kind === "subtitles");
+          const insertAt = subIdx >= 0 ? subIdx : layerOrder.length;
           layerOrder.splice(insertAt, 0, { kind: "letterbox" });
         }
+        // 2026-05-26 (B8): backgrounds appended by APPLY default to
+        // BELOW the letterbox (or before the subtitles slot when no
+        // letterbox), matching ADD_OVERLAY's default. Text overlays go
+        // on the very top via plain append; the final normaliser sorts
+        // them into the text segment regardless.
         for (const o of appendedOverlays) {
-          layerOrder.push({ kind: "overlay", id: o.id });
+          if (o.kind === "background") {
+            const lbIdx = layerOrder.findIndex((l) => l.kind === "letterbox");
+            const subIdx = layerOrder.findIndex((l) => l.kind === "subtitles");
+            const insertAt =
+              lbIdx >= 0
+                ? lbIdx
+                : subIdx >= 0
+                  ? subIdx
+                  : layerOrder.length;
+            layerOrder.splice(insertAt, 0, { kind: "overlay", id: o.id });
+          } else {
+            layerOrder.push({ kind: "overlay", id: o.id });
+          }
         }
       }
 
