@@ -14,7 +14,7 @@
     "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
   ],
   "_todo_phase_b": [
-    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s).",
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
     "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
   ],
   "expected_products": [
@@ -23,6 +23,36 @@
       "first_appearance_ms": 401000,
       "expected_appearance_count_min": 7,
       "expected_total_seconds_min": 139,
+      "expected_windows_ms": [
+        [
+          401000,
+          417000
+        ],
+        [
+          436000,
+          455000
+        ],
+        [
+          944000,
+          951000
+        ],
+        [
+          1516000,
+          1566000
+        ],
+        [
+          1575000,
+          1579000
+        ],
+        [
+          1994000,
+          2024000
+        ],
+        [
+          3447000,
+          3460000
+        ]
+      ],
       "category_hint": "korean side dish",
       "annotator_product_id": "A"
     },
@@ -31,6 +61,24 @@
       "first_appearance_ms": 456000,
       "expected_appearance_count_min": 4,
       "expected_total_seconds_min": 73,
+      "expected_windows_ms": [
+        [
+          456000,
+          472000
+        ],
+        [
+          482000,
+          493000
+        ],
+        [
+          952000,
+          977000
+        ],
+        [
+          2025000,
+          2046000
+        ]
+      ],
       "category_hint": "korean side dish",
       "annotator_product_id": "B"
     },
@@ -39,6 +87,12 @@
       "first_appearance_ms": 494000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 29,
+      "expected_windows_ms": [
+        [
+          494000,
+          523000
+        ]
+      ],
       "category_hint": "korean side dish",
       "annotator_product_id": "C"
     }

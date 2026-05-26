@@ -16,7 +16,7 @@
     "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
   ],
   "_todo_phase_b": [
-    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s).",
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
     "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
   ],
   "expected_products": [
@@ -25,6 +25,12 @@
       "first_appearance_ms": 549000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 10,
+      "expected_windows_ms": [
+        [
+          549000,
+          559000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "A"
     },
@@ -33,6 +39,12 @@
       "first_appearance_ms": 559000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 29,
+      "expected_windows_ms": [
+        [
+          559000,
+          588000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "A-1"
     },
@@ -41,6 +53,52 @@
       "first_appearance_ms": 588000,
       "expected_appearance_count_min": 12,
       "expected_total_seconds_min": 358,
+      "expected_windows_ms": [
+        [
+          588000,
+          644000
+        ],
+        [
+          672000,
+          679000
+        ],
+        [
+          1669000,
+          1702000
+        ],
+        [
+          2398000,
+          2406000
+        ],
+        [
+          2431000,
+          2449000
+        ],
+        [
+          2491000,
+          2522000
+        ],
+        [
+          2984000,
+          3006000
+        ],
+        [
+          3028000,
+          3089000
+        ],
+        [
+          3105000,
+          3140000
+        ],
+        [
+          3275000,
+          3288000
+        ],
+        [
+          3607000,
+          3681000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "A-2"
     },
@@ -49,6 +107,20 @@
       "first_appearance_ms": 644000,
       "expected_appearance_count_min": 3,
       "expected_total_seconds_min": 70,
+      "expected_windows_ms": [
+        [
+          644000,
+          653000
+        ],
+        [
+          1702000,
+          1725000
+        ],
+        [
+          2522000,
+          2560000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "B"
     },
@@ -57,6 +129,28 @@
       "first_appearance_ms": 419000,
       "expected_appearance_count_min": 5,
       "expected_total_seconds_min": 52,
+      "expected_windows_ms": [
+        [
+          419000,
+          440000
+        ],
+        [
+          797000,
+          807000
+        ],
+        [
+          1115000,
+          1119000
+        ],
+        [
+          3755000,
+          3762000
+        ],
+        [
+          3850000,
+          3860000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "C"
     },
@@ -65,6 +159,12 @@
       "first_appearance_ms": 2656000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 22,
+      "expected_windows_ms": [
+        [
+          2656000,
+          2678000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "C-1"
     },
@@ -73,6 +173,12 @@
       "first_appearance_ms": 1808000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 2,
+      "expected_windows_ms": [
+        [
+          1808000,
+          1810000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "D"
     },
@@ -81,6 +187,24 @@
       "first_appearance_ms": 387000,
       "expected_appearance_count_min": 4,
       "expected_total_seconds_min": 61,
+      "expected_windows_ms": [
+        [
+          387000,
+          419000
+        ],
+        [
+          2117000,
+          2127000
+        ],
+        [
+          3640000,
+          3654000
+        ],
+        [
+          3836000,
+          3841000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "E"
     },
@@ -89,6 +213,24 @@
       "first_appearance_ms": 474000,
       "expected_appearance_count_min": 4,
       "expected_total_seconds_min": 72,
+      "expected_windows_ms": [
+        [
+          474000,
+          500000
+        ],
+        [
+          3089000,
+          3098000
+        ],
+        [
+          3762000,
+          3783000
+        ],
+        [
+          3905000,
+          3921000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "F"
     },
@@ -97,6 +239,12 @@
       "first_appearance_ms": 440000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 34,
+      "expected_windows_ms": [
+        [
+          440000,
+          474000
+        ]
+      ],
       "category_hint": "color cosmetics",
       "annotator_product_id": "G"
     }

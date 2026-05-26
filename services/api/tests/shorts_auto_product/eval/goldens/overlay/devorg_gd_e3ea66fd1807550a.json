@@ -14,7 +14,7 @@
     "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
   ],
   "_todo_phase_b": [
-    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s).",
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
     "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
   ],
   "expected_products": [
@@ -23,6 +23,52 @@
       "first_appearance_ms": 711000,
       "expected_appearance_count_min": 11,
       "expected_total_seconds_min": 217,
+      "expected_windows_ms": [
+        [
+          711000,
+          737000
+        ],
+        [
+          935000,
+          940000
+        ],
+        [
+          2395000,
+          2435000
+        ],
+        [
+          2542000,
+          2564000
+        ],
+        [
+          2753000,
+          2767000
+        ],
+        [
+          2857000,
+          2875000
+        ],
+        [
+          3625000,
+          3640000
+        ],
+        [
+          3677000,
+          3684000
+        ],
+        [
+          4138000,
+          4166000
+        ],
+        [
+          4249000,
+          4260000
+        ],
+        [
+          4603000,
+          4634000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "A"
     },
@@ -31,6 +77,28 @@
       "first_appearance_ms": 949000,
       "expected_appearance_count_min": 5,
       "expected_total_seconds_min": 104,
+      "expected_windows_ms": [
+        [
+          949000,
+          981000
+        ],
+        [
+          1047000,
+          1061000
+        ],
+        [
+          3165000,
+          3183000
+        ],
+        [
+          3228000,
+          3238000
+        ],
+        [
+          4305000,
+          4335000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "B"
     },
@@ -39,6 +107,28 @@
       "first_appearance_ms": 1136000,
       "expected_appearance_count_min": 5,
       "expected_total_seconds_min": 97,
+      "expected_windows_ms": [
+        [
+          1136000,
+          1162000
+        ],
+        [
+          1288000,
+          1297000
+        ],
+        [
+          3022000,
+          3046000
+        ],
+        [
+          3856000,
+          3874000
+        ],
+        [
+          4500000,
+          4520000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "C"
     },
@@ -47,6 +137,16 @@
       "first_appearance_ms": 1383000,
       "expected_appearance_count_min": 2,
       "expected_total_seconds_min": 29,
+      "expected_windows_ms": [
+        [
+          1383000,
+          1407000
+        ],
+        [
+          1540000,
+          1545000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "D"
     },
@@ -55,6 +155,20 @@
       "first_appearance_ms": 1589000,
       "expected_appearance_count_min": 3,
       "expected_total_seconds_min": 75,
+      "expected_windows_ms": [
+        [
+          1589000,
+          1625000
+        ],
+        [
+          1755000,
+          1781000
+        ],
+        [
+          3471000,
+          3484000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "E"
     },
@@ -63,6 +177,12 @@
       "first_appearance_ms": 1897000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 16,
+      "expected_windows_ms": [
+        [
+          1897000,
+          1913000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "E-1"
     },
@@ -71,6 +191,12 @@
       "first_appearance_ms": 1954000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 6,
+      "expected_windows_ms": [
+        [
+          1954000,
+          1960000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "E-2"
     },
@@ -79,6 +205,12 @@
       "first_appearance_ms": 1996000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 32,
+      "expected_windows_ms": [
+        [
+          1996000,
+          2028000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "F"
     },
@@ -87,6 +219,20 @@
       "first_appearance_ms": 2134000,
       "expected_appearance_count_min": 3,
       "expected_total_seconds_min": 43,
+      "expected_windows_ms": [
+        [
+          2134000,
+          2143000
+        ],
+        [
+          2186000,
+          2189000
+        ],
+        [
+          3962000,
+          3993000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "G"
     },
@@ -95,6 +241,16 @@
       "first_appearance_ms": 2200000,
       "expected_appearance_count_min": 2,
       "expected_total_seconds_min": 41,
+      "expected_windows_ms": [
+        [
+          2200000,
+          2220000
+        ],
+        [
+          3507000,
+          3528000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "H"
     },
@@ -103,6 +259,12 @@
       "first_appearance_ms": 2447000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 32,
+      "expected_windows_ms": [
+        [
+          2447000,
+          2479000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "I"
     },
@@ -111,6 +273,32 @@
       "first_appearance_ms": 2495000,
       "expected_appearance_count_min": 6,
       "expected_total_seconds_min": 96,
+      "expected_windows_ms": [
+        [
+          2495000,
+          2509000
+        ],
+        [
+          2570000,
+          2600000
+        ],
+        [
+          2703000,
+          2710000
+        ],
+        [
+          3765000,
+          3785000
+        ],
+        [
+          3830000,
+          3837000
+        ],
+        [
+          4641000,
+          4659000
+        ]
+      ],
       "category_hint": "outerwear",
       "annotator_product_id": "J"
     }

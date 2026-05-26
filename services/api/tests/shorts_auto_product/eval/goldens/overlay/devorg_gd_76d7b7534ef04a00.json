@@ -14,7 +14,7 @@
     "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
   ],
   "_todo_phase_b": [
-    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s).",
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
     "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
   ],
   "expected_products": [
@@ -23,6 +23,16 @@
       "first_appearance_ms": 390000,
       "expected_appearance_count_min": 2,
       "expected_total_seconds_min": 82,
+      "expected_windows_ms": [
+        [
+          390000,
+          445000
+        ],
+        [
+          972000,
+          999000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "A"
     },
@@ -31,6 +41,24 @@
       "first_appearance_ms": 446000,
       "expected_appearance_count_min": 4,
       "expected_total_seconds_min": 113,
+      "expected_windows_ms": [
+        [
+          446000,
+          497000
+        ],
+        [
+          1317000,
+          1325000
+        ],
+        [
+          1418000,
+          1430000
+        ],
+        [
+          1431000,
+          1473000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "B"
     },
@@ -39,6 +67,12 @@
       "first_appearance_ms": 498000,
       "expected_appearance_count_min": 1,
       "expected_total_seconds_min": 50,
+      "expected_windows_ms": [
+        [
+          498000,
+          548000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "C"
     },
@@ -47,6 +81,16 @@
       "first_appearance_ms": 602000,
       "expected_appearance_count_min": 2,
       "expected_total_seconds_min": 101,
+      "expected_windows_ms": [
+        [
+          602000,
+          660000
+        ],
+        [
+          2406000,
+          2449000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "D"
     },
@@ -55,6 +99,16 @@
       "first_appearance_ms": 671000,
       "expected_appearance_count_min": 2,
       "expected_total_seconds_min": 56,
+      "expected_windows_ms": [
+        [
+          671000,
+          710000
+        ],
+        [
+          2729000,
+          2746000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "E"
     },
@@ -63,6 +117,20 @@
       "first_appearance_ms": 711000,
       "expected_appearance_count_min": 3,
       "expected_total_seconds_min": 76,
+      "expected_windows_ms": [
+        [
+          711000,
+          750000
+        ],
+        [
+          2876000,
+          2896000
+        ],
+        [
+          2927000,
+          2944000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "F"
     },
@@ -71,6 +139,20 @@
       "first_appearance_ms": 751000,
       "expected_appearance_count_min": 3,
       "expected_total_seconds_min": 54,
+      "expected_windows_ms": [
+        [
+          751000,
+          768000
+        ],
+        [
+          2876000,
+          2896000
+        ],
+        [
+          2927000,
+          2944000
+        ]
+      ],
       "category_hint": "tea / dessert",
       "annotator_product_id": "G"
     }

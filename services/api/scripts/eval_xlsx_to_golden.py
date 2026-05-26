@@ -54,7 +54,7 @@ import pandas as pd
 
 # ── inputs / outputs ────────────────────────────────────────────────────
 DOWNLOADS = Path("/Users/jangwonlee/Downloads")
-OUT_DIR = Path("/Users/jangwonlee/.claude/jobs/491ea239/goldens_preview")
+OUT_DIR = Path("/Users/jangwonlee/.claude/jobs/491ea239/goldens_preview_v2")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── per-video metadata ──────────────────────────────────────────────────
@@ -314,11 +314,19 @@ def _expected_product_entry(
     first_ms = min(s for s, _ in merged) * 1000 if merged else 0
     total_secs = sum(e - s for s, e in merged)
 
+    # expected_windows_ms feeds the window-IoU scene-selection scorer
+    # (app.modules.shorts_auto_product.eval.window_score). Half-open
+    # millisecond intervals, already merged so the scorer doesn't
+    # double-count overlapping overlay+mention. Annotator timestamps
+    # are second-precision so every value here is a multiple of 1000.
+    expected_windows_ms = [[s * 1000, e * 1000] for s, e in merged]
+
     return {
         "label_kr": label,
         "first_appearance_ms": first_ms,
         "expected_appearance_count_min": appearance_count,
         "expected_total_seconds_min": total_secs,
+        "expected_windows_ms": expected_windows_ms,
         "category_hint": category_hint,
         # Carry the annotator's product_id so the eval matcher can map
         # to the human-assigned label when ambiguous (e.g. A vs A-1).
@@ -384,7 +392,7 @@ def emit_golden(
         "tracker_version": TRACKER_VERSION,
         "_corrections_applied": corrections_for_this_video,
         "_todo_phase_b": [
-            "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s).",
+            "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
             "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate.",
         ],
         "expected_products": expected_products,
