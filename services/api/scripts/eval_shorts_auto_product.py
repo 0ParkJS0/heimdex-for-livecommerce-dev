@@ -24,7 +24,7 @@ Runs INSIDE the api container (needs Postgres access via the existing
 
 Usage::
 
-    # On staging:
+    # On staging (default deterministic jaccard matcher):
     ssh -i ~/.ssh/heimdex-staging.pem ec2-user@3.34.75.63
     cd /opt/heimdex/dev-heimdex-for-livecommerce
     docker compose exec -T api python -m scripts.eval_shorts_auto_product \\
@@ -34,6 +34,18 @@ Usage::
         [--label-match-threshold 0.5] \\
         [--out /tmp/enum_eval.json] \\
         [--allow-version-drift]
+
+    # Embedding-cosine matcher (bridges brand-stripped vision labels
+    # to retail SKU goldens — see goldens/README.md). Requires
+    # OPENAI_API_KEY in the api container env; ~$0.05 per full 4-video
+    # baseline run.
+    docker compose exec -T api python -m scripts.eval_shorts_auto_product \\
+        --org-slug devorg \\
+        --golden-dir tests/shorts_auto_product/eval/goldens \\
+        --source all \\
+        --matcher cosine \\
+        [--cosine-threshold 0.65] \\
+        --out /tmp/enum_eval_cosine.json
 
     # Or grade specific videos / a single source:
     docker compose exec -T api python -m scripts.eval_shorts_auto_product \\
@@ -52,6 +64,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -62,8 +75,11 @@ from sqlalchemy import text
 # script; the scorer never imports app.* / sqlalchemy.
 from app.db.base import get_async_session_factory
 from app.modules.shorts_auto_product.eval.enumeration_score import (
+    DEFAULT_COSINE_THRESHOLD,
+    CosineLabelMatcher,
     GoldenSet,
     JaccardLabelMatcher,
+    LabelMatcher,
     enumeration_precision,
     enumeration_recall,
     evaluate_gates,
@@ -76,6 +92,95 @@ from app.modules.shorts_auto_product.eval.window_score import (
 )
 
 _VALID_SOURCES = ("vision", "overlay", "all")
+_VALID_MATCHERS = ("jaccard", "cosine")
+_VALID_EMBEDDERS = ("openai-text-embedding-3-small",)
+
+
+# ---------- embedder ----------
+
+
+class OpenAIEmbedder:
+    """Embedder backed by OpenAI's text-embedding API.
+
+    Lives in the CLI (not the pure scorer) because it imports
+    :mod:`openai` — the scorer must stay stdlib-only per its module-
+    docstring invariant. text-embedding-3-small is 1536-dim, ~$0.02 per
+    100 labels at 2026 pricing; one batched call per video typically
+    embeds 20-50 strings, well under the 2048-input-per-request limit.
+    """
+
+    DEFAULT_MODEL = "text-embedding-3-small"
+
+    def __init__(self, *, api_key: str, model: str = DEFAULT_MODEL) -> None:
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY is required when --matcher=cosine. Set it "
+                "in the api container's env, or fall back to --matcher=jaccard."
+            )
+        # Lazy import: keeps the default jaccard CLI path zero-cost when
+        # openai isn't installed (it IS installed in the api container,
+        # but defending against test environments without it is cheap).
+        from openai import OpenAI
+
+        self._client = OpenAI(api_key=api_key)
+        self._model = model
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        resp = self._client.embeddings.create(model=self._model, input=texts)
+        # Order is guaranteed by the API to match input order. Convert
+        # ``Embedding.embedding`` (already a list[float]) for the scorer.
+        return [list(d.embedding) for d in resp.data]
+
+
+def _build_matcher(args: argparse.Namespace) -> LabelMatcher:
+    """Pick + construct the matcher per --matcher/--label-embedder.
+
+    Centralised so ``_run`` stays focused on the eval loop and the
+    OpenAI client is built ONCE per CLI invocation (not per video).
+    """
+    if args.matcher == "cosine":
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if args.label_embedder == "openai-text-embedding-3-small":
+            embedder = OpenAIEmbedder(
+                api_key=api_key, model=OpenAIEmbedder.DEFAULT_MODEL
+            )
+        else:  # pragma: no cover - argparse choices already restrict this
+            raise ValueError(f"unknown --label-embedder: {args.label_embedder!r}")
+        threshold = (
+            args.cosine_threshold
+            if args.cosine_threshold is not None
+            else DEFAULT_COSINE_THRESHOLD
+        )
+        return CosineLabelMatcher(embedder=embedder, threshold=threshold)
+    return JaccardLabelMatcher(threshold=args.label_match_threshold)
+
+
+def _prime_cosine_matcher_for_video(
+    matcher: LabelMatcher,
+    *,
+    actual_labels: list[str],
+    expected_match_texts: list[str],
+    negatives: list[str],
+    picker_window_labels: list[str],
+) -> None:
+    """One batched embed() call covering every label this video compares.
+
+    No-op for any matcher that isn't a ``CosineLabelMatcher`` — the
+    type narrowing is intentional, the Protocol doesn't carry
+    ``prime()``. Without this, each ``matches()`` would lazy-fill in
+    pairs (2 embed calls per pair), turning a 1-second eval into a
+    100-call API thrash.
+    """
+    if not isinstance(matcher, CosineLabelMatcher):
+        return
+    seeds: list[str] = []
+    seeds.extend(actual_labels)
+    seeds.extend(expected_match_texts)
+    seeds.extend(negatives)
+    seeds.extend(picker_window_labels)
+    matcher.prime(seeds)
 
 
 # ---------- types ----------
@@ -383,13 +488,35 @@ async def _eval_video(
     *,
     golden: GoldenSet,
     source: str,
-    matcher: JaccardLabelMatcher,
+    matcher: LabelMatcher,
     skip_window_score: bool = False,
 ) -> VideoResult:
     rows = await _load_catalog_rows(
         org_slug=golden.org_slug, video_id=golden.video_id, source=source
     )
     actual_labels = [r.llm_label for r in rows if r.llm_label]
+
+    # Pre-load the picker windows (when window scoring is on) so the
+    # cosine matcher's batched prime() can cover EVERY label this video
+    # will compare — enumeration recall/precision AND window scoring —
+    # in a single embed() round-trip per video.
+    picker_windows: dict[str, list[tuple[int, int]]] = {}
+    if not skip_window_score:
+        picker_windows = await _load_picker_windows_for_video(
+            org_slug=golden.org_slug, video_id=golden.video_id
+        )
+
+    expected_match_texts: list[str] = []
+    for p in golden.expected_products:
+        expected_match_texts.extend(p.match_texts())
+    _prime_cosine_matcher_for_video(
+        matcher,
+        actual_labels=actual_labels,
+        expected_match_texts=expected_match_texts,
+        negatives=list(golden.expected_negatives),
+        picker_window_labels=list(picker_windows.keys()),
+    )
+
     recall = enumeration_recall(golden.expected_products, actual_labels, matcher)
     precision = enumeration_precision(
         actual_labels, golden.expected_negatives, matcher
@@ -413,11 +540,9 @@ async def _eval_video(
         return result
 
     # ── Window-score pass ────────────────────────────────────────────
-    # Pull the LATEST historical picker run per (video, product) and
-    # grade its scene_clips against the golden's expected_windows_ms.
-    picker_windows = await _load_picker_windows_for_video(
-        org_slug=golden.org_slug, video_id=golden.video_id
-    )
+    # Grade picker_windows (pre-loaded above) against the golden's
+    # expected_windows_ms. Same matcher as enumeration — fuzzy label
+    # join when --matcher=cosine, exact equality with no matcher.
     expected_per_product: dict[str, list[tuple[int, int]]] = {
         p.label_kr: [(int(s), int(e)) for s, e in p.expected_windows_ms]
         for p in golden.expected_products
@@ -426,6 +551,7 @@ async def _eval_video(
         video_id=golden.video_id,
         expected_per_product=expected_per_product,
         actual_per_product=picker_windows,
+        matcher=matcher,
     )
 
     no_picker_history = 0
@@ -491,12 +617,20 @@ def _format_markdown(
     window_aggregate_iou: float | None,
     window_score_enabled: bool,
     window_score_required: bool,
+    matcher_name: str,
+    matcher_threshold: float,
 ) -> str:
     lines: list[str] = []
     lines.append(
         f"# Product enumeration eval — org={org_slug} source={source}"
     )
     lines.append("")
+    # Surface the matcher choice so a baseline JSON dropped 6 months from
+    # now is self-describing — "0.107 recall" only means something against
+    # a named matcher + threshold.
+    lines.append(f"label matcher: {matcher_name} (threshold {matcher_threshold})")
+    # Legacy --label-match-threshold echo (jaccard-specific knob); kept for
+    # back-compat with operators reading older reports.
     lines.append(f"label-match threshold (token Jaccard): {threshold}")
     lines.append(f"videos evaluated: {len(results)}")
     if window_score_enabled:
@@ -628,7 +762,11 @@ def _format_markdown(
 
 async def _run(args: argparse.Namespace) -> int:
     golden_dir = Path(args.golden_dir) if args.golden_dir else None
-    matcher = JaccardLabelMatcher(threshold=args.label_match_threshold)
+    try:
+        matcher = _build_matcher(args)
+    except ValueError as e:
+        print(f"[eval] {e}", file=sys.stderr)
+        return 2
 
     try:
         goldens = _load_goldens(
@@ -713,6 +851,15 @@ async def _run(args: argparse.Namespace) -> int:
         )
         window_gate = evaluate_window_gates(window_aggregate_iou)
 
+    # Self-describe the matcher in both the report header and the JSON
+    # dump — see _format_markdown for the rationale.
+    if isinstance(matcher, CosineLabelMatcher):
+        matcher_name = f"cosine ({args.label_embedder})"
+        matcher_threshold = matcher.threshold
+    else:
+        matcher_name = "jaccard"
+        matcher_threshold = args.label_match_threshold
+
     md = _format_markdown(
         results,
         org_slug=args.org_slug,
@@ -723,6 +870,8 @@ async def _run(args: argparse.Namespace) -> int:
         window_aggregate_iou=window_aggregate_iou,
         window_score_enabled=not args.skip_window_score,
         window_score_required=args.window_score_required,
+        matcher_name=matcher_name,
+        matcher_threshold=matcher_threshold,
     )
     print(md)
 
@@ -732,6 +881,8 @@ async def _run(args: argparse.Namespace) -> int:
                 {
                     "org_slug": args.org_slug,
                     "source": args.source,
+                    "matcher": matcher_name,
+                    "matcher_threshold": matcher_threshold,
                     "label_match_threshold": args.label_match_threshold,
                     "aggregate_gates": aggregate_gates,
                     "window_score_enabled": not args.skip_window_score,
@@ -798,7 +949,34 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=0.5,
         help="Token-Jaccard threshold for the deterministic label matcher "
-        "(default: 0.5).",
+        "(default: 0.5). Only consulted when --matcher=jaccard.",
+    )
+    parser.add_argument(
+        "--matcher",
+        choices=_VALID_MATCHERS,
+        default="jaccard",
+        help="Label matcher to use for BOTH enumeration recall/precision "
+        "and the scene-selection label join. 'jaccard' (default) is the "
+        "deterministic stdlib token-overlap matcher; 'cosine' calls "
+        "OpenAI text-embedding-3-small (requires OPENAI_API_KEY) at "
+        "threshold 0.65 — designed to bridge brand-stripped vision "
+        "labels to retail SKU goldens (per goldens/README.md).",
+    )
+    parser.add_argument(
+        "--label-embedder",
+        choices=_VALID_EMBEDDERS,
+        default="openai-text-embedding-3-small",
+        help="Embedder backing --matcher=cosine. Only one choice today; "
+        "the choice is hard-wired so the spend per run is predictable.",
+    )
+    parser.add_argument(
+        "--cosine-threshold",
+        type=float,
+        default=None,
+        help="Cosine similarity threshold for --matcher=cosine. Default "
+        "0.65 per goldens/README.md §'Eval metrics computed'. Lowering "
+        "below ~0.55 risks false positives across genuinely different "
+        "products.",
     )
     parser.add_argument(
         "--out",

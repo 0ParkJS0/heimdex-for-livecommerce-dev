@@ -35,6 +35,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import fmean
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Sibling module. Imported only for typing — no runtime dep, keeps
+    # the stdlib-only invariant of window_score intact (LabelMatcher is
+    # a Protocol with no app.* / network / IO baggage).
+    from .enumeration_score import LabelMatcher
 
 # ---------------------------------------------------------------------------
 # Gate floors + documented failure actions (mirror goldens/README.md)
@@ -196,11 +203,43 @@ class VideoWindowReport:
     products_ungradeable: int
 
 
+def _gather_actual_windows(
+    expected_label: str,
+    actual_per_product: dict[str, list[Window]],
+    matcher: LabelMatcher,
+) -> list[Window]:
+    """Concatenate windows from every actual label the matcher accepts.
+
+    With the embedding-cosine matcher (threshold 0.65 per the README),
+    the catalog can carry the SAME product under multiple label strings
+    — e.g. the consolidate hook may have merged cross-source dupes
+    while the operator's historical render-child still references the
+    pre-consolidation row, OR the vision pass emits "포기김치 봉지" and
+    a manual rerender lands a row under "종가 일상행복 포기김치 10kg".
+    Either way the picker's actual windows for "포기김치" belong to the
+    same product the golden tracks; greedy first-match would drop
+    half of them.
+
+    Trade-off: a catalog row that fuzzy-matches two expected products
+    contributes its windows to BOTH. That's the right shape for
+    measuring whether the picker was on-product (coverage_recall) but
+    can inflate union under selection_precision when the catalog
+    actually IS ambiguous. With cosine 0.65 the ambiguity is rare; the
+    per-product detail in the CLI report surfaces it when it happens.
+    """
+    matched: list[Window] = []
+    for actual_label, windows in actual_per_product.items():
+        if matcher.matches(expected_label, actual_label):
+            matched.extend(windows)
+    return matched
+
+
 def score_video(
     *,
     video_id: str,
     expected_per_product: dict[str, list[Window]],
     actual_per_product: dict[str, list[Window]],
+    matcher: LabelMatcher | None = None,
 ) -> VideoWindowReport:
     """Score every product in a video, then take per-metric means.
 
@@ -215,10 +254,22 @@ def score_video(
     ``expected_per_product`` are ignored at this layer — they're
     enumeration-precision questions (catalog pollution), graded by
     :mod:`enumeration_score`.
+
+    Label matching: when ``matcher`` is provided, expected labels are
+    joined to ``actual_per_product`` via fuzzy match (windows from
+    every fuzzy-matching actual key are concatenated). When ``matcher``
+    is None — the default — uses ``dict.get(label, [])`` exact-string
+    equality, preserving the pre-2026-05-26-baseline behavior so the
+    existing unit tests stay valid AND so the CLI's default jaccard
+    path is byte-equivalent to historical runs unless ``--matcher``
+    is explicitly flipped.
     """
     per_product: dict[str, WindowScore | None] = {}
     for label, expected in expected_per_product.items():
-        actual = actual_per_product.get(label, [])
+        if matcher is None:
+            actual = actual_per_product.get(label, [])
+        else:
+            actual = _gather_actual_windows(label, actual_per_product, matcher)
         per_product[label] = score_product(expected, actual)
 
     graded = [s for s in per_product.values() if s is not None]

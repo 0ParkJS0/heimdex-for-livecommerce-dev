@@ -28,7 +28,9 @@ pass, not enumeration, and overlay enumeration emits no clip windows.
 
 from __future__ import annotations
 
+import math
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -47,6 +49,12 @@ PRECISION_FAILURE_ACTION = "Fall back to gpt-4o (from gpt-4o-mini)"
 # cosine sim are different scales, so they intentionally do not share a
 # constant.
 DEFAULT_LABEL_MATCH_THRESHOLD = 0.5
+
+# Cosine threshold for the embedding-based matcher. Authoritative source:
+# ``goldens/README.md`` §"Eval metrics computed" — "label match via cosine
+# sim of LLM-label embeddings, threshold 0.65 — matches the spec
+# authoring-vs-runtime label drift".
+DEFAULT_COSINE_THRESHOLD = 0.65
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +200,129 @@ class JaccardLabelMatcher:
             return False
         jaccard = len(ta & tb) / len(union)
         return jaccard >= self.threshold
+
+
+# ---------------------------------------------------------------------------
+# Embedding-cosine label matcher (Protocol + stdlib cosine + cache)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Maps a batch of strings to dense embedding vectors.
+
+    Decoupled from any specific provider so this module stays
+    stdlib-only. The CLI wires an ``OpenAIEmbedder`` (text-embedding-3-
+    small) at the boundary; tests pass a deterministic stub so the
+    matcher contract can be pinned without a network round-trip.
+
+    Contract: ``len(out) == len(texts)`` and every vector shares the
+    same dimensionality. Order is preserved.
+    """
+
+    def embed(self, texts: list[str]) -> list[list[float]]:  # pragma: no cover - protocol
+        ...
+
+
+def _cosine_sim(a: list[float], b: list[float]) -> float:
+    """Cosine similarity in ``[-1, 1]``. Stdlib — no numpy.
+
+    Returns ``0.0`` when either vector is the zero vector (degenerate;
+    not a meaningful match). Raises ``ValueError`` on dim mismatch so a
+    wrong-model swap surfaces loudly instead of returning silently-
+    nonsense scores.
+    """
+    if len(a) != len(b):
+        raise ValueError(
+            f"embedding dim mismatch: {len(a)} vs {len(b)} — likely a "
+            f"model swap mid-cache; rebuild the matcher"
+        )
+    dot = sum(x * y for x, y in zip(a, b))
+    da = math.sqrt(sum(x * x for x in a))
+    db = math.sqrt(sum(x * x for x in b))
+    if da == 0.0 or db == 0.0:
+        return 0.0
+    return dot / (da * db)
+
+
+class CosineLabelMatcher:
+    """Embedding-cosine label matcher.
+
+    Per the goldens README, two labels count as the same product when
+    the cosine similarity of their embeddings is ≥ ``threshold``
+    (default ``0.65`` per the spec). Designed for the auto-shorts label-
+    drift case where the vision pass emits brand-stripped generic nouns
+    ("포기김치 봉지") and the goldens carry full retail SKU names
+    ("종가 일상행복 포기김치 10kg") — token-Jaccard 0.5 never bridges
+    that pair (Jaccard ≈ 0.20); embedding cosine does.
+
+    Embeddings are cached per ``_normalize(text)`` so width / casing
+    variants collapse and the same string is never embedded twice.
+    :meth:`prime` lets the caller batch-fill the cache before any
+    ``matches()`` call — a single API call per video instead of N×M.
+    """
+
+    def __init__(
+        self,
+        embedder: Embedder,
+        threshold: float = DEFAULT_COSINE_THRESHOLD,
+    ) -> None:
+        self._embedder = embedder
+        self.threshold = threshold
+        # Keyed on _normalize(text) so casing/width variants share one
+        # entry. Public for diagnostics + tests — never write directly.
+        self._cache: dict[str, list[float]] = {}
+
+    @property
+    def cache_size(self) -> int:
+        """Number of distinct normalized labels cached (for diagnostics)."""
+        return len(self._cache)
+
+    def prime(self, texts: Iterable[str]) -> None:
+        """Pre-embed every text in one batched ``embedder.embed()`` call.
+
+        Idempotent: texts already in the cache are skipped. Empty /
+        whitespace-only texts are skipped (they can never participate
+        in a positive match — :meth:`matches` short-circuits on them).
+        """
+        wanted = sorted(
+            {
+                norm
+                for t in texts
+                if t and (norm := _normalize(t)) and norm not in self._cache
+            }
+        )
+        if not wanted:
+            return
+        vecs = self._embedder.embed(wanted)
+        if len(vecs) != len(wanted):
+            raise RuntimeError(
+                f"embedder returned {len(vecs)} vectors for {len(wanted)} "
+                f"inputs — contract violation"
+            )
+        for text, vec in zip(wanted, vecs):
+            self._cache[text] = vec
+
+    def matches(self, a: str, b: str) -> bool:
+        """True iff cosine sim of the two embeddings ≥ ``threshold``.
+
+        Short-circuits on empty / whitespace-only inputs (False) and on
+        normalized-equality (True — saves the round-trip and dodges a
+        zero-vector degenerate case for self-similarity).
+        """
+        if not a or not b:
+            return False
+        na, nb = _normalize(a), _normalize(b)
+        if not na or not nb:
+            return False
+        if na == nb:
+            return True
+        missing = [t for t in (na, nb) if t not in self._cache]
+        if missing:
+            # Lazy-fill missing pair. The CLI primes per-video to avoid
+            # this hot path; tests exercise it explicitly.
+            self.prime(missing)
+        return _cosine_sim(self._cache[na], self._cache[nb]) >= self.threshold
 
 
 # ---------------------------------------------------------------------------

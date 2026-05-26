@@ -9,22 +9,63 @@ belongs in the allowlist.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from app.modules.shorts_auto_product.eval.enumeration_score import (
+    DEFAULT_COSINE_THRESHOLD,
     PRECISION_FAILURE_ACTION,
     PRECISION_FLOOR,
     RECALL_FAILURE_ACTION,
     RECALL_FLOOR,
+    CosineLabelMatcher,
+    Embedder,
     ExpectedProduct,
     GoldenSet,
     JaccardLabelMatcher,
+    _cosine_sim,
     enumeration_precision,
     enumeration_recall,
     evaluate_gates,
 )
 
 MATCHER = JaccardLabelMatcher()
+
+
+# ---------------------------------------------------------------------------
+# Deterministic stub embedder for CosineLabelMatcher tests
+# ---------------------------------------------------------------------------
+
+
+class _StubEmbedder:
+    """Maps a closed vocabulary of labels to hand-tuned 4-d vectors.
+
+    Lets the test pin exact cosine outcomes ("포기김치 봉지" ↔ "종가
+    일상행복 포기김치 10kg" should match at the README's 0.65 floor) WITHOUT
+    a live OpenAI call. The class doubles as a Protocol-conformance test:
+    it has no inheritance, only the ``embed`` method — if it satisfies
+    ``isinstance(stub, Embedder)`` the matcher will accept it.
+    """
+
+    def __init__(self, table: dict[str, list[float]]) -> None:
+        self._table = {k: list(v) for k, v in table.items()}
+        self.call_count = 0
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        # Record + count so we can assert prime() batches into 1 call.
+        self.call_count += 1
+        self.calls.append(list(texts))
+        out: list[list[float]] = []
+        for t in texts:
+            if t not in self._table:
+                raise KeyError(
+                    f"stub embedder has no entry for {t!r} — extend the "
+                    f"test's _StubEmbedder table"
+                )
+            out.append(list(self._table[t]))
+        return out
 
 
 def _expected(*labels: str) -> list[ExpectedProduct]:
@@ -313,3 +354,215 @@ def test_extract_picker_windows_drops_invalid_times():
         _clip(video_id="gd_target", start_ms=30000, end_ms=45000),  # ok
     )
     assert _extract_picker_windows_from_spec(spec, "gd_target") == [(30000, 45000)]
+
+
+# ---------------------------------------------------------------------------
+# _cosine_sim — pure math sanity (so a wrong-sign / wrong-norm bug is
+# caught at the unit-test layer, not via a degraded staging baseline).
+# ---------------------------------------------------------------------------
+
+
+class TestCosineSim:
+    def test_identical_vectors_score_one(self):
+        assert _cosine_sim([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) == pytest.approx(1.0)
+
+    def test_orthogonal_vectors_score_zero(self):
+        assert _cosine_sim([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+
+    def test_opposite_vectors_score_negative_one(self):
+        assert _cosine_sim([1.0, 0.0], [-1.0, 0.0]) == pytest.approx(-1.0)
+
+    def test_zero_vector_returns_zero_not_nan(self):
+        """A zero-norm vector would divide-by-zero — must short-circuit
+        to 0.0 so a degenerate cache entry can never poison ``matches``."""
+        assert _cosine_sim([0.0, 0.0], [1.0, 1.0]) == 0.0
+        assert _cosine_sim([1.0, 1.0], [0.0, 0.0]) == 0.0
+
+    def test_dim_mismatch_raises(self):
+        """Surfaces a model-swap mid-cache loudly rather than returning
+        a silently-wrong scalar (matches the docstring contract)."""
+        with pytest.raises(ValueError, match="dim mismatch"):
+            _cosine_sim([1.0, 0.0], [1.0, 0.0, 0.0])
+
+    def test_known_value_half(self):
+        """45° angle ≈ cos(π/4) ≈ 0.7071. Pins the math, not just the
+        edge cases — catches sign flips and norm-vs-not-norm swaps."""
+        sim = _cosine_sim([1.0, 0.0], [1.0, 1.0])
+        assert sim == pytest.approx(1 / math.sqrt(2))
+
+
+# ---------------------------------------------------------------------------
+# CosineLabelMatcher — behaviour against a deterministic stub embedder
+# ---------------------------------------------------------------------------
+
+
+class TestCosineLabelMatcher:
+    def _table(self) -> dict[str, list[float]]:
+        """Stable 4-d label space mocking the on-staging label drift case.
+
+        Coords are hand-picked so cosine sims line up like the real
+        text-embedding-3-small clusters we observed in the 2026-05-26
+        baseline: the two kimchi labels live very near each other; the
+        Osulloc and host-watch labels are orthogonal.
+
+        We embed the NORMALIZED form (post `_normalize`) because the
+        matcher caches/queries by that key.
+        """
+        return {
+            # kimchi cluster (cos ≈ 0.98 — should clear 0.65)
+            "포기김치 봉지": [0.99, 0.10, 0.0, 0.0],
+            "종가 일상행복 포기김치 10kg": [0.95, 0.30, 0.0, 0.0],
+            # osulloc cluster (cos ≈ 0.99 — should clear 0.65)
+            "osulloc 티": [0.0, 0.0, 0.99, 0.10],
+            "프리미엄 티 컬렉션 90입": [0.0, 0.0, 0.95, 0.30],
+            # negatives
+            "호스트 시계": [0.0, 1.0, 0.0, 0.0],
+            "스튜디오 조명": [0.20, 0.97, 0.0, 0.0],
+        }
+
+    def test_matches_brand_stripped_to_full_sku(self):
+        """The killer case: vision-pass label vs. golden SKU. Token-
+        Jaccard scores 0.20 (no match at floor 0.5); cosine should
+        bridge them at the README's 0.65 floor."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        assert matcher.matches("포기김치 봉지", "종가 일상행복 포기김치 10kg")
+        assert matcher.matches("OSULLOC 티", "프리미엄 티 컬렉션 90입")
+
+    def test_rejects_clearly_different_products(self):
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        assert not matcher.matches("포기김치 봉지", "호스트 시계")
+        assert not matcher.matches("OSULLOC 티", "스튜디오 조명")
+
+    def test_threshold_is_tunable(self):
+        """Above-threshold pair stays matched at 0.65; raising the floor
+        past the pair's cosine flips the verdict."""
+        stub = _StubEmbedder(self._table())
+        # Pair has cos ≈ 0.98 → matches at 0.65 + 0.95, fails at 0.999.
+        loose = CosineLabelMatcher(stub, threshold=0.65)
+        strict = CosineLabelMatcher(_StubEmbedder(self._table()), threshold=0.999)
+        assert loose.matches("포기김치 봉지", "종가 일상행복 포기김치 10kg")
+        assert not strict.matches("포기김치 봉지", "종가 일상행복 포기김치 10kg")
+
+    def test_default_threshold_matches_readme(self):
+        assert DEFAULT_COSINE_THRESHOLD == 0.65
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        assert matcher.threshold == 0.65
+
+    def test_empty_label_never_matches(self):
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        assert not matcher.matches("", "포기김치 봉지")
+        assert not matcher.matches("포기김치 봉지", "")
+        assert not matcher.matches("   ", "포기김치 봉지")
+        # Empty inputs must NOT trigger an embed() call — the stub
+        # raises on KeyError, so a regression would surface as a test
+        # failure here, not as silent zero-vector matches.
+        assert stub.call_count == 0
+
+    def test_normalized_equality_short_circuits_without_embed(self):
+        """Self-similarity dodges the embed() round-trip; the stub
+        would still answer "match" because cos(v, v) = 1.0, but we
+        explicitly want zero API spend on the easy case."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        assert matcher.matches("포기김치 봉지", "포기김치 봉지")
+        assert matcher.matches("포기김치 봉지", "ＡＢＣ 포기김치 봉지".replace("ＡＢＣ ", ""))
+        assert stub.call_count == 0
+
+    def test_normalized_equality_with_width_and_case_variants(self):
+        """``_normalize`` is NFKC + casefold, so fullwidth + uppercase
+        variants must collapse to a cache hit / short-circuit."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        # "OSULLOC 티" → "osulloc 티" via casefold; matches itself.
+        assert matcher.matches("OSULLOC 티", "OSULLOC 티")
+        # ASCII vs fullwidth ABCs normalise to the same key.
+        # Use a label NOT in the stub table to prove normalisation +
+        # short-circuit kick in before any embed() lookup.
+        assert matcher.matches("ＡＢＣ", "ABC")
+        assert stub.call_count == 0
+
+    def test_prime_batches_into_one_embed_call(self):
+        """Performance contract: prime() makes ONE batched call no
+        matter how many labels are seeded. A regression to 1-call-per-
+        label would 10x the cost without changing the JSON output."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        matcher.prime(
+            [
+                "포기김치 봉지",
+                "종가 일상행복 포기김치 10kg",
+                "호스트 시계",
+                "스튜디오 조명",
+            ]
+        )
+        assert stub.call_count == 1
+        assert matcher.cache_size == 4
+
+    def test_prime_is_idempotent(self):
+        """Calling prime twice with the same labels MUST NOT re-embed."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        matcher.prime(["포기김치 봉지", "종가 일상행복 포기김치 10kg"])
+        assert stub.call_count == 1
+        matcher.prime(["포기김치 봉지", "종가 일상행복 포기김치 10kg"])
+        assert stub.call_count == 1  # no new call
+        matcher.prime(["호스트 시계"])  # new label
+        assert stub.call_count == 2
+
+    def test_prime_skips_empty_and_whitespace(self):
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        matcher.prime(["포기김치 봉지", "", "   ", None])  # type: ignore[list-item]
+        # Only the real label embedded; cache_size proves whitespace
+        # didn't insert a poison entry.
+        assert matcher.cache_size == 1
+
+    def test_matches_lazy_fills_missing_pair(self):
+        """The CLI primes per-video, but the matcher must still answer
+        correctly when called on an unprimed pair (defensive contract)."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        # No prime() call — matches must trigger embed().
+        assert matcher.matches("포기김치 봉지", "종가 일상행복 포기김치 10kg")
+        assert stub.call_count == 1  # batched the missing pair
+        assert matcher.cache_size == 2
+
+    def test_protocol_conformance(self):
+        """Stub satisfies the Embedder Protocol — no inheritance needed."""
+        stub = _StubEmbedder(self._table())
+        assert isinstance(stub, Embedder)
+
+    def test_used_as_jaccard_drop_in_for_enumeration_recall(self):
+        """End-to-end: swap the matcher into ``enumeration_recall`` and
+        verify the brand-stripped vs SKU pair now contributes to recall.
+        This is the exact gap the 2026-05-26 baseline (0.107 recall)
+        was hitting; under the cosine matcher both expected products
+        get matched and recall = 1.0."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        expected = [
+            ExpectedProduct(label_kr="종가 일상행복 포기김치 10kg"),
+            ExpectedProduct(label_kr="프리미엄 티 컬렉션 90입"),
+        ]
+        actual = ["포기김치 봉지", "OSULLOC 티"]
+        # Jaccard floor (0.5) would yield recall 0.0 here; cosine 0.65
+        # lifts it to 1.0 — the whole point of this PR.
+        assert enumeration_recall(expected, actual, MATCHER) == 0.0
+        assert enumeration_recall(expected, actual, matcher) == 1.0
+
+    def test_used_as_jaccard_drop_in_for_enumeration_precision(self):
+        """Negative pollution detection also benefits from cosine. A
+        catalog label that's near-cosine to an ``expected_negative``
+        (e.g. "스튜디오 조명" close to "호스트 시계" in the stub) gets
+        counted as polluted."""
+        stub = _StubEmbedder(self._table())
+        matcher = CosineLabelMatcher(stub)
+        # Exact-match negative — both matchers catch this.
+        actual = ["포기김치 봉지", "호스트 시계"]
+        negatives = ["호스트 시계"]
+        assert enumeration_precision(actual, negatives, MATCHER) == pytest.approx(0.5)
+        assert enumeration_precision(actual, negatives, matcher) == pytest.approx(0.5)
