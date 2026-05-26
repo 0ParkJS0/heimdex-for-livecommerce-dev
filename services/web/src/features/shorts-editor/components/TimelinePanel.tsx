@@ -389,6 +389,16 @@ export function TimelinePanel({
   // extent when the user zooms out far enough that the video occupies
   // only a small fraction of the visible width.
   const [containerWidth, setContainerWidth] = useState(0);
+  // 2026-05-26 — playhead bar wants to span the full track area
+  // (ruler + every track row beneath it). The previous trackHeight
+  // formula derived from textOverlayStripHeight + 48 + 48 which gave
+  // 144px on a single-row strip, but the rendered area is
+  // ruler(24) + inner-tracks(152) = 176px so the bar stopped 32px
+  // short. Measure the actual outer-wrapper height with a
+  // ResizeObserver instead so the bar follows any future strip-height
+  // tweak without another commit.
+  const outerWrapperRef = useRef<HTMLDivElement>(null);
+  const [outerWrapperHeight, setOuterWrapperHeight] = useState(176);
   // scrollLeft of the same container — needed by the ruler virtualizer
   // (L7) to filter marks down to the visible window. Tracked via a
   // throttled rAF wrapper inside onScroll so a fast drag doesn't fire
@@ -411,6 +421,23 @@ export function TimelinePanel({
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (entry) setContainerWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Track the outer-wrapper (ruler + tracks parent) height. The
+  // PlayheadCursor is absolutely positioned inside this wrapper so
+  // its visual height needs to match the wrapper's actual layout
+  // height — not a derived strip total. Mount-time initial value
+  // covers the first paint before ResizeObserver fires.
+  useEffect(() => {
+    const el = outerWrapperRef.current;
+    if (!el) return;
+    setOuterWrapperHeight(el.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setOuterWrapperHeight(entry.contentRect.height);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -503,26 +530,10 @@ export function TimelinePanel({
   // to stay constant while zoom only changed horizontal span). The
   // ``expanded`` prop on SubtitleTrack is no longer load-bearing.
   const isSubtitleExpanded = true;
-  // Playhead height must match the actual rendered tracks area so the
-  // cursor visually extends from the ruler down through every track
-  // (text-overlay rows + subtitle + clip). Computed from the same
-  // constants the strip uses so adding overlay rows automatically
-  // grows the playhead too.
-  // Row count = max(layerIndex) + 2 (one for the highest filled row
-  // + one empty row above as drop-target), capped at 2 rows total
-  // per operator policy 2026-05-24: '텍스트용 row는 최대 2개로 줄여줘'.
-  const MAX_TEXT_OVERLAY_ROW_COUNT = 2;
-  const maxOverlayLayer = (textOverlaysForTimeline ?? []).reduce(
-    (acc, o) => Math.max(acc, o.layerIndex ?? 0),
-    -1,
-  );
-  const textOverlayRowCount = Math.min(
-    MAX_TEXT_OVERLAY_ROW_COUNT,
-    maxOverlayLayer + 2,
-  );
-  const textOverlayStripHeight =
-    textOverlayRowCount * 44 + Math.max(0, textOverlayRowCount - 1) * 2 + 4;
-  const trackHeight = textOverlayStripHeight + 48 + 48;
+  // Playhead height now comes from outerWrapperHeight (ResizeObserver
+  // measurement above) — the previous derived constant formula was
+  // dropped because it didn't include the ruler and fell short of the
+  // actual layout height.
 
   // Magnetic snap targets (T4) — built once per (subtitle/clip/overlay/
   // playhead/totalDuration) change and passed into draggable blocks.
@@ -671,7 +682,23 @@ export function TimelinePanel({
             2026-05-18 spec ("타임라인 0S는 wrapper 좌측끝으로부터 12PX 띄움").
             Padding lives on the inner container so ruler / clips /
             subtitles / playhead all shift together and stay aligned. */}
-        <div className="relative pl-[12px]" style={{ minWidth: "100%" }}>
+        <div
+          ref={outerWrapperRef}
+          // 2026-05-26 — was `relative pl-[12px]` + minWidth=100%.
+          // Block layout pinned the wrapper width to the
+          // scrollContainer's clientWidth even when the children
+          // (ruler + track lanes) were 4500+ px wide, which left
+          // ``scrollContainer.scrollWidth === clientWidth`` → no
+          // horizontal scroll, and any track block past the viewport
+          // (e.g. clip[1] starting at left=msToPixels(15000ms)=1500px
+          // for a 1376px viewport) was simply unreachable. The lanes
+          // looked blank past the viewport edge. ``w-max`` lets the
+          // wrapper grow to its children's natural width so the outer
+          // overflow-x-auto can do its job, while ``min-w-full``
+          // keeps short-content cases (content < viewport) from
+          // collapsing below the viewport width.
+          className="relative w-max min-w-full pl-[12px]"
+        >
           {/* Ruler — clicking anywhere on the ruler seeks the playhead
               to that timecode. Reuses the same onSeek the playhead drag
               already calls, so audio + preview sync paths converge on
@@ -820,7 +847,7 @@ export function TimelinePanel({
             <PlayheadCursor
               playheadMs={playheadMs}
               zoom={zoom}
-              height={trackHeight}
+              height={outerWrapperHeight}
               onSeek={handleSeekWithSnap}
               showTooltip
             />

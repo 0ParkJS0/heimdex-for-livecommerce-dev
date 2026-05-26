@@ -10,7 +10,11 @@ dependencies = [
     "heimdex-worker-sdk>=0.1.0",
     # 0.18.0 adds the render-fidelity specs (video_transform / letterbox /
     # layer_order) + build_composition_filtergraph the worker render path needs.
-    "heimdex-media-contracts>=0.18.0",
+    # 0.20.0 extends font_family Literal + _FONT_FILE_BASES resolver to the
+    # 8 Korean families this worker now ships under fonts/ (see contracts
+    # PR #7); without this floor, _verify_fonts_or_exit only enumerates
+    # Pretendard + Noto and the 6 extra .ttf/.otf files are dead weight.
+    "heimdex-media-contracts>=0.20.0",
     # heimdex-media-pipelines is volume-mounted in dev/staging/prod and
     # pip-installed --no-deps at container start (see docker-compose.yml).
     # 0.15.0 consumes the render-fidelity fields (bake_letterbox_png, video

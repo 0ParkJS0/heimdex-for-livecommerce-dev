@@ -216,7 +216,18 @@ export function ShortsEditorPage() {
     [state.overlays],
   );
 
-  const timelineSubtitles: EditorSubtitle[] = getVisibleSubtitles(state.subtitles, state.clips);
+  // 2026-05-26 — wrap with useMemo so the array identity only changes
+  // when the underlying subtitles or clips slice actually changes.
+  // Previously this was a fresh array on every render, which cascaded
+  // through TimelinePanel.playheadSnapPoints → handleSeekWithSnap →
+  // PlayheadCursor.onSeek and ended up breaking the playhead drag
+  // listener (the cleanup effect there fires on each new onSeek
+  // identity). Anchoring the identity here cuts the cascade at the
+  // origin so downstream memoisation actually pays off.
+  const timelineSubtitles: EditorSubtitle[] = useMemo(
+    () => getVisibleSubtitles(state.subtitles, state.clips),
+    [state.subtitles, state.clips],
+  );
 
   const timelineTextOverlays: (EditorSubtitle & { layerIndex: number })[] = useMemo(() => {
     return textOverlays.map((o) => ({

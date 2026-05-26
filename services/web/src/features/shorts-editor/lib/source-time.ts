@@ -71,9 +71,21 @@ export function isSubtitleVisibleInClips<T extends { startMs: number; endMs: num
   sub: T,
   clips: EditorClip[],
 ): boolean {
+  // 2026-05-26 — operator-reported gap: subtitles whose [startMs, endMs)
+  // straddles a clip boundary (e.g. 14980 → 17720 over a 15000ms cut)
+  // were being filtered out because the previous predicate required
+  // FULL containment inside a single clip. Auto-STT routinely produces
+  // utterances longer than a clip's visible window, so the strict check
+  // erased real subtitles from the timeline (visible during static
+  // scrub, blank during auto-scroll past the cut).
+  //
+  // The render-time intent is "hide subtitles that don't overlap any
+  // visible clip at all" — i.e. an OVERLAP test, not containment. A
+  // subtitle whose end > clip.start AND start < clip.end has at least
+  // one millisecond of presence inside the clip's window.
   return clips.some((clip) => {
     const clipEnd = clip.timelineStartMs + getClipDuration(clip);
-    return sub.startMs >= clip.timelineStartMs && sub.endMs <= clipEnd;
+    return sub.endMs > clip.timelineStartMs && sub.startMs < clipEnd;
   });
 }
 
