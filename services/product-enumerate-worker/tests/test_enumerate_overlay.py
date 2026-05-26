@@ -113,7 +113,13 @@ def _run(message: dict):
         patch("src.tasks.enumerate.enumerate_products") as vision_fn, \
         patch("src.tasks.enumerate.enumerate_products_overlay") as overlay_fn, \
         patch("src.tasks.enumerate._upload_crops_and_build_payload") as upload:
-        fetch.return_value = _one_keyframe()
+        # ``_fetch_keyframes`` now returns ``(scene_keyframes,
+        # ocr_by_scene_id)``; mirror the shape so the overlay path's
+        # ``ocr_by_scene_id.get(...)`` lookup resolves cleanly.
+        fetch.return_value = (
+            _one_keyframe(),
+            {"gd_test_scene_001": "29,900 원"},
+        )
         # merge_products_by_label is a no-op pass-through for the canned
         # products (label-merge tested elsewhere); leave it real.
         vision_fn.return_value = ([_canonical("핑크 세럼")], 0.01)

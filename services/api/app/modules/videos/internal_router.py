@@ -261,11 +261,20 @@ async def get_scenes_with_keyframes(
               "start_ms": <int>,
               "end_ms": <int>,
               "keyframe_timestamp_ms": <int|null>,
-              "keyframe_s3_key": "<org>/drive/keyframes/<video>/<scene>.jpg"
+              "keyframe_s3_key": "<org>/drive/keyframes/<video>/<scene>.jpg",
+              "ocr_text_raw": "<concatenated OCR text or ''>"
             },
             ...
           ]
         }
+
+    ``ocr_text_raw`` mirrors the OpenSearch scene's already-indexed OCR
+    field. The product-enumerate-worker's overlay Tier 1 detector reads
+    this for the ``ocr_price`` / ``ocr_text_density`` / ``promo_penalty``
+    signals AND for the structural gate. Empty string is a legitimate
+    value (scene has no OCR — usually because the OCR enrichment hasn't
+    completed yet); the worker forwards it verbatim and the detector's
+    gate then falls back to the ``rect >= 0.5`` arm.
 
     ``proxy_s3_key`` mirrors ``DriveFile.proxy_s3_key`` verbatim
     (canonical path written by drive-transcode-worker via
@@ -321,6 +330,13 @@ async def get_scenes_with_keyframes(
             "keyframe_s3_key": enrichment_keyframe_s3_key(
                 str(org_id), video_id_str, scene_id,
             ),
+            # Already-indexed OCR text on the OS scene doc — the
+            # product-enumerate-worker overlay path reads this for the
+            # Tier 1 detector's OCR-side signals + structural gate.
+            # ``None``/missing maps to ``""`` so the worker contract
+            # stays a plain string. Same pattern as the
+            # ``scenes-by-visual-similarity`` endpoint below.
+            "ocr_text_raw": scene.get("ocr_text_raw") or "",
         })
 
     # Defensive ordering — ``get_video_scenes`` already sorts by

@@ -164,7 +164,7 @@ def handle_enumerate_job(
             cost_delta_usd=Decimal("0"),
             lease_seconds=settings.worker_lease_seconds,
         )
-        keyframes = _fetch_keyframes(
+        keyframes, ocr_by_scene_id = _fetch_keyframes(
             settings=settings,
             org_id=decoded.org_id,
             video_id=decoded.video_id,
@@ -248,6 +248,7 @@ def handle_enumerate_job(
             # the vision rows; in ``overlay`` mode it is the only source.
             overlay_products, overlay_cost = _run_overlay_pass(
                 keyframes=keyframes,
+                ocr_by_scene_id=ocr_by_scene_id,
                 vlm_client=vlm_client,
                 embedder=embedder,
                 config=config,
@@ -364,6 +365,7 @@ def _run_vision_pass(
 def _run_overlay_pass(
     *,
     keyframes: list[SceneKeyframe],
+    ocr_by_scene_id: dict[str, str],
     vlm_client: OpenAIVlmClient,
     embedder: Any,
     config: EnumerationConfig,
@@ -377,9 +379,15 @@ def _run_overlay_pass(
     :class:`WorkerOwlV2Detector` adapter). Only the classical cv2
     detector + the gpt-4o-mini overlay reader are overlay-specific.
 
-    The keyframes carry no OCR text here — the classical detector still
-    runs its visual signals (rectangular candidate / saturation / MFV)
-    and the gpt-4o-mini reader reads the card from the image directly.
+    ``ocr_by_scene_id`` is the per-scene OCR text from the API's
+    ``/internal/videos/{file_id}/scenes-with-keyframes`` response (the
+    same call ``_fetch_keyframes`` made for the vision path). Each
+    :class:`OverlayKeyframe` MUST carry this string — the Tier 1
+    detector reads it for the ``ocr_price`` / ``ocr_text_density`` /
+    ``promo_penalty`` signals AND the structural gate. Wiring an empty
+    string here (or worse, omitting the argument, which is now a
+    ``TypeError`` after the 2026-05-26 fail-loud bump) silently kills
+    the OCR half of the gate.
     """
     extractor = OverlayProductExtractor(
         openai_client=vlm_client._client,
@@ -395,14 +403,15 @@ def _run_overlay_pass(
 
     # Map the shared SceneKeyframe rows to OverlayKeyframe rows. The
     # vision-path keyframe carries ``frame_idx`` (the keyframe ms
-    # timestamp); overlay reuses the same value. No OCR text is wired
-    # through this path yet — the detector's visual signals + the LLM
-    # reader carry it.
+    # timestamp); overlay reuses the same value. The already-indexed
+    # OCR text for the scene comes through ``ocr_by_scene_id`` — see
+    # function docstring + ``_fetch_keyframes``.
     overlay_keyframes = [
         OverlayKeyframe(
             scene_id=kf.scene_id,
             frame_idx=kf.frame_idx,
             image=kf.image,
+            ocr_text=ocr_by_scene_id.get(kf.scene_id, ""),
         )
         for kf in keyframes
     ]
@@ -428,11 +437,23 @@ def _fetch_keyframes(
     video_id: UUID,
     max_keyframes: int,
     s3_client: S3Client | None = None,
-) -> list[SceneKeyframe]:
+) -> tuple[list[SceneKeyframe], dict[str, str]]:
     """Resolve the scene list via the Phase 2.5a internal endpoint and
     download each scene's keyframe from S3 / MinIO.
 
-    Returns ``[]`` if:
+    Returns ``(scene_keyframes, ocr_by_scene_id)``:
+
+    * ``scene_keyframes`` — one :class:`SceneKeyframe` per successfully
+      downloaded keyframe. Used by the vision-only enumeration path.
+    * ``ocr_by_scene_id`` — ``scene_id -> ocr_text_raw`` for the same
+      scenes. Used by the overlay path to populate
+      :class:`OverlayKeyframe.ocr_text` (the Tier 1 detector's
+      ``ocr_price`` / ``ocr_text_density`` / ``promo_penalty`` signals
+      AND structural gate read from this string). The dict carries one
+      entry per scene we KEPT — scenes whose keyframe download failed
+      drop out of both the list and the map together.
+
+    Returns ``([], {})`` if:
     * the API returns 404 (video not registered) — the caller maps
       this to ``error_code="video_not_found"``;
     * the API returns 0 scenes — same downstream effect;
@@ -467,18 +488,18 @@ def _fetch_keyframes(
                 "fetch_keyframes_video_not_found",
                 extra={"video_id": str(video_id)},
             )
-            return []
+            return [], {}
         resp.raise_for_status()
     except httpx.HTTPError:
         logger.exception(
             "fetch_keyframes_http_error", extra={"video_id": str(video_id)},
         )
-        return []
+        return [], {}
 
     body = resp.json()
     raw_scenes: list[dict[str, Any]] = body.get("scenes", [])
     if not raw_scenes:
-        return []
+        return [], {}
 
     # Subsample evenly when the video has more scenes than the cap.
     # Pipeline.enumerate_products also subsamples, but doing it here
@@ -492,6 +513,7 @@ def _fetch_keyframes(
         sampled = raw_scenes
 
     keyframes: list[SceneKeyframe] = []
+    ocr_by_scene_id: dict[str, str] = {}
     for scene in sampled:
         s3_key = scene.get("keyframe_s3_key")
         scene_id = scene.get("scene_id")
@@ -530,8 +552,16 @@ def _fetch_keyframes(
                 image=image,
             )
         )
+        # Capture the already-indexed OCR text from the API response.
+        # The overlay path's Tier 1 detector reads this for the
+        # ``ocr_price`` / ``ocr_text_density`` / ``promo_penalty``
+        # signals AND the structural gate. Empty string is a legitimate
+        # value when the OCR enrichment hasn't completed for this scene
+        # yet — the detector then falls back to the ``rect >= 0.5`` arm
+        # of the gate.
+        ocr_by_scene_id[str(scene_id)] = scene.get("ocr_text_raw") or ""
 
-    return keyframes
+    return keyframes, ocr_by_scene_id
 
 
 def _upload_crops_and_build_payload(
