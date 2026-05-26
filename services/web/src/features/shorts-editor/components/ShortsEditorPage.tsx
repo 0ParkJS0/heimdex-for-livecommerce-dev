@@ -24,7 +24,6 @@ import { useCompositionExport } from "../hooks/useCompositionExport";
 import type { RenderStatus } from "../hooks/useCompositionExport";
 import { buildCompositionPayloadFromState, usePresets } from "../hooks/usePresets";
 import { EditorLayout } from "./EditorLayout";
-import { FullscreenOverlay } from "./FullscreenOverlay";
 import { PreviewPanel } from "./PreviewPanel";
 import { RenderCompleteDialog } from "./RenderCompleteDialog";
 import { TimelinePanel } from "./TimelinePanel";
@@ -912,50 +911,50 @@ export function ShortsEditorPage() {
           </div>
         }
         preview={
-          // 2026-05-25 — Unmount the inline PreviewPanel while the
-          // FullscreenOverlay is open. Both surfaces share a
-          // ``usePlaybackSync`` instance pointed at the same playback
-          // URL; mounting them simultaneously means two <video>
-          // elements race for the same signed/CDN source, and the
-          // fullscreen modal's video can stay on a black first-frame
-          // until the inline one finishes its own ``video.load()``.
-          // Hiding the inline panel entirely guarantees the modal owns
-          // the source. When the operator closes fullscreen the panel
-          // re-mounts and reloads from the current playhead.
-          isFullscreen ? null : (
-            <PreviewPanel
-              clips={state.clips}
-              subtitles={state.subtitles}
-              overlays={state.overlays}
-              selectedOverlayId={state.selectedOverlayId}
-              onSelectOverlay={editor.selectOverlay}
-              onUpdateOverlay={editor.updateOverlay}
-              onRemoveOverlay={editor.removeOverlay}
-              onRemoveSubtitle={editor.removeSubtitle}
-              playheadMs={state.playheadMs}
-              playback={state.playback}
-              totalDurationMs={state.totalDurationMs}
-              selectedSubtitleIndex={state.selectedSubtitleIndex}
-              onPlayheadChange={setPlayhead}
-              dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
-              onSelectSubtitle={selectSubtitle}
-              onUpdateSubtitlePosition={handleSubtitlePositionChange}
-              onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
-              videoTransform={state.videoTransform}
-              onUpdateVideoPosition={editor.updateVideoPosition}
-              onUpdateVideoScale={editor.updateVideoScale}
-              onUpdateVideoRotation={editor.updateVideoRotation}
-              layerOrder={state.layerOrder}
-              letterbox={state.letterbox}
-              onUpdateLetterbox={editor.setLetterbox}
-              onPushHistory={editor.pushHistory}
-              selectedVideo={state.selectedVideo}
-              selectedLetterbox={state.selectedLetterbox}
-              onSelectVideo={editor.selectVideo}
-              onSelectLetterbox={editor.selectLetterbox}
-              onClearSelections={editor.clearAllSelections}
-            />
-          )
+          // 2026-05-26 — PreviewPanel stays mounted across the
+          // fullscreen toggle so its <video> + usePlaybackSync wiring
+          // are never torn down mid-session. ``fullscreen`` flips the
+          // outer wrapper to ``fixed inset-0`` and adds a close
+          // chrome; the editor controls (subtitle drag, overlay
+          // transform, etc.) carry over unchanged. Replaces the
+          // previous "inline panel unmounts while FullscreenOverlay
+          // mounts a second <video>" pattern that raced the source
+          // load and left fullscreen on a black, silent frame.
+          <PreviewPanel
+            clips={state.clips}
+            subtitles={state.subtitles}
+            overlays={state.overlays}
+            selectedOverlayId={state.selectedOverlayId}
+            onSelectOverlay={editor.selectOverlay}
+            onUpdateOverlay={editor.updateOverlay}
+            onRemoveOverlay={editor.removeOverlay}
+            onRemoveSubtitle={editor.removeSubtitle}
+            playheadMs={state.playheadMs}
+            playback={state.playback}
+            totalDurationMs={state.totalDurationMs}
+            selectedSubtitleIndex={state.selectedSubtitleIndex}
+            onPlayheadChange={setPlayhead}
+            dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
+            onSelectSubtitle={selectSubtitle}
+            onUpdateSubtitlePosition={handleSubtitlePositionChange}
+            onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
+            videoTransform={state.videoTransform}
+            onUpdateVideoPosition={editor.updateVideoPosition}
+            onUpdateVideoScale={editor.updateVideoScale}
+            onUpdateVideoRotation={editor.updateVideoRotation}
+            layerOrder={state.layerOrder}
+            letterbox={state.letterbox}
+            onUpdateLetterbox={editor.setLetterbox}
+            onPushHistory={editor.pushHistory}
+            selectedVideo={state.selectedVideo}
+            selectedLetterbox={state.selectedLetterbox}
+            onSelectVideo={editor.selectVideo}
+            onSelectLetterbox={editor.selectLetterbox}
+            onClearSelections={editor.clearAllSelections}
+            fullscreen={isFullscreen}
+            onCloseFullscreen={() => setIsFullscreen(false)}
+            filename={title || meta?.video_title || undefined}
+          />
         }
         rightPanel={
           // figma: 1607:65302 right column (텍스트/배경/템플릿 3탭)
@@ -1126,33 +1125,6 @@ export function ShortsEditorPage() {
           />
         }
       />
-
-      {isFullscreen && (
-        <FullscreenOverlay
-          clips={state.clips}
-          subtitles={state.subtitles}
-          overlays={state.overlays}
-          selectedOverlayId={state.selectedOverlayId}
-          onSelectOverlay={editor.selectOverlay}
-          onUpdateOverlay={editor.updateOverlay}
-          onRemoveOverlay={editor.removeOverlay}
-          onRemoveSubtitle={editor.removeSubtitle}
-          playheadMs={state.playheadMs}
-          playback={state.playback}
-          totalDurationMs={state.totalDurationMs}
-          selectedSubtitleIndex={state.selectedSubtitleIndex}
-          onPlayheadChange={setPlayhead}
-          dispatchPlaybackEvent={editor.dispatchPlaybackEvent}
-          onSelectSubtitle={selectSubtitle}
-          onUpdateSubtitlePosition={handleSubtitlePositionChange}
-          onUpdateSubtitleFontSize={handleSubtitleFontSizeChange}
-          onClose={() => setIsFullscreen(false)}
-          filename={title || meta?.video_title || undefined}
-          letterbox={state.letterbox}
-          layerOrder={state.layerOrder}
-          videoTransform={state.videoTransform}
-        />
-      )}
 
       <TemplateSaveDialog
         open={templateDialogOpen}
