@@ -634,6 +634,25 @@ class ProductScanService:
                 detail="failed to enqueue rescan; please retry",
             )
 
+        # Mirror the STT trigger from ``enqueue_scan``. Without this,
+        # rescan invalidates ALL active catalog rows (vision + overlay +
+        # stt) via ``invalidate_video_catalog`` above but only re-runs
+        # the vision SQS worker — leaving STT-source rows permanently
+        # zeroed after the first wizard "force rescan" click. The
+        # 2026-05-06 STT-first plan ships STT alongside vision; this
+        # call closes the rescan-path gap left by the original PR.
+        # Function is a no-op when the feature flag is off OR the
+        # OpenAI key is missing; safe to call unconditionally.
+        from app.modules.shorts_auto_product.enumerate_stt.service import (
+            schedule_stt_enumeration_task,
+        )
+        schedule_stt_enumeration_task(
+            settings=self.settings,
+            org_id=org_id,
+            video_db_id=video_id,
+            video_drive_id=None,  # resolved inside the task
+        )
+
         return RescanResponse(job_id=job.id, invalidated_count=invalidated)
 
     # ------------------------------------------------------------------
