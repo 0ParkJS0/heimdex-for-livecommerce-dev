@@ -53,7 +53,7 @@ import argparse
 import asyncio
 import json
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from sqlalchemy import text
@@ -67,6 +67,12 @@ from app.modules.shorts_auto_product.eval.enumeration_score import (
     enumeration_precision,
     enumeration_recall,
     evaluate_gates,
+)
+from app.modules.shorts_auto_product.eval.window_score import (
+    VideoWindowReport,
+    aggregate_mean_iou_across_videos,
+    evaluate_window_gates,
+    score_video as window_score_video,
 )
 
 _VALID_SOURCES = ("vision", "overlay", "all")
@@ -86,6 +92,25 @@ class CatalogRow:
 
 
 @dataclass
+class WindowProductDetail:
+    """Per-product window-scoring breakdown for the markdown report.
+
+    Surfaced so a failing aggregate IoU can be diagnosed without
+    rerunning — the operator sees WHICH products tanked the mean.
+    """
+
+    label_kr: str
+    has_ground_truth: bool
+    has_picker_run: bool
+    coverage_recall: float | None
+    selection_precision: float | None
+    iou: float | None
+    expected_total_ms: int
+    actual_total_ms: int
+    intersection_ms: int
+
+
+@dataclass
 class VideoResult:
     """Per-video eval result."""
 
@@ -98,6 +123,19 @@ class VideoResult:
     recall: float
     precision: float
     gates: dict
+    # Version drift: distinct (enumeration_version, prompt_version) seen
+    # on the live catalog rows vs the golden's declared versions.
+    version_drift: list[str]
+    # Window-score block — populated when --skip-window-score is OFF.
+    # ``mean_iou`` is ``None`` when no products on this video had BOTH
+    # ground-truth windows AND a historical picker run.
+    window_mean_iou: float | None = None
+    window_mean_coverage_recall: float | None = None
+    window_mean_selection_precision: float | None = None
+    window_products_graded: int = 0
+    window_products_ungradeable: int = 0
+    window_products_no_picker_history: int = 0
+    window_per_product: list[WindowProductDetail] = field(default_factory=list)
     # Version drift: distinct (enumeration_version, prompt_version) seen
     # on the live catalog rows vs the golden's declared versions.
     version_drift: list[str]
@@ -153,6 +191,113 @@ async def _load_catalog_rows(
         )
         for r in rows
     ]
+
+
+def _extract_picker_windows_from_spec(
+    spec: dict | None, target_video_id: str
+) -> list[tuple[int, int]]:
+    """Pure: pull source-video [start_ms, end_ms) windows out of one
+    composition spec, filtered to clips that came from ``target_video_id``.
+
+    Composition specs can carry clips from MULTIPLE source videos (multi-
+    source comp); we drop clips whose ``video_id`` doesn't match so the
+    picker isn't credited for time it drew from a different source.
+    Inverted / zero-duration clips are dropped defensively — the scorer
+    drops them too, but doing it here keeps the report counts honest.
+    Unit-tested in ``tests/test_eval_shorts_auto_product.py``.
+    """
+    if not isinstance(spec, dict):
+        return []
+    clips = spec.get("scene_clips") or []
+    out: list[tuple[int, int]] = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            continue
+        if clip.get("video_id") != target_video_id:
+            continue
+        try:
+            s_ms = int(clip["start_ms"])
+            e_ms = int(clip["end_ms"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if e_ms > s_ms:
+            out.append((s_ms, e_ms))
+    return out
+
+
+async def _load_picker_windows_for_video(
+    *, org_slug: str, video_id: str
+) -> dict[str, list[tuple[int, int]]]:
+    """LATEST picker output per (video, product), keyed by catalog label.
+
+    Joins ``shorts_render_jobs`` → ``product_scan_jobs`` (mode='render_child')
+    → ``product_catalog_entries`` to recover the operator-selected product
+    behind each historical short. For each ``(org, video_id, catalog_entry)``
+    triple we keep ONLY the most recent render_child (per the LATEST
+    aggregation choice in goldens/README.md) and return its scene_clips'
+    source-video [start_ms, end_ms) windows.
+
+    ``scene_clips`` can compose clips from multiple source videos
+    (cross-video composition); we filter to clips whose ``video_id``
+    matches the target video so the picker is graded only on time it
+    drew from THIS source.
+
+    Returns ``{label_kr: [(start_ms, end_ms), ...]}``. Products with no
+    historical picker run are simply absent from the dict — the caller
+    distinguishes them from "picker emitted nothing" via this absence.
+    """
+    sf = get_async_session_factory()
+    async with sf() as s:
+        rows = (
+            await s.execute(
+                text(
+                    """
+                    -- LATEST render_child per (org, video, catalog_entry).
+                    -- DISTINCT ON keeps the row whose srj.created_at is
+                    -- newest within each (catalog_entry_id) bucket; the
+                    -- outer ORDER BY enforces that within-bucket ordering.
+                    SELECT DISTINCT ON (psj.catalog_entry_id)
+                           pce.llm_label    AS label,
+                           srj.input_spec   AS spec,
+                           srj.created_at   AS render_created_at
+                    FROM shorts_render_jobs srj
+                    JOIN product_scan_jobs psj
+                      ON psj.render_job_id = srj.id
+                    JOIN product_catalog_entries pce
+                      ON pce.id = psj.catalog_entry_id
+                    JOIN drive_files df
+                      ON df.id = pce.video_id
+                    JOIN orgs o
+                      ON o.id = df.org_id
+                    WHERE psj.mode = 'render_child'
+                      AND df.video_id = :vid
+                      AND o.slug = :slug
+                      AND pce.rejected_at IS NULL
+                      AND df.is_deleted = false
+                    ORDER BY psj.catalog_entry_id,
+                             srj.created_at DESC
+                    """
+                ),
+                {"slug": org_slug, "vid": video_id},
+            )
+        ).all()
+
+    out: dict[str, list[tuple[int, int]]] = {}
+    for row in rows:
+        label = row.label or ""
+        if not label:
+            continue
+        # ``input_spec`` is the CompositionSpec dict — its ``scene_clips``
+        # carry the picker's source-video selections. Parsing is pure
+        # and unit-tested separately.
+        windows = _extract_picker_windows_from_spec(row.spec, video_id)
+        # Aggregate by label — the same label CAN appear twice if the
+        # DISTINCT ON bucket boundary changes across multiple catalog
+        # entries (e.g. an old + new enumeration_version produced two
+        # catalog rows with the same llm_label). Merge their windows so
+        # the scorer sees one timeline per label.
+        out.setdefault(label, []).extend(windows)
+    return out
 
 
 # ---------- golden loading ----------
@@ -239,6 +384,7 @@ async def _eval_video(
     golden: GoldenSet,
     source: str,
     matcher: JaccardLabelMatcher,
+    skip_window_score: bool = False,
 ) -> VideoResult:
     rows = await _load_catalog_rows(
         org_slug=golden.org_slug, video_id=golden.video_id, source=source
@@ -249,7 +395,8 @@ async def _eval_video(
         actual_labels, golden.expected_negatives, matcher
     )
     gates = evaluate_gates(recall, precision)
-    return VideoResult(
+
+    result = VideoResult(
         video_id=golden.video_id,
         category=golden.category,
         source_filter=source,
@@ -262,8 +409,75 @@ async def _eval_video(
         version_drift=_version_drift(golden, rows),
     )
 
+    if skip_window_score:
+        return result
+
+    # ── Window-score pass ────────────────────────────────────────────
+    # Pull the LATEST historical picker run per (video, product) and
+    # grade its scene_clips against the golden's expected_windows_ms.
+    picker_windows = await _load_picker_windows_for_video(
+        org_slug=golden.org_slug, video_id=golden.video_id
+    )
+    expected_per_product: dict[str, list[tuple[int, int]]] = {
+        p.label_kr: [(int(s), int(e)) for s, e in p.expected_windows_ms]
+        for p in golden.expected_products
+    }
+    win_report: VideoWindowReport = window_score_video(
+        video_id=golden.video_id,
+        expected_per_product=expected_per_product,
+        actual_per_product=picker_windows,
+    )
+
+    no_picker_history = 0
+    per_product_details: list[WindowProductDetail] = []
+    for label, score in win_report.per_product.items():
+        actual_present = label in picker_windows
+        if not actual_present and score is not None:
+            no_picker_history += 1
+        per_product_details.append(
+            WindowProductDetail(
+                label_kr=label,
+                has_ground_truth=score is not None,
+                has_picker_run=actual_present,
+                coverage_recall=(
+                    score.coverage_recall if score is not None else None
+                ),
+                selection_precision=(
+                    score.selection_precision if score is not None else None
+                ),
+                iou=score.iou if score is not None else None,
+                expected_total_ms=(
+                    score.expected_total_ms if score is not None else 0
+                ),
+                actual_total_ms=(
+                    score.actual_total_ms if score is not None else 0
+                ),
+                intersection_ms=(
+                    score.intersection_ms if score is not None else 0
+                ),
+            )
+        )
+    # Sort ascending so the lowest-IoU products surface at the top of
+    # the report — that's the diagnostic ordering operators want.
+    per_product_details.sort(
+        key=lambda d: (d.iou if d.iou is not None else 999.0, d.label_kr)
+    )
+
+    result.window_mean_iou = win_report.mean_iou
+    result.window_mean_coverage_recall = win_report.mean_coverage_recall
+    result.window_mean_selection_precision = win_report.mean_selection_precision
+    result.window_products_graded = win_report.products_graded
+    result.window_products_ungradeable = win_report.products_ungradeable
+    result.window_products_no_picker_history = no_picker_history
+    result.window_per_product = per_product_details
+    return result
+
 
 # ---------- output ----------
+
+
+def _fmt_opt(v: float | None, *, fmt: str = ".3f") -> str:
+    return "n/a" if v is None else format(v, fmt)
 
 
 def _format_markdown(
@@ -273,6 +487,10 @@ def _format_markdown(
     source: str,
     threshold: float,
     aggregate_gates: dict,
+    window_gate: dict | None,
+    window_aggregate_iou: float | None,
+    window_score_enabled: bool,
+    window_score_required: bool,
 ) -> str:
     lines: list[str] = []
     lines.append(
@@ -281,8 +499,15 @@ def _format_markdown(
     lines.append("")
     lines.append(f"label-match threshold (token Jaccard): {threshold}")
     lines.append(f"videos evaluated: {len(results)}")
+    if window_score_enabled:
+        lines.append(
+            f"scene-selection scoring: ON "
+            f"(gate {'REQUIRED' if window_score_required else 'INFORMATIONAL'})"
+        )
+    else:
+        lines.append("scene-selection scoring: OFF (--skip-window-score)")
     lines.append("")
-    lines.append("## Per-video")
+    lines.append("## Per-video — enumeration")
     lines.append("")
     lines.append(
         "| video_id | category | expected | actual | neg | recall | "
@@ -307,6 +532,54 @@ def _format_markdown(
                 lines.append(f"  - {r.video_id}: {d}")
         lines.append("")
 
+    if window_score_enabled:
+        lines.append("## Per-video — scene selection (window scoring)")
+        lines.append("")
+        lines.append(
+            "| video_id | mean IoU | mean recall | mean precision | "
+            "graded | ungradeable | no-picker-history |"
+        )
+        lines.append("|---|---|---|---|---|---|---|")
+        for r in results:
+            lines.append(
+                f"| {r.video_id} | {_fmt_opt(r.window_mean_iou)} | "
+                f"{_fmt_opt(r.window_mean_coverage_recall)} | "
+                f"{_fmt_opt(r.window_mean_selection_precision)} | "
+                f"{r.window_products_graded} | "
+                f"{r.window_products_ungradeable} | "
+                f"{r.window_products_no_picker_history} |"
+            )
+        lines.append("")
+
+        # Per-product breakdown sorted IoU-ascending — failing products
+        # surface at the top so the operator sees the worst offenders
+        # without scrolling.
+        for r in results:
+            if not r.window_per_product:
+                continue
+            lines.append(f"### {r.video_id} — per-product window detail")
+            lines.append("")
+            lines.append(
+                "| product | iou | coverage_recall | selection_precision "
+                "| expected_ms | actual_ms | inter_ms | note |"
+            )
+            lines.append("|---|---|---|---|---|---|---|---|")
+            for d in r.window_per_product:
+                if not d.has_ground_truth:
+                    note = "no ground-truth windows"
+                elif not d.has_picker_run:
+                    note = "no historical picker run"
+                else:
+                    note = ""
+                lines.append(
+                    f"| {d.label_kr} | {_fmt_opt(d.iou)} | "
+                    f"{_fmt_opt(d.coverage_recall)} | "
+                    f"{_fmt_opt(d.selection_precision)} | "
+                    f"{d.expected_total_ms} | {d.actual_total_ms} | "
+                    f"{d.intersection_ms} | {note} |"
+                )
+            lines.append("")
+
     lines.append("## Aggregate gates")
     lines.append("")
     rec = aggregate_gates["recall"]
@@ -323,9 +596,29 @@ def _format_markdown(
     )
     if prec["failure_action"]:
         lines.append(f"      action: {prec['failure_action']}")
+    if window_score_enabled and window_gate is not None:
+        gate_verdict = "PASS" if window_gate["passed"] else "FAIL"
+        gate_label = "gate" if window_score_required else "info-only"
+        iou_val = (
+            f"{window_aggregate_iou:.3f}"
+            if window_aggregate_iou is not None
+            else "n/a"
+        )
+        lines.append(
+            f"  window IoU (mean):     {iou_val} "
+            f"(floor {window_gate['floor']}) -> {gate_verdict} [{gate_label}]"
+        )
+        if window_gate["failure_action"]:
+            lines.append(f"      action: {window_gate['failure_action']}")
     lines.append("")
-    overall = "PASS" if aggregate_gates["passed"] else "FAIL"
-    lines.append(f"## Overall: {overall}")
+
+    # Overall = enumeration always required; window only required when
+    # the flag is set. This matches the operator's first-baseline use
+    # case (run the harness, see the IoU number, don't fail the exit).
+    overall_pass = aggregate_gates["passed"]
+    if window_score_enabled and window_score_required and window_gate is not None:
+        overall_pass = overall_pass and window_gate["passed"]
+    lines.append(f"## Overall: {'PASS' if overall_pass else 'FAIL'}")
     lines.append("")
     return "\n".join(lines)
 
@@ -361,7 +654,10 @@ async def _run(args: argparse.Namespace) -> int:
     for golden in goldens:
         try:
             r = await _eval_video(
-                golden=golden, source=args.source, matcher=matcher
+                golden=golden,
+                source=args.source,
+                matcher=matcher,
+                skip_window_score=args.skip_window_score,
             )
         except Exception as e:  # noqa: BLE001
             print(
@@ -391,12 +687,42 @@ async def _run(args: argparse.Namespace) -> int:
     agg_precision = sum(r.precision for r in results) / n
     aggregate_gates = evaluate_gates(agg_recall, agg_precision)
 
+    # Aggregate window IoU across videos. ``VideoWindowReport`` is what
+    # window_score.aggregate_mean_iou_across_videos consumes — synthesize
+    # one per video result so the cross-video mean honors the ungradeable-
+    # exclusion semantics from window_score (rather than mixing None and
+    # 0.0 by hand here).
+    if args.skip_window_score:
+        window_aggregate_iou: float | None = None
+        window_gate: dict | None = None
+    else:
+        synthesized_reports = [
+            VideoWindowReport(
+                video_id=r.video_id,
+                per_product={},  # only mean_iou is consulted
+                mean_iou=r.window_mean_iou,
+                mean_coverage_recall=r.window_mean_coverage_recall,
+                mean_selection_precision=r.window_mean_selection_precision,
+                products_graded=r.window_products_graded,
+                products_ungradeable=r.window_products_ungradeable,
+            )
+            for r in results
+        ]
+        window_aggregate_iou = aggregate_mean_iou_across_videos(
+            synthesized_reports
+        )
+        window_gate = evaluate_window_gates(window_aggregate_iou)
+
     md = _format_markdown(
         results,
         org_slug=args.org_slug,
         source=args.source,
         threshold=args.label_match_threshold,
         aggregate_gates=aggregate_gates,
+        window_gate=window_gate,
+        window_aggregate_iou=window_aggregate_iou,
+        window_score_enabled=not args.skip_window_score,
+        window_score_required=args.window_score_required,
     )
     print(md)
 
@@ -408,6 +734,10 @@ async def _run(args: argparse.Namespace) -> int:
                     "source": args.source,
                     "label_match_threshold": args.label_match_threshold,
                     "aggregate_gates": aggregate_gates,
+                    "window_score_enabled": not args.skip_window_score,
+                    "window_score_required": args.window_score_required,
+                    "window_aggregate_iou": window_aggregate_iou,
+                    "window_gate": window_gate,
                     "videos": [asdict(r) for r in results],
                 },
                 ensure_ascii=False,
@@ -417,7 +747,20 @@ async def _run(args: argparse.Namespace) -> int:
         )
         print(f"[eval] JSON written to {args.out}", file=sys.stderr)
 
-    return 0 if aggregate_gates["passed"] else 1
+    # Exit code policy:
+    #   * enumeration gates ALWAYS gate the exit.
+    #   * window gate gates the exit ONLY when --window-score-required.
+    #     Default behaviour is informational — the first staging baseline
+    #     measurement runs to completion without failing the build, so
+    #     the operator can see the IoU number and tune from there.
+    overall_pass = aggregate_gates["passed"]
+    if (
+        not args.skip_window_score
+        and args.window_score_required
+        and window_gate is not None
+    ):
+        overall_pass = overall_pass and window_gate["passed"]
+    return 0 if overall_pass else 1
 
 
 def _parse_args() -> argparse.Namespace:
@@ -467,6 +810,22 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Score even when a golden's enumeration_(prompt_)version "
         "disagrees with the live catalog rows. Default: refuse (exit 2).",
+    )
+    parser.add_argument(
+        "--skip-window-score",
+        action="store_true",
+        help="Skip the scene-selection window scoring pass. By default "
+        "window scoring runs alongside enumeration; pass this flag when "
+        "you only need the enumeration gate (faster — skips the "
+        "picker-window DB query).",
+    )
+    parser.add_argument(
+        "--window-score-required",
+        action="store_true",
+        help="Fail the run (exit 1) when the window-IoU floor is missed. "
+        "Default: informational — the window pass is graded and reported "
+        "but does NOT affect the exit code. Flip this on once the floor "
+        "is realistic (current floor: 0.60).",
     )
     args = parser.parse_args()
     if not args.video_id and not args.golden_dir:

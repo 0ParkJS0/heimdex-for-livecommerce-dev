@@ -229,3 +229,87 @@ def test_scorer_is_enumeration_source_agnostic():
     vision_and_overlay_labels = ["핑크 세럼 병", "검정 클렌징 폼"]
     assert enumeration_recall(expected, vision_and_overlay_labels, MATCHER) == 1.0
     assert enumeration_precision(vision_and_overlay_labels, [], MATCHER) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# _extract_picker_windows_from_spec — CLI helper that turns a historical
+# composition spec dict into the (start_ms, end_ms) windows the scene-
+# selection scorer consumes. The DB query itself is integration-tested
+# implicitly when the CLI runs against staging; this layer pins the
+# JSON-parsing rules so they don't drift.
+# ---------------------------------------------------------------------------
+
+
+def _spec(*clips: dict) -> dict:
+    return {"scene_clips": list(clips)}
+
+
+def _clip(
+    *,
+    video_id: str,
+    start_ms: int,
+    end_ms: int,
+    scene_id: str = "scene_001",
+) -> dict:
+    return {
+        "scene_id": scene_id,
+        "video_id": video_id,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+    }
+
+
+def test_extract_picker_windows_happy_path():
+    from scripts.eval_shorts_auto_product import _extract_picker_windows_from_spec
+    spec = _spec(
+        _clip(video_id="gd_target", start_ms=10000, end_ms=20000),
+        _clip(video_id="gd_target", start_ms=30000, end_ms=45000),
+    )
+    assert _extract_picker_windows_from_spec(spec, "gd_target") == [
+        (10000, 20000), (30000, 45000),
+    ]
+
+
+def test_extract_picker_windows_filters_cross_source_clips():
+    """Composition can mix multiple source videos. Only clips drawn
+    from the target source count — anything else is the picker drawing
+    from a different reel and must not credit the target's IoU."""
+    from scripts.eval_shorts_auto_product import _extract_picker_windows_from_spec
+    spec = _spec(
+        _clip(video_id="gd_target", start_ms=10000, end_ms=20000),
+        _clip(video_id="gd_OTHER", start_ms=0, end_ms=99999),
+        _clip(video_id="gd_target", start_ms=30000, end_ms=45000),
+    )
+    assert _extract_picker_windows_from_spec(spec, "gd_target") == [
+        (10000, 20000), (30000, 45000),
+    ]
+
+
+def test_extract_picker_windows_handles_empty_or_malformed():
+    from scripts.eval_shorts_auto_product import _extract_picker_windows_from_spec
+    # None / non-dict spec
+    assert _extract_picker_windows_from_spec(None, "gd_target") == []
+    assert _extract_picker_windows_from_spec("not a dict", "gd_target") == []  # type: ignore[arg-type]
+    # Missing scene_clips
+    assert _extract_picker_windows_from_spec({}, "gd_target") == []
+    # Non-dict clip entry
+    assert _extract_picker_windows_from_spec(
+        {"scene_clips": ["not a dict", {"video_id": "gd_target", "start_ms": 0, "end_ms": 5000}]},
+        "gd_target",
+    ) == [(0, 5000)]
+
+
+def test_extract_picker_windows_drops_invalid_times():
+    """Inverted / zero-length / non-int ms values are dropped — the
+    window scorer would drop them too, but doing it here keeps the
+    report counts honest (clips that contributed nothing don't inflate
+    the per-product picker-windows count)."""
+    from scripts.eval_shorts_auto_product import _extract_picker_windows_from_spec
+    spec = _spec(
+        _clip(video_id="gd_target", start_ms=10000, end_ms=10000),  # zero
+        _clip(video_id="gd_target", start_ms=20000, end_ms=15000),  # inverted
+        {"video_id": "gd_target", "start_ms": "bad", "end_ms": 5000},  # type
+        {"video_id": "gd_target", "start_ms": 1000},  # missing end_ms
+        _clip(video_id="gd_target", start_ms=30000, end_ms=45000),  # ok
+    )
+    assert _extract_picker_windows_from_spec(spec, "gd_target") == [(30000, 45000)]

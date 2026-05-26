@@ -62,6 +62,14 @@ class ExpectedProduct:
     Only ``label_kr`` is required; the rest are optional curation hints
     that the enumeration scorer does not need but the harness preserves
     for human-readable reports + future window scoring.
+
+    ``expected_windows_ms`` is the pre-merged half-open [start, end) ms
+    ground-truth windows where the annotator marked the product as
+    on-screen OR being spoken about. The enumeration scorer never reads
+    this — it's the input to the SCENE-SELECTION scorer in
+    :mod:`window_score`. Empty list (default) means "no ground truth
+    available for window scoring" — the window scorer will mark such a
+    product ungradeable.
     """
 
     label_kr: str
@@ -70,6 +78,7 @@ class ExpectedProduct:
     expected_appearance_count_min: int | None = None
     expected_total_seconds_min: int | None = None
     category_hint: str | None = None
+    expected_windows_ms: list[list[int]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, raw: dict) -> ExpectedProduct:
@@ -80,6 +89,10 @@ class ExpectedProduct:
             expected_appearance_count_min=raw.get("expected_appearance_count_min"),
             expected_total_seconds_min=raw.get("expected_total_seconds_min"),
             category_hint=raw.get("category_hint"),
+            expected_windows_ms=[
+                [int(s), int(e)]
+                for s, e in raw.get("expected_windows_ms", [])
+            ],
         )
 
     def match_texts(self) -> list[str]:
