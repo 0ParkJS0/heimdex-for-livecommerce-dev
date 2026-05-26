@@ -114,31 +114,40 @@ export function usePlaybackSync({
   // Play/pause sync
   useEffect(() => {
     const video = videoRef.current;
-    const source = getSourceTime(clips, playheadMsRef.current);
-    if (!video || !source) return;
+    if (!video) return;
 
-    if (playing) {
-      playheadAtStartRef.current = playheadMsRef.current;
-      startTimeRef.current = performance.now();
-
-      const url = getVideoUrl(source.videoId, source.sourceType);
-      if (lastSourceRef.current?.url !== url) {
-        lastSourceRef.current = { videoId: source.videoId, url };
-        video.src = url;
-        video.load();
-      }
-
-      const targetTime = source.sourceMs / 1000;
-      if (Math.abs(video.currentTime - targetTime) > 0.3) {
-        video.currentTime = targetTime;
-      }
-      video.play().catch(() => {
-        dispatchPlaybackEvent({ kind: "HARD_PAUSE" });
-      });
-    } else {
+    // Always honour the pause request, even when the playhead is
+    // sitting at totalDuration (where getSourceTime returns null
+    // because the strict ``timelineMs < clipEnd`` check excludes
+    // the end frame). Skipping the pause there left the underlying
+    // <video> element playing past the last clip's trim window into
+    // the source video's untrimmed frames.
+    if (!playing) {
       video.pause();
       cancelAnimationFrame(animFrameRef.current);
+      return;
     }
+
+    const source = getSourceTime(clips, playheadMsRef.current);
+    if (!source) return;
+
+    playheadAtStartRef.current = playheadMsRef.current;
+    startTimeRef.current = performance.now();
+
+    const url = getVideoUrl(source.videoId, source.sourceType);
+    if (lastSourceRef.current?.url !== url) {
+      lastSourceRef.current = { videoId: source.videoId, url };
+      video.src = url;
+      video.load();
+    }
+
+    const targetTime = source.sourceMs / 1000;
+    if (Math.abs(video.currentTime - targetTime) > 0.3) {
+      video.currentTime = targetTime;
+    }
+    video.play().catch(() => {
+      dispatchPlaybackEvent({ kind: "HARD_PAUSE" });
+    });
   }, [playing, clips, dispatchPlaybackEvent]);
 
   // Animation frame loop for smooth playhead updates during playback
@@ -156,6 +165,30 @@ export function usePlaybackSync({
         : 0;
 
       if (newPlayhead >= totalEnd) {
+        // Loop back to the start of the timeline instead of pausing
+        // at the end. Resets the playhead, the rAF time anchor, and
+        // the underlying <video> element to the first clip's trim
+        // start so playback continues seamlessly from 0ms. If there
+        // are no clips (defensive — totalEnd would also be 0) we
+        // fall through to REACHED_END so the reducer can settle.
+        const firstClip = clips[0];
+        if (firstClip) {
+          playheadAtStartRef.current = 0;
+          startTimeRef.current = performance.now();
+          onPlayheadChange(0);
+          if (videoRef.current) {
+            const url = getVideoUrl(firstClip.videoId, firstClip.sourceType);
+            if (lastSourceRef.current?.url !== url) {
+              lastSourceRef.current = { videoId: firstClip.videoId, url };
+              videoRef.current.src = url;
+              videoRef.current.load();
+            }
+            videoRef.current.currentTime = firstClip.trimStartMs / 1000;
+          }
+          lastClipIndexRef.current = 0;
+          animFrameRef.current = requestAnimationFrame(tick);
+          return;
+        }
         dispatchPlaybackEvent({ kind: "REACHED_END" });
         onPlayheadChange(totalEnd);
         return;
