@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { getVideoScenes } from "@/lib/api/videos";
+import { getAllVideoScenes } from "@/lib/api/videos";
 import type { VideoScenesResponse } from "@/lib/types";
 
 type TokenGetter = () => Promise<string | null>;
@@ -18,12 +18,9 @@ interface State {
  * in the inspector wants per-scene transcripts as a fallback path when
  * ``ClipMemberResponse.transcript`` is undefined for an older backend,
  * and the full list lets us render speaker turns without a second
- * fetch per clip. Bumped from page_size=1 to 200 in PR 3 of the
- * auto-shorts UI redesign — only consumer is ``AutoShortsPage``, so
- * the cost is one round trip per page load.
+ * fetch per clip. Loads all pages explicitly so long livecommerce videos
+ * are not capped at the API's per-request page limit.
  */
-const SCENES_PAGE_SIZE = 200;
-
 export function useVideoMeta(videoId: string, getToken: TokenGetter): State {
   const [state, setState] = useState<State>({
     meta: null,
@@ -40,7 +37,7 @@ export function useVideoMeta(videoId: string, getToken: TokenGetter): State {
     let cancelled = false;
     setState({ meta: null, isLoading: true, error: null });
 
-    getVideoScenes(videoId, SCENES_PAGE_SIZE, 0, getToken)
+    getAllVideoScenes(videoId, getToken)
       .then((res) => {
         if (cancelled) return;
         setState({ meta: res, isLoading: false, error: null });

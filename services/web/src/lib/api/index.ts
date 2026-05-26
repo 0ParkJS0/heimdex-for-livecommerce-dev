@@ -7,7 +7,7 @@ export { ApiClientProvider, useApiClient } from "./ApiClientProvider";
 export { search, searchUnauthenticated, searchScenes } from "./search";
 
 // Video functions (standalone)
-export { getVideos, getVideoScenes, getVideoStats } from "./videos";
+export { getVideos, getVideoScenes, getAllVideoScenes, getVideoStats } from "./videos";
 
 export { generateShortsPlan } from "./shorts";
 

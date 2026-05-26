@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { SkipBack, SkipForward } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useAgent } from "@/features/search/hooks/useAgent";
-import { getVideoScenes, getReprocessStatus, reprocessScenes, patchSceneOverride, resetSceneOverride, getVideoSummary, generateVideoSummary, editVideoSummary, resetVideoSummary } from "@/lib/api/videos";
+import { getAllVideoScenes, getVideoScenes, getReprocessStatus, reprocessScenes, patchSceneOverride, resetSceneOverride, getVideoSummary, generateVideoSummary, editVideoSummary, resetVideoSummary } from "@/lib/api/videos";
 import { getAgentPlaybackUrl, getAgentThumbnailUrl, getCloudPlaybackUrl, getCloudThumbnailUrl } from "@/lib/agent";
 import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { CopyIcon } from "@/components/icons";
@@ -850,6 +850,7 @@ function ScenesPanel({
   activeSceneMs,
   getToken,
   aspectRatio,
+  navigationScenes,
 }: {
   scenes: VideoScene[];
   totalScenes: number;
@@ -860,26 +861,36 @@ function ScenesPanel({
   activeSceneMs?: number | null;
   getToken: () => Promise<string | null>;
   aspectRatio: ThumbnailAspectRatio;
+  navigationScenes?: VideoScene[];
 }) {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
-  const [searchResults, setSearchResults] = useState<VideoScene[] | null>(null);
-  const [searchTotal, setSearchTotal] = useState(0);
-  const [isSearching, setIsSearching] = useState(false);
+  const [pageScenes, setPageScenes] = useState<VideoScene[]>(initialScenes);
+  const [pageTotal, setPageTotal] = useState(initialTotal);
+  const [isPageLoading, setIsPageLoading] = useState(false);
+  const [pageError, setPageError] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
+  const hasHydratedInitialPageRef = useRef(false);
   // 의미 그룹 grouping toggle was retired on 2026-05-18 review —
   // operators preferred the flat paginated list. ``useSceneGroups`` /
   // SceneGroupCard kept around in case the feature returns, but no
   // entry point is rendered.
 
   const [sceneOverrides, setSceneOverrides] = useState<Record<string, Partial<VideoScene>>>({});
-  const displayScenes = (searchResults ?? initialScenes).map((s) => {
+  const displayScenes = pageScenes.map((s) => {
     const ov = sceneOverrides[s.scene_id];
     return ov ? { ...s, ...ov } : s;
   });
-  const displayTotal = searchResults !== null ? searchTotal : initialTotal;
+  const displayTotal = pageTotal;
+
+  useEffect(() => {
+    if (activeSearch || currentPage !== 1) return;
+    setPageScenes(initialScenes);
+    setPageTotal(initialTotal);
+    hasHydratedInitialPageRef.current = false;
+  }, [activeSearch, currentPage, initialScenes, initialTotal]);
 
   const handleSaveOverride = useCallback(async (sceneId: string, fieldName: string, value: string | string[]) => {
     const body: Record<string, string | string[]> = { [fieldName]: value };
@@ -905,21 +916,54 @@ function ScenesPanel({
     });
   }, [videoId, getToken]);
 
-  const totalPages = Math.max(1, Math.ceil(displayScenes.length / SCENES_PER_PAGE));
-  const paginatedScenes = useMemo(() => {
-    const start = (currentPage - 1) * SCENES_PER_PAGE;
-    return displayScenes.slice(start, start + SCENES_PER_PAGE);
-  }, [displayScenes, currentPage]);
+  const totalPages = Math.max(1, Math.ceil(displayTotal / SCENES_PER_PAGE));
+  const paginatedScenes = displayScenes;
+
+  useEffect(() => {
+    if (!activeSearch && currentPage === 1 && !hasHydratedInitialPageRef.current) {
+      hasHydratedInitialPageRef.current = true;
+      return;
+    }
+
+    let cancelled = false;
+    const q = activeSearch || undefined;
+    const offset = (currentPage - 1) * SCENES_PER_PAGE;
+
+    setIsPageLoading(true);
+    setPageError(false);
+    getVideoScenes(videoId, SCENES_PER_PAGE, offset, getToken, q)
+      .then((res) => {
+        if (cancelled) return;
+        setPageScenes(res.scenes);
+        setPageTotal(res.total);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPageScenes([]);
+        setPageTotal(0);
+        setPageError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setIsPageLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSearch, currentPage, getToken, videoId]);
 
   // Auto-paginate to the active scene's page when navigating from search
   const activeSceneRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (activeSceneMs == null || displayScenes.length === 0) return;
+    if (activeSceneMs == null) return;
     const idx = displayScenes.findIndex((s) => s.start_ms === activeSceneMs);
-    if (idx < 0) return;
-    const targetPage = Math.floor(idx / SCENES_PER_PAGE) + 1;
+    const globalIdx = idx >= 0
+      ? (currentPage - 1) * SCENES_PER_PAGE + idx
+      : (navigationScenes ?? []).findIndex((s) => s.start_ms === activeSceneMs);
+    if (globalIdx < 0) return;
+    const targetPage = Math.floor(globalIdx / SCENES_PER_PAGE) + 1;
     if (targetPage !== currentPage) setCurrentPage(targetPage);
-  }, [activeSceneMs, displayScenes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeSceneMs, currentPage, displayScenes, navigationScenes]);
 
   // Scroll the active scene card into view after pagination settles
   useEffect(() => {
@@ -928,30 +972,12 @@ function ScenesPanel({
     }
   }, [currentPage, activeSceneMs]);
 
-  const handleSearch = useCallback(async (e: React.FormEvent) => {
+  const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     const q = searchQuery.trim();
     setActiveSearch(q);
     setCurrentPage(1);
-
-    if (!q) {
-      setSearchResults(null);
-      setSearchTotal(0);
-      return;
-    }
-
-    setIsSearching(true);
-    try {
-      const res = await getVideoScenes(videoId, 200, 0, getToken, q);
-      setSearchResults(res.scenes);
-      setSearchTotal(res.total);
-    } catch {
-      setSearchResults([]);
-      setSearchTotal(0);
-    } finally {
-      setIsSearching(false);
-    }
-  }, [searchQuery, videoId, getToken]);
+  }, [searchQuery]);
 
   const toggleSelection = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -982,8 +1008,6 @@ function ScenesPanel({
               onClick={() => {
                 setSearchQuery("");
                 setActiveSearch("");
-                setSearchResults(null);
-                setSearchTotal(0);
                 setCurrentPage(1);
               }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-grayscale-400 hover:text-grayscale-800"
@@ -1033,9 +1057,13 @@ function ScenesPanel({
       </div>
 
       <div className="mt-4 space-y-4">
-        {isSearching ? (
+        {isPageLoading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-indigo-500" />
+          </div>
+        ) : pageError ? (
+          <div className="py-12 text-center text-sm text-red-500">
+            장면을 불러올 수 없습니다.
           </div>
         ) : paginatedScenes.length === 0 ? (
           <div className="py-12 text-center text-sm text-gray-400">
@@ -1092,7 +1120,10 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
   const [autoShortsStep, setAutoShortsStep] =
     useState<InlineWizardStep>("criteria");
   const [meta, setMeta] = useState<VideoScenesResponse | null>(null);
-  const [scenes, setScenes] = useState<VideoScene[]>([]);
+  const [initialScenePage, setInitialScenePage] = useState<VideoScene[]>([]);
+  const [videoContextScenes, setVideoContextScenes] = useState<VideoScene[]>([]);
+  const [isVideoContextLoading, setIsVideoContextLoading] = useState(false);
+  const [videoContextError, setVideoContextError] = useState(false);
   const [totalScenes, setTotalScenes] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [seekMs, setSeekMs] = useState<number | null>(initialT ? Number(initialT) : null);
@@ -1175,15 +1206,37 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
+    setIsVideoContextLoading(true);
+    setVideoContextError(false);
 
     Promise.all([
-      getVideoScenes(videoId, 200, 0, getAccessToken),
+      getVideoScenes(videoId, SCENES_PER_PAGE, 0, getAccessToken),
       getReprocessStatus(videoId, getAccessToken),
     ])
       .then(([scenesRes, statusRes]) => {
         if (cancelled) return;
         setMeta(scenesRes);
-        setScenes(scenesRes.scenes);
+        setInitialScenePage(scenesRes.scenes);
+        if (scenesRes.total <= scenesRes.scenes.length) {
+          setVideoContextScenes(scenesRes.scenes);
+          setIsVideoContextLoading(false);
+        } else {
+          getAllVideoScenes(videoId, getAccessToken)
+            .then((allScenesRes) => {
+              if (cancelled) return;
+              setMeta(allScenesRes);
+              setVideoContextScenes(allScenesRes.scenes);
+              setVideoContextError(false);
+            })
+            .catch(() => {
+              if (cancelled) return;
+              setVideoContextScenes(scenesRes.scenes);
+              setVideoContextError(true);
+            })
+            .finally(() => {
+              if (!cancelled) setIsVideoContextLoading(false);
+            });
+        }
         setTotalScenes(scenesRes.total);
         setReprocessStatus(statusRes);
         if (statusRes && (statusRes.status === "completed" || statusRes.status === "failed")) {
@@ -1196,7 +1249,11 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
       .catch(() => {
         if (cancelled) return;
         setMeta(null);
-        setScenes([]);
+        setInitialScenePage([]);
+        setVideoContextScenes([]);
+        setTotalScenes(0);
+        setIsVideoContextLoading(false);
+        setVideoContextError(true);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -1215,10 +1272,22 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
         const res = await getReprocessStatus(videoId, getAccessToken);
         setReprocessStatus(res);
         if (res?.status === "completed") {
-          const scenesRes = await getVideoScenes(videoId, 200, 0, getAccessToken);
+          const scenesRes = await getVideoScenes(videoId, SCENES_PER_PAGE, 0, getAccessToken);
           setMeta(scenesRes);
-          setScenes(scenesRes.scenes);
+          setInitialScenePage(scenesRes.scenes);
           setTotalScenes(scenesRes.total);
+          try {
+            setIsVideoContextLoading(true);
+            const allScenesRes = await getAllVideoScenes(videoId, getAccessToken);
+            setMeta(allScenesRes);
+            setVideoContextScenes(allScenesRes.scenes);
+            setVideoContextError(false);
+          } catch {
+            setVideoContextScenes(scenesRes.scenes);
+            setVideoContextError(true);
+          } finally {
+            setIsVideoContextLoading(false);
+          }
         }
       } catch (err) {
         console.error("Failed to poll reprocess status", err);
@@ -1263,8 +1332,10 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
   // Derived for the inline auto-shorts wizard. Same scene-derived
   // calculation that VideoInfoPanel uses internally — kept in sync
   // by reading from the same ``scenes`` array.
-  const lastEnd = scenes.length > 0 ? scenes[scenes.length - 1].end_ms : 0;
-  const firstStart = scenes.length > 0 ? scenes[0].start_ms : 0;
+  const contextScenes = videoContextScenes.length > 0 ? videoContextScenes : initialScenePage;
+  const contextReady = totalScenes === 0 || contextScenes.length >= totalScenes;
+  const lastEnd = contextScenes.length > 0 ? contextScenes[contextScenes.length - 1].end_ms : 0;
+  const firstStart = contextScenes.length > 0 ? contextScenes[0].start_ms : 0;
   const pageDurationMs = Math.max(0, lastEnd - firstStart);
 
   // Scene boundary set for the slider's snap behavior (D4). Union of
@@ -1272,9 +1343,9 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
   // implicitly by the scenes-list identity from useEffect — only
   // recomputes when the scenes array reference changes.
   const sceneBoundariesMs = (() => {
-    if (scenes.length === 0) return [] as number[];
+    if (contextScenes.length === 0) return [] as number[];
     const set = new Set<number>();
-    for (const s of scenes) {
+    for (const s of contextScenes) {
       set.add(s.start_ms);
       set.add(s.end_ms);
     }
@@ -1341,7 +1412,7 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
             <VideoInfoPanel
               videoId={videoId}
               meta={meta}
-              scenes={scenes}
+              scenes={contextScenes}
               seekMs={seekMs}
               seekKey={seekKey}
             />
@@ -1433,13 +1504,13 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
           >
             {view === "overview" ? (
               <OverviewPanel
-                scenes={scenes}
+                scenes={contextScenes}
                 videoId={videoId}
                 getToken={getAccessToken}
               />
             ) : view === "scenes" ? (
               <ScenesPanel
-                scenes={scenes}
+                scenes={initialScenePage}
                 totalScenes={totalScenes}
                 videoId={videoId}
                 agentAvailable={agentAvailable}
@@ -1448,22 +1519,36 @@ export function VideoDetailPage({ videoId }: { videoId: string }) {
                 activeSceneMs={seekMs}
                 getToken={getAccessToken}
                 aspectRatio={aspectRatio}
+                navigationScenes={contextReady ? contextScenes : undefined}
               />
             ) : view === "people" ? (
               <VideoPeoplePanel
                 videoId={videoId}
-                scenes={scenes}
+                scenes={contextReady ? contextScenes : []}
                 onSeekToScene={handleSeekToScene}
                 agentAvailable={agentAvailable}
                 aspectRatio={aspectRatio}
               />
             ) : (
-              <InlineWizardContainer
-                videoId={videoId}
-                videoDurationMs={pageDurationMs}
-                snapTargetsMs={sceneBoundariesMs}
-                onStepChange={setAutoShortsStep}
-              />
+              !contextReady && isVideoContextLoading ? (
+                <div className="flex min-h-[360px] items-center justify-center">
+                  <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-heimdex-navy-500" />
+                </div>
+              ) : (
+                <>
+                  {videoContextError && (
+                    <div className="mb-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                      전체 장면 정보를 모두 불러오지 못했습니다. 현재 불러온 장면 기준으로 진행합니다.
+                    </div>
+                  )}
+                  <InlineWizardContainer
+                    videoId={videoId}
+                    videoDurationMs={pageDurationMs}
+                    snapTargetsMs={sceneBoundariesMs}
+                    onStepChange={setAutoShortsStep}
+                  />
+                </>
+              )
             )}
           </div>
         </div>

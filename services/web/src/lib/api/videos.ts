@@ -142,6 +142,37 @@ export async function getVideoScenes(
   );
 }
 
+const MAX_VIDEO_SCENES_PAGE_SIZE = 200;
+
+export async function getAllVideoScenes(
+  videoId: string,
+  getToken?: TokenGetter,
+  query?: string,
+): Promise<VideoScenesResponse> {
+  let offset = 0;
+  let firstPage: VideoScenesResponse | null = null;
+  const scenes: VideoScenesResponse["scenes"] = [];
+
+  while (true) {
+    const page = await getVideoScenes(
+      videoId,
+      MAX_VIDEO_SCENES_PAGE_SIZE,
+      offset,
+      getToken,
+      query,
+    );
+
+    if (!firstPage) firstPage = page;
+    scenes.push(...page.scenes);
+
+    if (scenes.length >= page.total || page.scenes.length < MAX_VIDEO_SCENES_PAGE_SIZE) {
+      return { ...firstPage, total: page.total, scenes };
+    }
+
+    offset += MAX_VIDEO_SCENES_PAGE_SIZE;
+  }
+}
+
 /**
  * Get aggregate video ingestion statistics.
  */

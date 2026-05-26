@@ -30,7 +30,7 @@ import {
 } from "@/lib/api/shorts-render";
 import type { SubtitleEdit } from "@/lib/api/highlight-reel";
 import type { SubtitleCueStyle } from "@/lib/subtitle-layout";
-import { getVideoScenes } from "@/lib/api/videos";
+import { getAllVideoScenes } from "@/lib/api/videos";
 import type { VideoScene, VideoScenesResponse } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 
@@ -202,7 +202,7 @@ export function EditClipsPage(props: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await getVideoScenes(videoId, 200, 0, getAccessToken);
+        const res = await getAllVideoScenes(videoId, getAccessToken);
         if (!cancelled) setScenesByVideo(res);
       } catch (err) {
         if (!cancelled) {

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { getVideoScenes } from "@/lib/api/videos";
+import { getAllVideoScenes } from "@/lib/api/videos";
 import { getShortComposition } from "@/lib/api/shorts-render";
 import type { VideoScenesResponse } from "@/lib/types";
 import {
@@ -461,7 +461,7 @@ export function ShortsEditorPage() {
 
     (async () => {
       try {
-        const res = await getVideoScenes(videoId, 200, 0, getAccessToken);
+        const res = await getAllVideoScenes(videoId, getAccessToken);
         if (cancelled) return;
 
         setMeta(res);
@@ -589,7 +589,7 @@ export function ShortsEditorPage() {
 
         // Also fetch scenes so the scene list panel can display them
         if (firstClip?.videoId) {
-          const scenesRes = await getVideoScenes(firstClip.videoId, 200, 0, getAccessToken);
+          const scenesRes = await getAllVideoScenes(firstClip.videoId, getAccessToken);
           if (!cancelled) {
             setMeta(scenesRes);
             if (!comp.title) setTitle(scenesRes.video_title ?? "");

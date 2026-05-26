@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
-import { getVideos, getVideoScenes, getVideoStats } from "@/lib/api/videos";
+import { getAllVideoScenes, getVideos, getVideoStats } from "@/lib/api/videos";
 import type {
   VideoSummary,
   VideoScene,
@@ -117,7 +117,7 @@ export function useVideos(): UseVideosReturn {
       setSelectedVideoTotal(0);
 
       try {
-        const response = await getVideoScenes(videoId, 50, 0, getAccessToken);
+        const response = await getAllVideoScenes(videoId, getAccessToken);
         setSelectedVideoScenes(response.scenes);
         setSelectedVideoTotal(response.total);
       } catch (err) {
