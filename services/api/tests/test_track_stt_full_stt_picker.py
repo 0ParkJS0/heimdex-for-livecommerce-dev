@@ -8,8 +8,8 @@ Mocks the OpenAI SDK at the call boundary. Verifies:
   * Out-of-bounds segment_index → fallback.
   * Non-chronological segments → fallback.
   * Overlapping segments → fallback.
-  * Total duration too short (< 30% of target) → fallback.
-  * Total duration too long (> 200% of target) → fallback.
+  * Total duration too short (< 75% of target) → fallback.
+  * Overlong source selections are packed into the target render window.
   * asyncio.TimeoutError → fallback, reservation released.
   * SDK exception → fallback, reservation released.
   * Budget exhausted → fallback, no LLM call.
@@ -193,8 +193,8 @@ class TestNonChronologicalSegments:
 
 class TestDurationTooShort:
     @pytest.mark.asyncio
-    async def test_total_below_30pct_triggers_fallback(self):
-        # target=60s, lower bound=18s. 3 scenes of 3s each → total 9s < 18s → fallback.
+    async def test_total_below_75pct_triggers_fallback(self):
+        # target=60s, lower bound=45s. 3 scenes of 3s each -> total 9s < 45s -> fallback.
         scenes = [
             _scene(0, start_ms=0, end_ms=3_000),
             _scene(1, start_ms=20_000, end_ms=23_000),
@@ -208,7 +208,7 @@ class TestDurationTooShort:
             ],
             "global_rationale": "",
         })
-        # total = 3000 + 3000 + 3000 = 9000 < 30% of 60000=18000 → fallback
+        # total = 3000 + 3000 + 3000 = 9000 < 75% of 60000=45000 -> fallback
         client = AsyncMock()
         client.chat.completions.create = AsyncMock(return_value=_make_openai_response(content))
         picker = _make_picker(client)
@@ -220,8 +220,9 @@ class TestDurationTooShort:
 
 class TestDurationTooLong:
     @pytest.mark.asyncio
-    async def test_total_above_200pct_triggers_fallback(self):
-        # target=60s, upper bound=120s. Pick three ~50s scenes → 150s > 120s → fallback.
+    async def test_overlong_selection_is_packed_to_target_window(self):
+        # target=60s, render window=45-80s. The selected source spans 150s,
+        # but the final render plan is packed down to 60s.
         scenes = [
             _scene(0, start_ms=0, end_ms=50_000),
             _scene(1, start_ms=50_000, end_ms=100_000),
@@ -235,14 +236,72 @@ class TestDurationTooLong:
             ],
             "global_rationale": "",
         })
-        # total = 150000 > 200% of 60000=120000 → fallback
         client = AsyncMock()
         client.chat.completions.create = AsyncMock(return_value=_make_openai_response(content))
         picker = _make_picker(client)
         plan = await picker.pick(
             scenes=scenes, target_duration_ms=60_000, llm_label="X", spoken_aliases=[]
         )
-        assert plan.fallback_used
+        assert not plan.fallback_used
+        assert plan.total_duration_ms == 60_000
+        assert plan.segments[-1].source_end_ms == 60_000
+
+
+class TestDefaultChunkingFinalDuration:
+    @pytest.mark.asyncio
+    async def test_single_long_chunk_renders_within_target_window(self):
+        scenes = [
+            _scene(i, start_ms=i * 10_000, end_ms=(i + 1) * 10_000)
+            for i in range(15)
+        ]
+        content = json.dumps({
+            "segments": [{"segment_index": 0, "rationale": "best chunk"}],
+            "global_rationale": "good product clip",
+        })
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(return_value=_make_openai_response(content))
+        picker = FullSttExplainerPicker(
+            openai_client=client,
+            budget_tracker=InMemoryBudgetTracker(daily_budget_usd=10.0),
+            model="gpt-4o-mini",
+            timeout_s=5.0,
+            max_scenes=300,
+        )
+        plan = await picker.pick(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X", spoken_aliases=[]
+        )
+        assert not plan.fallback_used
+        assert 45_000 <= plan.total_duration_ms <= 80_000
+        assert plan.total_duration_ms == 60_000
+        assert len(plan.segments) == 6
+
+        call = client.chat.completions.create.await_args.kwargs
+        user_prompt = call["messages"][1]["content"]
+        assert "Transcript (1 scenes" in user_prompt
+
+    @pytest.mark.asyncio
+    async def test_single_source_scene_longer_than_upper_bound_is_trimmed(self):
+        scenes = [_scene(0, start_ms=0, end_ms=120_000)]
+        content = json.dumps({
+            "segments": [{"segment_index": 0, "rationale": "only scene"}],
+            "global_rationale": "good product clip",
+        })
+        client = AsyncMock()
+        client.chat.completions.create = AsyncMock(return_value=_make_openai_response(content))
+        picker = FullSttExplainerPicker(
+            openai_client=client,
+            budget_tracker=InMemoryBudgetTracker(daily_budget_usd=10.0),
+            model="gpt-4o-mini",
+            timeout_s=5.0,
+            max_scenes=300,
+        )
+        plan = await picker.pick(
+            scenes=scenes, target_duration_ms=60_000, llm_label="X", spoken_aliases=[]
+        )
+        assert not plan.fallback_used
+        assert plan.total_duration_ms == 60_000
+        assert plan.segments[0].source_start_ms == 0
+        assert plan.segments[0].source_end_ms == 60_000
 
 
 class TestPositionalFallbackShape:

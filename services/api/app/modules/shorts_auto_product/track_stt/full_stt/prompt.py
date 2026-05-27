@@ -19,9 +19,10 @@ _SYSTEM_PROMPT = (
     "multi-scene chunks (each entry merges several adjacent scenes). Select "
     "chunk(s) that explain the product clearly to someone who was not present "
     "at the live stream.\n\n"
-    "Each transcript entry is one chunk and will be used in full — you cannot "
-    "extract a sub-range of a chunk. A single chunk often already exceeds the "
-    "target duration; that is expected.\n\n"
+    "Each transcript entry is context for a source range. The final rendered "
+    "short will be assembled from original scenes inside the selected chunk(s), "
+    "so pick the chunk(s) with the best product story even if a full chunk is "
+    "longer than the target duration.\n\n"
     "Guidelines:\n"
     "- Select 1-2 chunks. Prefer 1 if it already covers the product story well.\n"
     "- Each chunk must explain, demonstrate, or describe the product "
@@ -47,9 +48,10 @@ _MULTI_SYSTEM_PROMPT = (
     "multi-scene chunks (each entry merges several adjacent scenes). Produce "
     "several distinct short video edits that each explain the product clearly "
     "to someone who was not present at the live stream.\n\n"
-    "Each transcript entry is one chunk and will be used in full — you cannot "
-    "extract a sub-range of a chunk. A single chunk often already exceeds the "
-    "target duration; that is expected.\n\n"
+    "Each transcript entry is context for a source range. The final rendered "
+    "short will be assembled from original scenes inside the selected chunk(s), "
+    "so pick the chunk(s) with the best product story even if a full chunk is "
+    "longer than the target duration.\n\n"
     "Guidelines:\n"
     "- Produce exactly the requested number of shorts\n"
     "- Each short selects 1-2 chunks. Prefer 1 if a single chunk already covers "
@@ -74,6 +76,22 @@ def _ms_to_mmss(ms: int) -> str:
     return f"{total_s // 60:02d}:{total_s % 60:02d}"
 
 
+def group_consecutive_scenes(
+    scenes: list[FullSttScene],
+    group_size: int = 15,
+) -> list[list[FullSttScene]]:
+    """Group every ``group_size`` consecutive scenes.
+
+    Returns one-scene groups when ``group_size <= 1``. The picker uses these
+    groups to map LLM-selected prompt chunks back to original renderable scenes.
+    """
+    if not scenes:
+        return []
+    if group_size <= 1:
+        return [[scene] for scene in scenes]
+    return [scenes[i : i + group_size] for i in range(0, len(scenes), group_size)]
+
+
 def merge_consecutive_scenes(
     scenes: list[FullSttScene],
     group_size: int = 15,
@@ -87,12 +105,8 @@ def merge_consecutive_scenes(
 
     Returns the input unchanged when ``group_size <= 1``.
     """
-    if group_size <= 1 or not scenes:
-        return list(scenes)
-
     merged: list[FullSttScene] = []
-    for i in range(0, len(scenes), group_size):
-        group = scenes[i : i + group_size]
+    for group in group_consecutive_scenes(scenes, group_size=group_size):
         combined_text = " ".join(s.text for s in group if s.text).strip()
         merged.append(
             FullSttScene(

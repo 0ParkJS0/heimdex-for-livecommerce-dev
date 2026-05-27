@@ -41,6 +41,7 @@ from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
     _SYSTEM_PROMPT,
     build_multi_user_prompt,
     build_user_prompt,
+    group_consecutive_scenes,
     merge_consecutive_scenes,
     select_scenes_for_prompt,
 )
@@ -92,9 +93,9 @@ _FALLBACK_PATTERNS: tuple[tuple[float, ...], ...] = (
     (0.0, 0.3, 0.65, 0.95),    # wide
 )
 
-# Duration validation bounds (fractions of target_duration_ms).
-_DURATION_LOWER_FRAC = 0.30
-_DURATION_UPPER_FRAC = 2.00
+# Final render duration bounds (fractions of target_duration_ms).
+_DURATION_LOWER_FRAC = 0.75
+_DURATION_UPPER_FRAC = 4 / 3
 
 
 def _cost_from_usage(response: Any, *, model: str) -> float:
@@ -165,6 +166,9 @@ class FullSttExplainerPicker:
             return self._positional_fallback(active_scenes, target_duration_ms)
 
         # ── 1b. Merge consecutive scenes to reduce prompt size ──
+        scene_groups = group_consecutive_scenes(
+            active_scenes, group_size=self.scene_group_size,
+        )
         merged_scenes = merge_consecutive_scenes(
             active_scenes, group_size=self.scene_group_size,
         )
@@ -232,7 +236,7 @@ class FullSttExplainerPicker:
         try:
             content = response.choices[0].message.content
             clip_response = FullSttClipResponse.model_validate_json(content)
-            self._validate(clip_response, merged_scenes, target_duration_ms)
+            self._validate(clip_response, merged_scenes)
         except (ValidationError, ValueError, KeyError, AttributeError) as exc:
             self.budget_tracker.release_reservation(self._reservation_usd)
             logger.warning(
@@ -247,34 +251,32 @@ class FullSttExplainerPicker:
         cost_usd = _cost_from_usage(response, model=self.model)
         self.budget_tracker.record(cost_usd)
 
-        segments = [
-            FullSttSegment(
-                scene_id=merged_scenes[pick.segment_index].scene_id,
-                source_start_ms=merged_scenes[pick.segment_index].start_ms,
-                source_end_ms=merged_scenes[pick.segment_index].end_ms,
-                rationale=pick.rationale,
+        plan = self._build_plan_from_chunk_response(
+            clip_response,
+            scene_groups,
+            target_duration_ms,
+        )
+        if not self._plan_duration_within_bounds(plan, target_duration_ms):
+            logger.warning(
+                "full_stt_pick_skipped",
+                reason="final_duration_out_of_bounds",
+                total_duration_ms=plan.total_duration_ms,
+                target_duration_ms=target_duration_ms,
             )
-            for pick in clip_response.segments
-        ]
-        total_duration_ms = sum(s.duration_ms for s in segments)
+            return self._positional_fallback(active_scenes, target_duration_ms)
 
         logger.info(
             "full_stt_pick_response",
             cost_usd=cost_usd,
-            segment_count=len(segments),
-            total_duration_ms=total_duration_ms,
+            segment_count=len(plan.segments),
+            total_duration_ms=plan.total_duration_ms,
             target_duration_ms=target_duration_ms,
             global_rationale=(clip_response.global_rationale or "")[:200],
             prompt_version=self.prompt_version,
             full_stt_fallback_used=False,
         )
 
-        return FullSttClipPlan(
-            segments=segments,
-            total_duration_ms=total_duration_ms,
-            global_rationale=clip_response.global_rationale,
-            fallback_used=False,
-        )
+        return plan
 
     async def pick_many(
         self,
@@ -314,6 +316,9 @@ class FullSttExplainerPicker:
             return self._positional_fallback_many(active_scenes, target_duration_ms, n)
 
         # ── 1b. Merge consecutive scenes to reduce prompt size ──
+        scene_groups = group_consecutive_scenes(
+            active_scenes, group_size=self.scene_group_size,
+        )
         merged_scenes = merge_consecutive_scenes(
             active_scenes, group_size=self.scene_group_size,
         )
@@ -405,10 +410,20 @@ class FullSttExplainerPicker:
             if short is not None:
                 signature = tuple(p.segment_index for p in short.segments)
                 try:
-                    self._validate(short, merged_scenes, target_duration_ms)
+                    self._validate(short, merged_scenes)
                     if signature in seen_signatures:
                         raise ValueError("duplicate short (identical segment set)")
-                    plan = self._build_plan_from_short(short, merged_scenes)
+                    plan = self._build_plan_from_chunk_response(
+                        short,
+                        scene_groups,
+                        target_duration_ms,
+                    )
+                    if not self._plan_duration_within_bounds(
+                        plan, target_duration_ms,
+                    ):
+                        raise ValueError(
+                            "final duration outside target render bounds"
+                        )
                     seen_signatures.add(signature)
                     llm_short_count += 1
                 except (ValueError, KeyError, IndexError):
@@ -437,7 +452,6 @@ class FullSttExplainerPicker:
         self,
         response: FullSttClipResponse | FullSttShort,
         scenes: list[FullSttScene],
-        target_duration_ms: int,
     ) -> None:
         """Raise ValueError on any semantic violation.
 
@@ -445,7 +459,7 @@ class FullSttExplainerPicker:
         ``FullSttShort`` from a multi-short response — both expose
         ``.segments``. Called after Pydantic parsing passes, so basic type /
         uniqueness constraints are already satisfied. This layer checks
-        context-dependent constraints that require the original scene list.
+        index/order constraints that require the prompt chunk list.
         """
         n = len(scenes)
 
@@ -475,47 +489,96 @@ class FullSttExplainerPicker:
                     f"segments {i} and {i+1} overlap: end={curr_end} > start={next_start}"
                 )
 
-        # 4. Total duration within bounds
-        # Upper bound scales with scene_group_size: each "segment" here is a
-        # merged chunk of ~group_size source scenes, so a single chunk can
-        # already exceed the target. The bound stays as a sanity check; the
-        # editorial constraint (1-2 chunks) is enforced via the response schema.
-        total_ms = sum(
-            scenes[pick.segment_index].end_ms - scenes[pick.segment_index].start_ms
-            for pick in response.segments
-        )
-        lower = _DURATION_LOWER_FRAC * target_duration_ms
-        upper = _DURATION_UPPER_FRAC * max(1, self.scene_group_size) * target_duration_ms
-        if total_ms < lower or total_ms > upper:
-            raise ValueError(
-                f"total_duration_ms={total_ms} outside bounds "
-                f"[{lower:.0f}, {upper:.0f}] for target={target_duration_ms}"
-            )
-
-    def _build_plan_from_short(
+    def _build_plan_from_chunk_response(
         self,
-        short: FullSttShort,
-        scenes: list[FullSttScene],
+        response: FullSttClipResponse | FullSttShort,
+        scene_groups: list[list[FullSttScene]],
+        target_duration_ms: int,
     ) -> FullSttClipPlan:
-        """Build a plan from one validated short. Call only after
-        ``_validate`` passes (indices are guaranteed in range).
+        """Build the final render plan from original scenes inside chunks.
+
+        LLM responses name prompt chunks, not final render spans. This keeps
+        chunking as context compression while enforcing product-short duration
+        on the actual rendered source scenes.
         """
-        segments = [
-            FullSttSegment(
-                scene_id=scenes[pick.segment_index].scene_id,
-                source_start_ms=scenes[pick.segment_index].start_ms,
-                source_end_ms=scenes[pick.segment_index].end_ms,
-                rationale=pick.rationale,
-            )
-            for pick in short.segments
-        ]
+        candidate_scenes: list[tuple[FullSttScene, str]] = []
+        for pick in response.segments:
+            for scene in scene_groups[pick.segment_index]:
+                candidate_scenes.append((scene, pick.rationale))
+
+        segments = self._pack_source_scenes_to_target(
+            candidate_scenes,
+            target_duration_ms,
+        )
         total_duration_ms = sum(s.duration_ms for s in segments)
         return FullSttClipPlan(
             segments=segments,
             total_duration_ms=total_duration_ms,
-            global_rationale=short.global_rationale,
+            global_rationale=response.global_rationale,
             fallback_used=False,
         )
+
+    def _pack_source_scenes_to_target(
+        self,
+        scenes: list[tuple[FullSttScene, str]],
+        target_duration_ms: int,
+    ) -> list[FullSttSegment]:
+        lower, upper = self._duration_bounds(target_duration_ms)
+        segments: list[FullSttSegment] = []
+        total_ms = 0
+
+        for scene, rationale in scenes:
+            if total_ms >= target_duration_ms and total_ms >= lower:
+                break
+            remaining_ms = upper - total_ms
+            if remaining_ms <= 0:
+                break
+
+            scene_duration_ms = scene.end_ms - scene.start_ms
+            if scene_duration_ms <= 0:
+                continue
+
+            if (
+                scene_duration_ms <= remaining_ms
+                and total_ms + scene_duration_ms <= target_duration_ms
+            ):
+                take_ms = scene_duration_ms
+            else:
+                needed_ms = max(0, target_duration_ms - total_ms)
+                if total_ms < lower:
+                    needed_ms = max(needed_ms, lower - total_ms)
+                if needed_ms <= 0:
+                    break
+                take_ms = min(scene_duration_ms, remaining_ms, needed_ms)
+
+            if take_ms <= 0:
+                continue
+
+            segments.append(
+                FullSttSegment(
+                    scene_id=scene.scene_id,
+                    source_start_ms=scene.start_ms,
+                    source_end_ms=scene.start_ms + take_ms,
+                    rationale=rationale,
+                )
+            )
+            total_ms += take_ms
+
+        return segments
+
+    def _plan_duration_within_bounds(
+        self,
+        plan: FullSttClipPlan,
+        target_duration_ms: int,
+    ) -> bool:
+        lower, upper = self._duration_bounds(target_duration_ms)
+        return lower <= plan.total_duration_ms <= upper
+
+    @staticmethod
+    def _duration_bounds(target_duration_ms: int) -> tuple[int, int]:
+        lower = int(_DURATION_LOWER_FRAC * target_duration_ms)
+        upper = int(_DURATION_UPPER_FRAC * target_duration_ms)
+        return lower, upper
 
     def _positional_fallback(
         self,
@@ -540,7 +603,7 @@ class FullSttExplainerPicker:
 
         n = len(scenes)
         seen: set[int] = set()
-        segments: list[FullSttSegment] = []
+        selected_scenes: list[FullSttScene] = []
 
         for frac in positions:
             idx = min(int(frac * n), n - 1)
@@ -551,27 +614,24 @@ class FullSttExplainerPicker:
                 continue
             seen.add(idx)
             sc = scenes[idx]
-            segments.append(
-                FullSttSegment(
-                    scene_id=sc.scene_id,
-                    source_start_ms=sc.start_ms,
-                    source_end_ms=sc.end_ms,
-                    rationale="positional fallback",
-                )
-            )
+            selected_scenes.append(sc)
 
-        segments.sort(key=lambda s: s.source_start_ms)
-        total_ms = sum(s.duration_ms for s in segments)
+        selected_scenes.sort(key=lambda s: s.start_ms)
+        packed = self._pack_source_scenes_to_target(
+            [(scene, "positional fallback") for scene in selected_scenes],
+            target_duration_ms,
+        )
+        total_ms = sum(s.duration_ms for s in packed)
 
         logger.info(
             "full_stt_pick_fallback",
-            segment_count=len(segments),
+            segment_count=len(packed),
             total_duration_ms=total_ms,
             full_stt_fallback_used=True,
         )
 
         return FullSttClipPlan(
-            segments=segments,
+            segments=packed,
             total_duration_ms=total_ms,
             global_rationale="positional fallback — LLM pick unavailable",
             fallback_used=True,
