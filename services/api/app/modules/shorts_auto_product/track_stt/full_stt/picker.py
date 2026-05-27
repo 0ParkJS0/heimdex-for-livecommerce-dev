@@ -41,6 +41,7 @@ from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
     _SYSTEM_PROMPT,
     build_multi_user_prompt,
     build_user_prompt,
+    merge_consecutive_scenes,
     select_scenes_for_prompt,
 )
 from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
@@ -130,6 +131,7 @@ class FullSttExplainerPicker:
     prompt_version: str = "v1"
     timeout_s: float = 15.0
     max_scenes: int = 300
+    scene_group_size: int = 15
     _reservation_usd: float = field(default=_RESERVATION_USD, init=False)
 
     async def pick(
@@ -162,6 +164,11 @@ class FullSttExplainerPicker:
             logger.info("full_stt_pick_skipped", reason="empty_scenes")
             return self._positional_fallback(active_scenes, target_duration_ms)
 
+        # ── 1b. Merge consecutive scenes to reduce prompt size ──
+        merged_scenes = merge_consecutive_scenes(
+            active_scenes, group_size=self.scene_group_size,
+        )
+
         # ── 2. Budget reservation ──
         try:
             self.budget_tracker.check_and_reserve(self._reservation_usd)
@@ -175,7 +182,7 @@ class FullSttExplainerPicker:
 
         # ── 3. Build prompt + call OpenAI ──
         user_prompt = build_user_prompt(
-            scenes=active_scenes,
+            scenes=merged_scenes,
             target_duration_ms=target_duration_ms,
             llm_label=llm_label,
             spoken_aliases=spoken_aliases,
@@ -184,7 +191,8 @@ class FullSttExplainerPicker:
 
         logger.info(
             "full_stt_pick_request",
-            scene_count=len(active_scenes),
+            scene_count=len(merged_scenes),
+            scene_count_pre_merge=len(active_scenes),
             scene_count_pre_cap=len(scenes),
             target_duration_ms=target_duration_ms,
             model=self.model,
@@ -224,7 +232,7 @@ class FullSttExplainerPicker:
         try:
             content = response.choices[0].message.content
             clip_response = FullSttClipResponse.model_validate_json(content)
-            self._validate(clip_response, active_scenes, target_duration_ms)
+            self._validate(clip_response, merged_scenes, target_duration_ms)
         except (ValidationError, ValueError, KeyError, AttributeError) as exc:
             self.budget_tracker.release_reservation(self._reservation_usd)
             logger.warning(
@@ -241,9 +249,9 @@ class FullSttExplainerPicker:
 
         segments = [
             FullSttSegment(
-                scene_id=active_scenes[pick.segment_index].scene_id,
-                source_start_ms=active_scenes[pick.segment_index].start_ms,
-                source_end_ms=active_scenes[pick.segment_index].end_ms,
+                scene_id=merged_scenes[pick.segment_index].scene_id,
+                source_start_ms=merged_scenes[pick.segment_index].start_ms,
+                source_end_ms=merged_scenes[pick.segment_index].end_ms,
                 rationale=pick.rationale,
             )
             for pick in clip_response.segments
@@ -305,6 +313,11 @@ class FullSttExplainerPicker:
             logger.info("full_stt_pick_skipped", reason="empty_scenes")
             return self._positional_fallback_many(active_scenes, target_duration_ms, n)
 
+        # ── 1b. Merge consecutive scenes to reduce prompt size ──
+        merged_scenes = merge_consecutive_scenes(
+            active_scenes, group_size=self.scene_group_size,
+        )
+
         # ── 2. Budget reservation (one for the whole call) ──
         try:
             self.budget_tracker.check_and_reserve(self._reservation_usd)
@@ -316,7 +329,7 @@ class FullSttExplainerPicker:
 
         # ── 3. Build prompt + call OpenAI once ──
         user_prompt = build_multi_user_prompt(
-            scenes=active_scenes,
+            scenes=merged_scenes,
             target_duration_ms=target_duration_ms,
             llm_label=llm_label,
             spoken_aliases=spoken_aliases,
@@ -326,7 +339,8 @@ class FullSttExplainerPicker:
 
         logger.info(
             "full_stt_multi_pick_request",
-            scene_count=len(active_scenes),
+            scene_count=len(merged_scenes),
+            scene_count_pre_merge=len(active_scenes),
             scene_count_pre_cap=len(scenes),
             target_duration_ms=target_duration_ms,
             requested_shorts=n,
@@ -391,10 +405,10 @@ class FullSttExplainerPicker:
             if short is not None:
                 signature = tuple(p.segment_index for p in short.segments)
                 try:
-                    self._validate(short, active_scenes, target_duration_ms)
+                    self._validate(short, merged_scenes, target_duration_ms)
                     if signature in seen_signatures:
                         raise ValueError("duplicate short (identical segment set)")
-                    plan = self._build_plan_from_short(short, active_scenes)
+                    plan = self._build_plan_from_short(short, merged_scenes)
                     seen_signatures.add(signature)
                     llm_short_count += 1
                 except (ValueError, KeyError, IndexError):
@@ -462,12 +476,16 @@ class FullSttExplainerPicker:
                 )
 
         # 4. Total duration within bounds
+        # Upper bound scales with scene_group_size: each "segment" here is a
+        # merged chunk of ~group_size source scenes, so a single chunk can
+        # already exceed the target. The bound stays as a sanity check; the
+        # editorial constraint (1-2 chunks) is enforced via the response schema.
         total_ms = sum(
             scenes[pick.segment_index].end_ms - scenes[pick.segment_index].start_ms
             for pick in response.segments
         )
         lower = _DURATION_LOWER_FRAC * target_duration_ms
-        upper = _DURATION_UPPER_FRAC * target_duration_ms
+        upper = _DURATION_UPPER_FRAC * max(1, self.scene_group_size) * target_duration_ms
         if total_ms < lower or total_ms > upper:
             raise ValueError(
                 f"total_duration_ms={total_ms} outside bounds "

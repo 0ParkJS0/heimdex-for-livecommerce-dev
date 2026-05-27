@@ -71,6 +71,9 @@ def _make_picker(client: Any, *, budget_usd: float = 10.0) -> FullSttExplainerPi
         model="gpt-4o-mini",
         timeout_s=5.0,
         max_scenes=300,
+        # Disable scene merging so existing fixtures (small scene lists,
+        # 3-segment picks) exercise the legacy per-scene behavior.
+        scene_group_size=1,
     )
 
 

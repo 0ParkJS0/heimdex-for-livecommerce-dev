@@ -22,8 +22,8 @@ def _scene(idx: int, *, start_ms: int, end_ms: int, text: str = "hello") -> Full
 
 
 class TestPromptVersion:
-    def test_constant_is_v2(self):
-        assert PROMPT_VERSION == "v2"
+    def test_constant_is_v3(self):
+        assert PROMPT_VERSION == "v3"
 
     def test_system_prompt_non_empty(self):
         assert len(_SYSTEM_PROMPT) > 100
@@ -146,8 +146,8 @@ class TestCap:
 
 
 class TestMultiPrompt:
-    def test_multi_prompt_version_is_v3(self):
-        assert MULTI_PROMPT_VERSION == "v3"
+    def test_multi_prompt_version_is_v4(self):
+        assert MULTI_PROMPT_VERSION == "v4"
 
     def test_multi_system_prompt_non_empty(self):
         assert len(_MULTI_SYSTEM_PROMPT) > 100
