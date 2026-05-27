@@ -104,6 +104,7 @@ class VideoProbe:
     detector_pass_count: int
     ocr_nonempty_count: int
     product_count: int
+    window_count: int
     sampled_products: int
     detector_products: int
     sampled_windows: int
@@ -430,6 +431,7 @@ def _run(args: argparse.Namespace) -> int:
                 detector_pass_count=sum(1 for f in frames if f.has_overlay),
                 ocr_nonempty_count=sum(1 for f in frames if f.ocr_char_count > 0),
                 product_count=len(products),
+                window_count=sum(p.expected_window_count for p in products),
                 sampled_products=sum(1 for p in products if p.sampled_window_count > 0),
                 detector_products=sum(1 for p in products if p.detector_window_count > 0),
                 sampled_windows=sum(p.sampled_window_count for p in products),
