@@ -367,7 +367,7 @@ def _process_single_ocr(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-ENRICH_BATCH_SIZE = 200
+ENRICH_BATCH_SIZE = 25
 
 
 def _post_enrich_to_api(

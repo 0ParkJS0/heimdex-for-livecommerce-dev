@@ -101,6 +101,49 @@ def build_embedding_text(
     return " ".join(parts)
 
 
+def _is_ocr_only_enrich_request(request: EnrichScenesRequest) -> bool:
+    """Return True when an enrich payload only carries OCR text updates.
+
+    OCR backfills can be large and frequent. They should not force the API to
+    run E5 embedding or tag generation synchronously for every OCR-bearing
+    scene; that CPU-heavy work can saturate the API host during backfills.
+    """
+    if not request.scenes:
+        return False
+    for scene in request.scenes:
+        if scene.ocr_text_raw is None:
+            return False
+        if scene.transcript_raw is not None:
+            return False
+        if scene.speech_segment_count is not None:
+            return False
+        if scene.speaker_transcript is not None:
+            return False
+        if scene.speaker_count is not None:
+            return False
+        if scene.scene_caption is not None:
+            return False
+        if scene.keyword_tags is not None:
+            return False
+        if scene.product_tags is not None:
+            return False
+        if scene.product_entities is not None:
+            return False
+        if scene.ai_tags is not None:
+            return False
+        if scene.people_cluster_ids is not None:
+            return False
+        if scene.visual_embedding is not None:
+            return False
+        if scene.color_embedding is not None:
+            return False
+        if scene.dominant_colors is not None:
+            return False
+        if scene.transcript_words is not None:
+            return False
+    return True
+
+
 class SceneIngestService:
     """Shared scene ingest pipeline for all sources (agent, Drive, etc.).
 
@@ -304,6 +347,9 @@ class SceneIngestService:
             scene_count=len(request.scenes),
         )
 
+        if _is_ocr_only_enrich_request(request):
+            return await self._enrich_ocr_only_scenes(request=request, org_id=org_id)
+
         doc_id_map: dict[str, EnrichSceneUpdate] = {}
         for scene in request.scenes:
             doc_id = f"{org_id_str}:{scene.scene_id}"
@@ -438,6 +484,76 @@ class SceneIngestService:
             skipped_count=skipped,
             duration_embedding_ms=round((t_after_embedding - t_after_prepare) * 1000, 1),
             duration_indexing_ms=round((t_after_index - t_after_embedding) * 1000, 1),
+            duration_total_ms=round((t_after_index - t_start) * 1000, 1),
+        )
+        return {
+            "updated_count": len(partial_updates),
+            "video_id": request.video_id,
+            "skipped_count": skipped,
+        }
+
+    async def _enrich_ocr_only_scenes(
+        self,
+        request: EnrichScenesRequest,
+        org_id: UUID,
+    ) -> dict[str, Any]:
+        """Fast path for OCR-only enrichment.
+
+        This deliberately does not recompute text embeddings or tags. OCR
+        backfill needs the raw text indexed for product overlay detection and
+        OCR search, while embedding refresh can be handled later by a dedicated
+        re-embed job if needed.
+        """
+        t_start = _time.monotonic()
+        org_id_str = str(org_id)
+        now = datetime.now(timezone.utc)
+
+        doc_id_map: dict[str, EnrichSceneUpdate] = {
+            f"{org_id_str}:{scene.scene_id}": scene for scene in request.scenes
+        }
+
+        existing_docs = await self.scene_opensearch.mget_scenes(list(doc_id_map.keys()))
+
+        partial_updates: list[tuple[str, dict[str, Any]]] = []
+        skipped = 0
+        for doc_id, enrichment in doc_id_map.items():
+            if doc_id not in existing_docs:
+                logger.warning(
+                    "enrich_scene_not_found",
+                    org_id=org_id_str,
+                    video_id=request.video_id,
+                    doc_id=doc_id,
+                )
+                skipped += 1
+                continue
+
+            ocr_text = enrichment.ocr_text_raw or ""
+            ocr_norm = normalize_transcript(ocr_text) if ocr_text else ""
+            partial_updates.append(
+                (
+                    doc_id,
+                    {
+                        "ocr_text_raw": ocr_text,
+                        "ocr_text_norm": ocr_norm,
+                        "ocr_char_count": len(ocr_norm),
+                        "ingest_time": now.isoformat(),
+                    },
+                )
+            )
+
+        t_after_prepare = _time.monotonic()
+        if partial_updates:
+            await self.scene_opensearch.bulk_partial_update_scenes(partial_updates)
+        t_after_index = _time.monotonic()
+
+        logger.info(
+            "scene_enrich_ocr_only_completed",
+            org_id=org_id_str,
+            video_id=request.video_id,
+            updated_count=len(partial_updates),
+            skipped_count=skipped,
+            duration_prepare_ms=round((t_after_prepare - t_start) * 1000, 1),
+            duration_indexing_ms=round((t_after_index - t_after_prepare) * 1000, 1),
             duration_total_ms=round((t_after_index - t_start) * 1000, 1),
         )
         return {

@@ -80,13 +80,16 @@ class TestInternalEnrichService:
             }
         }
 
-        with patch("app.modules.ingest.service.get_passage_embeddings_batch", return_value=[[0.1] * 1024]):
+        with patch("app.modules.ingest.service.get_passage_embeddings_batch", return_value=[[0.1] * 1024]) as mock_embed:
             await service.enrich_scenes(request, org_id)
 
         updates = mock_scene_client.bulk_partial_update_scenes.call_args[0][0]
         _, partial = updates[0]
         assert partial["ocr_text_raw"] == "50% OFF"
         assert partial["ocr_text_norm"] == "50% off"
+        assert partial["ocr_char_count"] == 7
+        assert "embedding_vector" not in partial
+        mock_embed.assert_not_called()
         # Partial update should NOT contain transcript or caption
         assert "transcript_raw" not in partial
         assert "scene_caption" not in partial
@@ -175,8 +178,8 @@ class TestInternalEnrichService:
         mock_warning.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_embedding_recomputed_from_merged_text(self, service, mock_scene_client):
-        """When OCR is enriched, embedding should combine existing transcript + new OCR."""
+    async def test_ocr_only_enrichment_skips_embedding_recompute(self, service, mock_scene_client):
+        """OCR-only enrichment takes the cheap path and does not run E5."""
         org_id = uuid4()
         scene_id = "vid1_scene_0"
         doc_id = f"{org_id}:{scene_id}"
@@ -197,8 +200,48 @@ class TestInternalEnrichService:
         with patch("app.modules.ingest.service.get_passage_embeddings_batch", return_value=[[0.2] * 1024]) as mock_embed:
             await service.enrich_scenes(request, org_id)
 
-        # Embedding text should combine existing transcript + new OCR
-        mock_embed.assert_called_once_with(["hello sale"])
+        mock_embed.assert_not_called()
+        updates = mock_scene_client.bulk_partial_update_scenes.call_args[0][0]
+        _, partial = updates[0]
+        assert partial["ocr_text_raw"] == "SALE"
+        assert "embedding_vector" not in partial
+
+    @pytest.mark.asyncio
+    async def test_mixed_ocr_and_caption_still_recomputes_embedding(self, service, mock_scene_client):
+        """The OCR fast path only applies when OCR is the sole enrichment."""
+        org_id = uuid4()
+        scene_id = "vid1_scene_0"
+        doc_id = f"{org_id}:{scene_id}"
+        request = EnrichScenesRequest(
+            video_id="vid1",
+            scenes=[
+                EnrichSceneUpdate(
+                    scene_id=scene_id,
+                    ocr_text_raw="SALE",
+                    ocr_char_count=4,
+                    scene_caption="product display",
+                )
+            ],
+        )
+
+        mock_scene_client.mget_scenes.return_value = {
+            doc_id: {
+                "scene_id": scene_id,
+                "transcript_raw": "Hello",
+                "ocr_text_raw": "",
+                "scene_caption": "",
+            }
+        }
+
+        with patch("app.modules.ingest.service.get_passage_embeddings_batch", return_value=[[0.2] * 1024]) as mock_embed:
+            await service.enrich_scenes(request, org_id)
+
+        mock_embed.assert_called_once()
+        updates = mock_scene_client.bulk_partial_update_scenes.call_args[0][0]
+        _, partial = updates[0]
+        assert partial["ocr_text_raw"] == "SALE"
+        assert partial["scene_caption"] == "product display"
+        assert "embedding_vector" in partial
 
     @pytest.mark.asyncio
     async def test_concurrent_enrichment_safety(self, service, mock_scene_client):

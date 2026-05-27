@@ -832,6 +832,166 @@ Next required staging check:
    rows with non-null `canonical_crop_s3_key`.
 6. Verify the auto-shorts product selection UI shows overlay thumbnail cards.
 
+## OCR Backfill Execution Update - 2026-05-27
+
+Reason for backfill:
+
+- Overlay-parent mode now correctly fails closed when there are no overlay
+  catalog rows, but several staging videos had empty indexed OCR despite
+  visible on-screen commerce text.
+- The affected screenshot job
+  `gd_fbd7b057d84d12ab` had Postgres `ocr_status=done`, but OpenSearch scene
+  docs had `ocr_text_raw=""` and `ocr_char_count=0`.
+- The generic `app.cli.backfill --target ocr` path is unsafe for OCR as-is:
+  it publishes v2 per-scene messages through `publish_scene_enrichment_jobs`,
+  while `drive-ocr-worker` still consumes v1 per-video messages via
+  `sqs_to_claimed_file`.
+- `publish_enrichment_jobs()` is also too broad for this repair because it
+  republishes both OCR and face jobs when keyframes exist.
+
+Safe backfill approach used:
+
+- Submit OCR-only v1 SQS messages directly to `heimdex-ocr-queue`.
+- Reset only the matching `drive_files` row for the target video:
+  `ocr_status='pending'`, `enrichment_state='pending'`, clear enrichment error,
+  clear lease fields.
+- Guard every submission by exact `org_id`, `video_id`, `drive_file.id`,
+  `processing_status='indexed'`, non-empty `keyframe_s3_prefix`, positive
+  Postgres `scene_count`, and existing OpenSearch scene docs.
+- Verify completion by all three signals:
+  Postgres `ocr_status='done'`, a `drive-ocr-worker` `ocr_completed` event,
+  and OpenSearch `ocr_char_count > 0` scene docs.
+
+First canary result:
+
+```text
+video_id: gd_fbd7b057d84d12ab
+drive_file_id: fc15fa43-04ba-4270-9523-440853bb0768
+queue message_id: e710d5db-cabd-4ca2-95f7-55da5454e20e
+worker event: ocr_completed
+manifest scene_count processed by worker: 329
+frames_processed: 300
+frames_with_text: 109
+total_ocr_chars: 9659
+ocr_engine_errors: 0
+Postgres: ocr_status=done, enrichment_state=done
+OpenSearch: ocr_nonempty=109, sample "잠시 후 시작합니다"
+```
+
+Important nuance:
+
+- Staging currently has duplicate scene docs for some videos across
+  `heimdex_scenes_v4` and `heimdex_scenes_v5`; validation must use
+  `ocr_char_count > 0`, not merely field existence, because empty OCR fields
+  may exist on both indices.
+- The screenshot video's Postgres `scene_count` is 110, while the S3 manifest
+  and OpenSearch showed more scenes. For this backfill path, the OCR worker
+  uses the S3 scene manifest and canonical keyframe keys, so this mismatch did
+  not prevent OCR enrichment. We should separately investigate stale
+  `drive_files.scene_count` after OCR backfill is complete.
+
+Next OCR backfill steps:
+
+1. Batch-submit only active indexed videos whose OpenSearch scenes have zero
+   or partial useful OCR.
+2. Keep Aircloud OCR worker running and monitor `heimdex-ocr-queue` until
+   visible and in-flight counts drain to zero.
+3. After drain, rerun OCR coverage and compare against the pre-backfill
+   baseline.
+4. Re-run overlay product enumeration on the priority livecommerce videos,
+   starting with `gd_fbd7b057d84d12ab`.
+
+Batch submission:
+
+```text
+2026-05-27:
+  selected: active indexed devorg videos with OpenSearch scene docs and
+            zero useful OCR (`ocr_char_count > 0` count == 0)
+  submitted_count: 81
+  queue: heimdex-ocr-queue
+  message shape: OCR-only v1 per-video `enrichment.job_created`
+  post-submit queue check: visible=80, in_flight=1, delayed=0
+  Aircloud OCR endpoint: RUNNING, replicas=1
+```
+
+The first batch intentionally excludes partial-OCR videos. Some partial
+coverage is expected because the OCR worker samples up to
+`DRIVE_OCR_MAX_FRAMES_PER_VIDEO=300`; rerunning those videos may not make them
+complete unless sampling policy changes.
+
+Monitoring note:
+
+```text
+Aircloud scale-up to 12 replicas caused reingest overload:
+  symptom: drive-ocr-worker ocr_failed at stage=reingest
+  examples: /internal/ingest/enrich returned 504 Gateway Timeout,
+            ReadTimeout after 300s, and a few 500 responses
+  impact observed: 18-19 failed OCR jobs while OCR extraction itself was
+                   otherwise producing text
+  mitigation applied: scaled OCR endpoint back down to 4 replicas
+  post-scale queue snapshot: visible=54, in_flight=4, delayed=0,
+                             failed=18, pending=58, done=22
+  follow-up: failures continued at 4 replicas, so endpoint was scaled to 1
+             replica; first stable snapshot visible=51, in_flight=1,
+             failed=24, pending=52, done=22
+  root cause confirmation: EC2 load average ~15 and `heimdex-api` at
+                           ~382% CPU while OpenSearch CPU stayed below 1%.
+                           The bottleneck is API-side enrich/re-embedding
+                           during `/internal/ingest/enrich`, not OCR detection.
+  action: stopped the Aircloud OCR endpoint to prevent additional messages
+          from being converted into `ocr_status=failed`.
+  post-stop snapshot: endpoint inactive, visible=50, in_flight=1,
+                      failed=25, pending=51, done=22
+  API recovery: recent API logs showed SQLAlchemy pool exhaustion
+                (`QueuePool limit of size 10 overflow 10 reached`), and normal
+                requests were returning 500. Restarted only the API container.
+                Health recovered and `heimdex-api` CPU dropped from ~380% to
+                <1%; queue remained paused with endpoint inactive and 51
+                visible messages.
+```
+
+Do not resume OCR draining with the current reingest behavior. Even one OCR
+replica can time out on large videos because `/internal/ingest/enrich`
+performs expensive API-side work. The failed jobs need an OCR-only v1 retry
+after the enrich path is made safe for bulk OCR backfill, or after we use a
+strictly throttled single-video manual retry with load monitoring.
+
+Implementation update:
+
+```text
+API:
+  added an OCR-only fast path in `SceneIngestService.enrich_scenes`
+  trigger: every scene carries only `ocr_text_raw` / `ocr_char_count`
+  still does: scene existence check, OCR normalization, partial OpenSearch
+              update, skipped-scene warning
+  skips: scene override DB lookup, E5 embedding recomputation, keyword/product
+         tag generation
+  log marker: `scene_enrich_ocr_only_completed`
+
+OCR worker:
+  reduced `/internal/ingest/enrich` batch size from 200 scenes to 25 scenes
+```
+
+Focused verification:
+
+```text
+services/api/.venv/bin/pytest services/api/tests/test_internal_enrich.py -q --tb=short
+  21 passed, 1 existing warning
+
+PYTHONPATH=../heimdex-worker-sdk/src python -m pytest \
+  services/drive-ocr-worker/tests/test_ocr_batching.py -q --tb=short
+  12 passed, 1 existing warning
+```
+
+Operational next step after deploy:
+
+1. Keep Aircloud OCR stopped during deploy.
+2. Deploy API + OCR worker code.
+3. Start OCR at 1 replica only.
+4. Watch for `scene_enrich_ocr_only_completed`, API CPU, and queue depth.
+5. Retry failed OCR rows only after queued pending rows drain without API
+   saturation.
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when

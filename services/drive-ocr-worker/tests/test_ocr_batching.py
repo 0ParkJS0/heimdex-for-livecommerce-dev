@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 src_dir = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from tasks.ocr import _safe_update_job_status, _post_enrich_to_api
+from tasks.ocr import ENRICH_BATCH_SIZE, _safe_update_job_status, _post_enrich_to_api
 
 
 def _make_settings(api_base="http://api:8000", api_key="test-key"):
@@ -79,12 +79,12 @@ class TestSafeUpdateJobStatus:
 class TestPostEnrichToApi:
     """Tests for _post_enrich_to_api function."""
 
-    def test_batches_at_200_scenes(self):
-        """450 scenes with OCR should result in 3 API calls (200 + 200 + 50)."""
+    def test_batches_at_25_scenes(self):
+        """450 scenes with OCR should result in 18 API calls at 25 per batch."""
         mock_requests = MagicMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"updated_count": 200}
+        mock_response.json.return_value = {"updated_count": ENRICH_BATCH_SIZE}
         mock_requests.post.return_value = mock_response
 
         original_import = __import__
@@ -112,16 +112,17 @@ class TestPostEnrichToApi:
                 scenes=scenes,
             )
 
-        assert mock_requests.post.call_count == 3
-        assert result["updated_count"] == 600  # 3 * 200
+        assert ENRICH_BATCH_SIZE == 25
+        assert mock_requests.post.call_count == 18
+        assert result["updated_count"] == 450
         assert result["video_id"] == "vid-1"
 
-    def test_single_batch_under_200(self):
-        """150 scenes with OCR should result in 1 API call."""
+    def test_multiple_small_batches(self):
+        """150 scenes with OCR should result in 6 API calls."""
         mock_requests = MagicMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"updated_count": 150}
+        mock_response.json.return_value = {"updated_count": ENRICH_BATCH_SIZE}
         mock_requests.post.return_value = mock_response
 
         original_import = __import__
@@ -148,15 +149,15 @@ class TestPostEnrichToApi:
                 scenes=scenes,
             )
 
-        assert mock_requests.post.call_count == 1
+        assert mock_requests.post.call_count == 6
         assert result["updated_count"] == 150
 
-    def test_exact_boundary_200(self):
-        """200 scenes with OCR should result in 1 API call (not 2)."""
+    def test_exact_boundary_25(self):
+        """25 scenes with OCR should result in 1 API call (not 2)."""
         mock_requests = MagicMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"updated_count": 200}
+        mock_response.json.return_value = {"updated_count": ENRICH_BATCH_SIZE}
         mock_requests.post.return_value = mock_response
 
         original_import = __import__
@@ -172,7 +173,7 @@ class TestPostEnrichToApi:
                 "ocr_text_raw": f"ocr text {i}",
                 "ocr_char_count": 10,
             }
-            for i in range(200)
+            for i in range(ENRICH_BATCH_SIZE)
         ]
 
         with patch("importlib.import_module", side_effect=patched_import):
@@ -184,7 +185,7 @@ class TestPostEnrichToApi:
             )
 
         assert mock_requests.post.call_count == 1
-        assert result["updated_count"] == 200
+        assert result["updated_count"] == ENRICH_BATCH_SIZE
 
     def test_filters_scenes_without_ocr_text(self):
         """Scenes without ocr_text_raw should be filtered out."""
