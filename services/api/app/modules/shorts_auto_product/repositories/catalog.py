@@ -80,9 +80,7 @@ class ProductCatalogRepository:
             org_id=org_id, video_id=video_id,
         )
         if overlay_parent_enabled:
-            overlay_rows = [r for r in rows if r.enumeration_source == "overlay"]
-            if overlay_rows:
-                return overlay_rows
+            return [r for r in rows if r.enumeration_source == "overlay"]
         return rows
 
     async def _list_active_source_ordered(

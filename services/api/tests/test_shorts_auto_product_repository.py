@@ -12,6 +12,7 @@ in a separate file marked ``integration``.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -720,6 +721,60 @@ class TestInvalidateVideoCatalogClearsConsolidationMarkers:
         marker_sql = _compile(session.execute.await_args_list[1].args[0])
         assert str(org_id) in marker_sql
         assert str(video_id) in marker_sql
+
+
+class TestVisibleProductSelection:
+    @pytest.mark.asyncio
+    async def test_overlay_parent_returns_only_overlay_rows(self):
+        repo = ProductCatalogRepository(AsyncMock())
+        overlay = SimpleNamespace(enumeration_source="overlay")
+        stt = SimpleNamespace(enumeration_source="stt")
+        vision = SimpleNamespace(enumeration_source="vision")
+        repo._list_active_source_ordered = AsyncMock(  # type: ignore[method-assign]
+            return_value=[overlay, stt, vision],
+        )
+
+        rows = await repo.list_visible_for_product_selection(
+            org_id=uuid4(),
+            video_id=uuid4(),
+            overlay_parent_enabled=True,
+        )
+
+        assert rows == [overlay]
+
+    @pytest.mark.asyncio
+    async def test_overlay_parent_returns_empty_when_overlay_has_no_rows(self):
+        repo = ProductCatalogRepository(AsyncMock())
+        stt = SimpleNamespace(enumeration_source="stt")
+        vision = SimpleNamespace(enumeration_source="vision")
+        repo._list_active_source_ordered = AsyncMock(  # type: ignore[method-assign]
+            return_value=[stt, vision],
+        )
+
+        rows = await repo.list_visible_for_product_selection(
+            org_id=uuid4(),
+            video_id=uuid4(),
+            overlay_parent_enabled=True,
+        )
+
+        assert rows == []
+
+    @pytest.mark.asyncio
+    async def test_non_overlay_parent_preserves_all_rows(self):
+        repo = ProductCatalogRepository(AsyncMock())
+        stt = SimpleNamespace(enumeration_source="stt")
+        vision = SimpleNamespace(enumeration_source="vision")
+        repo._list_active_source_ordered = AsyncMock(  # type: ignore[method-assign]
+            return_value=[stt, vision],
+        )
+
+        rows = await repo.list_visible_for_product_selection(
+            org_id=uuid4(),
+            video_id=uuid4(),
+            overlay_parent_enabled=False,
+        )
+
+        assert rows == [stt, vision]
 
 
 class TestPromoteLatestEnumerationDoneStt:
