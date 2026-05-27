@@ -360,12 +360,16 @@ def schedule_stt_enumeration_task(
     org_id: UUID,
     video_db_id: UUID,
     video_drive_id: str | None = None,
+    mode: str = "augment",
 ) -> None:
     """Fire-and-forget scheduler. Safe to call from any async handler.
 
-    The scan endpoint calls this AFTER the SQS publish to the vision
-    worker; STT runs on the same event loop but outside the request
-    lifecycle. Failures do not affect the HTTP response.
+    Called from the vision-worker callback path
+    (:mod:`internal_router`) — never from the scan endpoint — so STT
+    runs strictly AFTER vision has reached a terminal state. This
+    eliminates the lease-revocation race that historically caused
+    vision's catalog rows (with crops) to be silently discarded when
+    STT raced ahead and called :meth:`promote_latest_enumeration_done_stt`.
 
     Args:
         video_db_id: ``drive_files.id`` UUID — required.
@@ -373,10 +377,19 @@ def schedule_stt_enumeration_task(
             background task resolves it from the ``drive_files`` row
             inside its own session. Pass it explicitly when the caller
             already has it loaded to save a query.
+        mode: ``"augment"`` (default) — vision succeeded and already
+            promoted the job to ``ENUMERATION_DONE``; STT just inserts
+            more rows. ``"recover"`` — vision FAILED; STT inserts rows
+            and calls :meth:`promote_latest_enumeration_done_stt` to
+            lift the job from ``failed`` to ``enumeration_done``. The
+            mode parameter is what keeps STT's promote out of any
+            in-flight vision lease window — call sites declare intent;
+            the runner enforces it.
 
     No-op when:
       - ``auto_shorts_product_v2_stt_enum_enabled`` is False
       - ``openai_api_key`` is empty (the LLM call would fail anyway)
+      - ``mode`` is not one of ``"augment"`` / ``"recover"`` (defensive)
 
     The task constructs its OWN session, OS client, and OpenAI client
     — the request session must NOT be shared with a task that outlives
@@ -384,6 +397,12 @@ def schedule_stt_enumeration_task(
 
     Mirrors :func:`image_caption.service.schedule_image_caption_task`.
     """
+    if mode not in {"augment", "recover"}:
+        logger.warning(
+            "stt_enum_skipped_bad_mode",
+            extra={"video_id": video_drive_id, "mode": mode},
+        )
+        return
     if not getattr(settings, "auto_shorts_product_v2_stt_enum_enabled", False):
         return
     api_key = getattr(settings, "openai_api_key", "") or ""
@@ -448,15 +467,29 @@ def schedule_stt_enumeration_task(
                         enumerator=enumerator,
                     )
                     if inserted:
-                        from app.modules.shorts_auto_product.repositories.job import (
-                            ProductScanJobRepository,
-                        )
-                        await ProductScanJobRepository(
-                            session
-                        ).promote_latest_enumeration_done_stt(
-                            org_id=org_id,
-                            video_id=video_db_id,
-                        )
+                        if mode == "recover":
+                            # Vision failed → STT is the only source
+                            # for this scan, so we lift the job from
+                            # ``failed`` to ``enumeration_done`` so the
+                            # wizard exits the loading state. The
+                            # repository method's tightened WHERE
+                            # ``stage = SCAN_STAGE_FAILED`` guards
+                            # against any caller invoking ``recover``
+                            # mode while vision is still in flight
+                            # (would no-op safely instead of stomping
+                            # the lease).
+                            from app.modules.shorts_auto_product.repositories.job import (
+                                ProductScanJobRepository,
+                            )
+                            await ProductScanJobRepository(
+                                session
+                            ).promote_latest_enumeration_done_stt(
+                                org_id=org_id,
+                                video_id=video_db_id,
+                            )
+                        # Augment mode: vision's complete_enumeration
+                        # already advanced the stage; we only need to
+                        # commit our inserts.
                         await session.commit()
                         from app.modules.shorts_auto_product.aliases.auto_hook import (
                             schedule_alias_generation,

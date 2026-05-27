@@ -396,23 +396,17 @@ class ProductScanService:
                 detail="failed to enqueue scan; please retry",
             )
 
-        # v0.16.0 — fan out to the STT-first enumeration path. Runs
-        # in-process on the same event loop, OUTSIDE the request
-        # lifecycle. The function is a no-op when the feature flag
-        # is off or the OpenAI key isn't configured. Vision still
-        # owns the ``enumerating → enumeration_done`` job lifecycle
-        # transition; STT only writes additional catalog rows.
-        # Plan: .claude/plans/shorts-auto-product-stt-enum-2026-05-06.md
-        from app.modules.shorts_auto_product.enumerate_stt.service import (
-            schedule_stt_enumeration_task,
-        )
-        schedule_stt_enumeration_task(
-            settings=self.settings,
-            org_id=org_id,
-            video_db_id=video_id,
-            video_drive_id=None,  # resolved inside the task
-        )
-
+        # STT enumeration is NOT scheduled from this path. The
+        # original 2026-05-06 plan ran STT alongside vision here, but
+        # the parallel scheduling raced :meth:`promote_latest_enumeration_done_stt`
+        # against the in-flight vision worker's lease — STT would
+        # finish first (one LLM call on the transcript, ~10s) and
+        # null out the lease, causing vision's later complete_enumeration
+        # to no-op and silently discard the vision-enumerated rows
+        # (with crops). STT is now invoked from the vision callback
+        # path (``internal_router.complete`` augment + ``.fail``
+        # recover), so it always runs AFTER vision is in a terminal
+        # state. See the ``stt-vision-race`` fix PR.
         logger.info(
             "product_v2_scan_enqueued",
             job_id=str(job.id),
@@ -634,25 +628,16 @@ class ProductScanService:
                 detail="failed to enqueue rescan; please retry",
             )
 
-        # Mirror the STT trigger from ``enqueue_scan``. Without this,
-        # rescan invalidates ALL active catalog rows (vision + overlay +
-        # stt) via ``invalidate_video_catalog`` above but only re-runs
-        # the vision SQS worker — leaving STT-source rows permanently
-        # zeroed after the first wizard "force rescan" click. The
-        # 2026-05-06 STT-first plan ships STT alongside vision; this
-        # call closes the rescan-path gap left by the original PR.
-        # Function is a no-op when the feature flag is off OR the
-        # OpenAI key is missing; safe to call unconditionally.
-        from app.modules.shorts_auto_product.enumerate_stt.service import (
-            schedule_stt_enumeration_task,
-        )
-        schedule_stt_enumeration_task(
-            settings=self.settings,
-            org_id=org_id,
-            video_db_id=video_id,
-            video_drive_id=None,  # resolved inside the task
-        )
-
+        # STT enumeration is NOT scheduled from this path. It is
+        # triggered from the vision worker's ``/complete`` (augment)
+        # and ``/fail`` (recover) callbacks in :mod:`internal_router`
+        # so it never races the in-flight vision lease. PR #275
+        # originally added the call here but surfaced a pre-existing
+        # race in :meth:`promote_latest_enumeration_done_stt` (it set
+        # ``claimed_by=None`` atomically, revoking vision's lease →
+        # vision's complete_enumeration matched 0 rows → vision's
+        # catalog rows with crops were silently discarded). See the
+        # ``stt-vision-race`` fix PR + ``[[feedback-scan-paths-must-mirror-fanout-calls]]``.
         return RescanResponse(job_id=job.id, invalidated_count=invalidated)
 
     # ------------------------------------------------------------------

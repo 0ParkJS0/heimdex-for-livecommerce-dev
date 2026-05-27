@@ -757,6 +757,42 @@ class TestPromoteLatestEnumerationDoneStt:
         assert str(org_id) in sql
         assert str(video_id) in sql
 
+    # ------------------------------------------------------------------
+    # stt-vision-race regression — the WHERE clause MUST gate on
+    # ``stage = 'failed'`` (defense in depth).
+    #
+    # Before the fix, the WHERE was ``stage != 'enumeration_done'``,
+    # which also matched ``queued`` and ``enumerating`` jobs and would
+    # atomically null ``claimed_by`` on an in-flight vision worker's
+    # lease — causing vision's complete_enumeration to silently match
+    # 0 rows and discard the vision-enumerated catalog rows (with
+    # crops). The tightened WHERE makes ``recover``-mode STT a no-op
+    # when called against any non-failed stage, so a buggy caller can't
+    # stomp vision.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_where_clause_pins_stage_failed_for_lease_safety(
+        self, repo, session,
+    ):
+        session.execute = AsyncMock(
+            return_value=_make_update_result(None),
+        )
+        await repo.promote_latest_enumeration_done_stt(
+            org_id=uuid4(), video_id=uuid4(),
+        )
+        sql = _compile(session.execute.await_args.args[0])
+        # The WHERE must include the failed-stage guard.
+        assert "stage" in sql
+        assert "'failed'" in sql or "= 'failed'" in sql
+        # And MUST NOT include the historical loose guard. Drift back
+        # to this would re-introduce the lease-revocation race the
+        # stt-vision-race fix closed.
+        assert "!=" not in sql or "enumeration_done" not in sql.split("!=", 1)[1] if "!=" in sql else True
+        # Cleaner check: the literal "!= 'enumeration_done'" must NOT
+        # appear (the historical guard's exact SQL).
+        assert "!= 'enumeration_done'" not in sql.replace("!=", "!=").lower()
+
 
 # ---------- Full-STT shared planner (migration 060) ----------
 

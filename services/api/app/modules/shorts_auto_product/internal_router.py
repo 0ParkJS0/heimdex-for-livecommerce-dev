@@ -396,6 +396,27 @@ async def complete(
             org_id=job.org_id,
             video_db_id=job.video_id,
         )
+        # STT enumeration (augment mode). The scan endpoints used to
+        # schedule this in parallel with the vision SQS publish, but
+        # STT raced ahead and revoked the vision lease via
+        # ``promote_latest_enumeration_done_stt``. Now STT fires only
+        # after vision is in a terminal state — here, augmenting the
+        # already-complete vision catalog with STT-source rows the
+        # transcript surfaces (operators see them on the next visit
+        # since the wizard polling stops on scan_status=complete).
+        # ``mode="augment"`` makes the runner skip the promote call;
+        # vision already promoted via ``complete_enumeration`` above.
+        # No-op when the flag is off / no OpenAI key.
+        from app.modules.shorts_auto_product.enumerate_stt.service import (
+            schedule_stt_enumeration_task,
+        )
+        schedule_stt_enumeration_task(
+            settings=_settings,
+            org_id=job.org_id,
+            video_db_id=job.video_id,
+            video_drive_id=None,
+            mode="augment",
+        )
     else:
         # ``legacy_tracking`` derives catalog_entry_id from the job row;
         # ``scan_order`` reads it from each appearance's payload.
@@ -588,6 +609,7 @@ async def fail(
     body: _FailRequest,
     _token: Annotated[str, Depends(verify_internal_token)],
     db: Annotated[AsyncSession, Depends(get_db_session)],
+    _settings: Annotated[Settings, Depends(get_settings)],
 ) -> None:
     job_repo = ProductScanJobRepository(db)
     cost_repo = ProductScanDailyCostRepository(db)
@@ -616,6 +638,26 @@ async def fail(
             "error_message": body.error_message[:120],
         },
     )
+    # STT enumeration (recover mode) ONLY when an enumeration job (not
+    # render_child / scan_order / etc.) failed. Vision failed → STT is
+    # the user's last chance to get product candidates; ``recover``
+    # mode lets the runner call promote_latest_enumeration_done_stt
+    # which lifts the job from ``failed`` to ``enumeration_done``.
+    # The repo method's WHERE ``stage = SCAN_STAGE_FAILED`` is the
+    # defense-in-depth guard against firing this against an in-flight
+    # job (mode-flag could be wrong; the WHERE catches it).
+    from app.modules.shorts_auto_product.models import SCAN_MODE_ENUMERATE
+    if failed.mode == SCAN_MODE_ENUMERATE and failed.catalog_entry_id is None:
+        from app.modules.shorts_auto_product.enumerate_stt.service import (
+            schedule_stt_enumeration_task,
+        )
+        schedule_stt_enumeration_task(
+            settings=_settings,
+            org_id=failed.org_id,
+            video_db_id=failed.video_id,
+            video_drive_id=None,
+            mode="recover",
+        )
 
 
 # ---------- catalog entry resource (Phase 3c-B) ----------

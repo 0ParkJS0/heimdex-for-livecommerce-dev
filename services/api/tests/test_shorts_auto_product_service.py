@@ -276,25 +276,29 @@ async def test_rescan_bypasses_completion_guard():
     assert resp.job_id == fake_job.id
 
 
-# ---------- STT-enum fan-out (mirror of vision SQS publish)
+# ---------- STT-enum NOT scheduled from scan endpoints ----------
 #
-# The 2026-05-06 STT-first plan ships STT alongside vision. The
-# original PR wired ``schedule_stt_enumeration_task`` into
-# ``enqueue_scan`` but missed ``rescan`` — so every wizard "force
-# rescan" click invalidated the existing STT-source catalog rows
-# (via ``invalidate_video_catalog``) and never re-populated them.
-# These three tests pin the contract: STT enumeration is fanned
-# out from BOTH scan entry points, and is skipped only when the
-# vision SQS publish itself fails (no point running STT on a job
-# the operator will never see results from).
+# PR #275 wired ``schedule_stt_enumeration_task`` into ``rescan`` to
+# match ``enqueue_scan``. Both were then removed in the
+# stt-vision-race fix: the parallel STT call was racing the in-flight
+# vision worker's lease via ``promote_latest_enumeration_done_stt``
+# (the function nulled ``claimed_by`` atomically → vision's later
+# complete_enumeration matched 0 rows → vision's catalog rows with
+# crops were silently discarded). STT now fires ONLY from the vision
+# callback path in :mod:`internal_router` (augment after
+# /complete, recover after /fail), so it always runs AFTER vision has
+# reached a terminal state.
+#
+# These two tests pin the regression: scan endpoints must NOT
+# schedule STT. They guard against accidental reintroduction.
 
 
 @pytest.mark.asyncio
-async def test_rescan_fires_stt_enumeration_after_sqs_publish(monkeypatch):
-    """Regression for the rescan-doesn't-fan-out-STT gap. ``rescan``
-    must call ``schedule_stt_enumeration_task`` with the same args as
-    ``enqueue_scan`` — same org_id, same video_db_id, no pre-resolved
-    drive_id (the task resolves it itself)."""
+async def test_rescan_does_not_schedule_stt_enumeration(monkeypatch):
+    """Regression for the stt-vision-race fix: rescan must NEVER
+    call ``schedule_stt_enumeration_task`` directly. STT is owned by
+    the vision callback path (:mod:`internal_router`) so it runs
+    strictly after vision is terminal."""
     svc = _build_service(_settings())
     svc.catalog_repo.invalidate_video_catalog = AsyncMock(return_value=0)
     fake_job = MagicMock(id=uuid4())
@@ -302,9 +306,10 @@ async def test_rescan_fires_stt_enumeration_after_sqs_publish(monkeypatch):
     import app.sqs_producer as sqs_producer
     sqs_producer.publish_product_enumerate_job = MagicMock()
 
-    # Patch at the SOURCE module (the rescan body does a function-local
-    # import; ``sys.modules`` caching means patching here is what the
-    # import resolves to at call time).
+    # The function is imported function-locally in service.py via
+    # ``from app.modules.shorts_auto_product.enumerate_stt.service
+    # import schedule_stt_enumeration_task``. Patch the SOURCE module
+    # so any (forbidden) call from rescan would resolve to this mock.
     stt_mock = MagicMock()
     monkeypatch.setattr(
         "app.modules.shorts_auto_product.enumerate_stt.service."
@@ -312,61 +317,19 @@ async def test_rescan_fires_stt_enumeration_after_sqs_publish(monkeypatch):
         stt_mock,
     )
 
-    org_id, video_id, user_id = uuid4(), uuid4(), uuid4()
     await svc.rescan(
-        org_id=org_id, video_id=video_id, user_id=user_id,
+        org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
         duration_preset_sec=60,
     )
 
-    stt_mock.assert_called_once()
-    kwargs = stt_mock.call_args.kwargs
-    assert kwargs["org_id"] == org_id
-    assert kwargs["video_db_id"] == video_id
-    assert kwargs["video_drive_id"] is None
-    # Same Settings instance flows through — STT scheduler reads its
-    # own flags off this object, so passing the wrong one would silently
-    # disable the fan-out.
-    assert kwargs["settings"] is svc.settings
-
-
-@pytest.mark.asyncio
-async def test_rescan_skips_stt_when_sqs_publish_fails(monkeypatch):
-    """When the vision SQS publish raises, ``rescan`` 503s before
-    reaching the STT scheduler. Don't burn an LLM call on a job the
-    operator will never see results from."""
-    svc = _build_service(_settings())
-    svc.catalog_repo.invalidate_video_catalog = AsyncMock(return_value=0)
-    fake_job = MagicMock(id=uuid4())
-    svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
-    svc.job_repo.fail = AsyncMock()
-
-    import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock(
-        side_effect=RuntimeError("sqs unreachable"),
-    )
-
-    stt_mock = MagicMock()
-    monkeypatch.setattr(
-        "app.modules.shorts_auto_product.enumerate_stt.service."
-        "schedule_stt_enumeration_task",
-        stt_mock,
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.rescan(
-            org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
-            duration_preset_sec=60,
-        )
-    assert exc.value.status_code == 503
     stt_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_enqueue_scan_still_fires_stt_enumeration(monkeypatch):
-    """Regression guard for the existing fan-out path that this PR
-    intentionally leaves unchanged. Pins the dual-path contract so a
-    future refactor doesn't silently move the call out of one entry
-    point while leaving the test on the other."""
+async def test_enqueue_scan_does_not_schedule_stt_enumeration(monkeypatch):
+    """Regression for the stt-vision-race fix. ``enqueue_scan`` was
+    the original site that scheduled STT in parallel with the vision
+    SQS publish. Now the call lives in the vision callback path."""
     svc = _build_service(_settings())
     fake_job = MagicMock(id=uuid4())
     svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
@@ -380,17 +343,12 @@ async def test_enqueue_scan_still_fires_stt_enumeration(monkeypatch):
         stt_mock,
     )
 
-    org_id, video_id, user_id = uuid4(), uuid4(), uuid4()
     await svc.enqueue_scan(
-        org_id=org_id, video_id=video_id, user_id=user_id,
+        org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
         duration_preset_sec=60,
     )
 
-    stt_mock.assert_called_once()
-    kwargs = stt_mock.call_args.kwargs
-    assert kwargs["org_id"] == org_id
-    assert kwargs["video_db_id"] == video_id
-    assert kwargs["settings"] is svc.settings
+    stt_mock.assert_not_called()
 
 
 # ---------- catalog entry not found ----------

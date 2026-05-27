@@ -610,22 +610,37 @@ class ProductScanJobRepository:
         org_id: UUID,
         video_id: UUID,
     ) -> ProductScanJob | None:
-        """STT-path enumeration completion.
+        """STT-path enumeration completion — RECOVERY ONLY.
 
-        Vision owns complete_enumeration (internal_router.py:380,
-        vision block only), so STT-only flows never reach
-        ENUMERATION_DONE and the enqueue_scan re-enumeration freeze
-        never engages — the catalog grows on every revisit. This
-        promotes the SAME job find_latest_enumeration_for_video (the
-        P2 guard's source) would return.
+        Lifts the latest enumeration job from ``stage='failed'`` to
+        ``ENUMERATION_DONE`` so a vision-failed scan can still surface
+        STT-source catalog rows in the wizard (the user sees
+        crop-less labels rather than a permanent failure screen).
 
-        Claimless: STT never holds the worker lease, so it cannot go
-        through _complete (WHERE asserts claimed_by). Setting
-        claimed_by=None atomically revokes any in-flight vision lease,
-        so a later vision complete/fail matches 0 rows and no-ops.
-        Eligible from any non-done stage incl. 'failed' (vision
-        no_products_detected) — that recovery is the point. Idempotent
-        via the stage != ENUMERATION_DONE guard.
+        **Critical WHERE guard**: matches ONLY when stage is
+        ``SCAN_STAGE_FAILED``. This is the defense-in-depth guard
+        against the historical lease-revocation race — earlier
+        versions matched ``stage != ENUMERATION_DONE`` which would
+        also hit ``queued`` / ``enumerating`` jobs and atomically
+        revoke the in-flight vision worker's lease (``claimed_by=None``)
+        → vision's later complete_enumeration matched 0 rows + the
+        vision-enumerated catalog rows were silently discarded.
+        Callers should pass ``mode="recover"`` to
+        :func:`enumerate_stt.service.schedule_stt_enumeration_task`
+        only after vision has reached the ``failed`` terminal state.
+        The WHERE here makes a wrong call site a safe no-op rather
+        than data loss.
+
+        Vision's own ``complete_enumeration`` owns the
+        ``enumerating → ENUMERATION_DONE`` transition; this method is
+        strictly for the failed-vision recovery path.
+
+        Claimless: STT never holds the worker lease, so when stage is
+        ``failed`` ``claimed_by`` is already None and the explicit
+        ``claimed_by=None`` set below is a no-op for the failed case
+        — the line stays in the UPDATE for documentation + to keep
+        the row in a clean state if a future fail-path stage ever
+        carried a residual lease pointer.
         """
         now = datetime.now(timezone.utc)
         latest_id = (
@@ -643,7 +658,7 @@ class ProductScanJobRepository:
             update(ProductScanJob)
             .where(
                 ProductScanJob.id == latest_id,
-                ProductScanJob.stage != SCAN_STAGE_ENUMERATION_DONE,
+                ProductScanJob.stage == SCAN_STAGE_FAILED,
             )
             .values(
                 stage=SCAN_STAGE_ENUMERATION_DONE,
