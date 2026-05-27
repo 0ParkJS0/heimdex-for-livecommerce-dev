@@ -700,6 +700,14 @@ class ProductScanJob(Base, UUIDMixin):
         # sync so ``alembic --autogenerate`` doesn't propose redundant
         # DROP/CREATE pairs on a future revision.
         CheckConstraint(
+            "((mode IN ('scan_order', 'render_child') "
+            "AND duration_preset_sec >= 10 "
+            "AND duration_preset_sec <= 120) "
+            "OR (mode NOT IN ('scan_order', 'render_child') "
+            "AND duration_preset_sec IN (30, 60, 90)))",
+            name="product_scan_jobs_duration_preset_sec_check",
+        ),
+        CheckConstraint(
             "mode IN ('enumerate','scan_order','render_child')",
             name="ck_psj_mode",
         ),

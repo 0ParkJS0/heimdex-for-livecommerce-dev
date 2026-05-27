@@ -26,6 +26,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.modules.shorts_auto_product.models import (
+    ProductScanJob,
     SCAN_MODE_RENDER_CHILD,
     SCAN_MODE_SCAN_ORDER,
     SCAN_STAGE_DONE,
@@ -339,6 +340,25 @@ def test_validate_aggregate_cap_under_limit_passes():
     """count=15 × length=120 = 1800 — exactly at the cap, accepted."""
     body = _scan_order_body(requested_count=15, length_seconds=120)
     _validate_scan_order_inputs(body=body)
+
+
+def test_duration_preset_db_constraint_allows_wizard_120s_rows():
+    """Wizard rows mirror length_seconds into duration_preset_sec.
+
+    Keep the DB CHECK aligned with ScanOrderCreateRequest, otherwise a valid
+    120s wizard request passes Pydantic and then fails at INSERT.
+    """
+    constraint = next(
+        c
+        for c in ProductScanJob.__table__.constraints
+        if c.name
+        and c.name.endswith("product_scan_jobs_duration_preset_sec_check")
+    )
+    sql = str(constraint.sqltext)
+    assert "'scan_order'" in sql
+    assert "'render_child'" in sql
+    assert "duration_preset_sec <= 120" in sql
+    assert "duration_preset_sec IN (30, 60, 90)" in sql
 
 
 def test_validate_aggregate_cap_over_limit_422():
