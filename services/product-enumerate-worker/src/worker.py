@@ -23,9 +23,12 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import os
 import signal
+import socket
 import sys
 import threading
+import uuid
 
 from heimdex_worker_sdk import emit_event
 
@@ -48,6 +51,19 @@ def _init_semaphore(max_concurrent: int) -> threading.Semaphore:
     if _semaphore is None:
         _semaphore = threading.Semaphore(max_concurrent)
     return _semaphore
+
+
+def _runtime_worker_id(configured_worker_id: str) -> str:
+    """Return a per-process lease owner id.
+
+    The configured value is a service label. The API lease guard needs a
+    concrete process/container identity; otherwise an old Aircloud
+    container and a restarted replacement can both use
+    ``product-enumerate-worker-local`` and a stale completion can pass
+    the ``claimed_by`` check after the replacement reclaims the job.
+    """
+    host = socket.gethostname() or "unknown-host"
+    return f"{configured_worker_id}-{host}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 
 def _gpu_available() -> bool:
@@ -113,6 +129,7 @@ def _make_callback(settings: WorkerSettings, vlm_client: OpenAIVlmClient):
 
 def main() -> None:
     settings = WorkerSettings()
+    settings.worker_id = _runtime_worker_id(settings.worker_id)
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -155,6 +172,7 @@ def main() -> None:
 
     log.info(
         "enumerate_worker_booting",
+        worker_id=settings.worker_id,
         gpu=gpu_available,
         siglip2_model=settings.siglip2_model_id,
         owlv2_model=settings.owlv2_model_id,

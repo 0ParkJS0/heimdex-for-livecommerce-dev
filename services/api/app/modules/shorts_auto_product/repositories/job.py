@@ -218,14 +218,19 @@ class ProductScanJobRepository:
         grace_seconds: int = LEASE_RECLAIM_GRACE_SECONDS,
     ) -> ProductScanJob | None:
         """Atomically transition queued → ``next_stage``, OR re-claim
-        an expired-lease assembling/rendering render_child.
+        an expired lease.
 
         PR 3 (self-healing runner) widened this from "queued only" to
         "queued OR (assembling/rendering with lease expired beyond
-        grace)". The expired-lease branch only matches the
-        render_child-side stages, so SAM2 worker callers
-        (``next_stage = enumerating | tracking``) keep their original
-        queued-only semantics unchanged.
+        grace)". Product-enumerate/track SQS workers also need a reclaim
+        branch: Aircloud can stop a container after it has claimed a job
+        but before it completes. SQS then redelivers the message after
+        its visibility timeout; if the API still only accepts ``queued``
+        rows, that redelivery gets 409/acked and the job is stranded.
+        For SQS-owned enumerating/tracking stages we allow reclaim as
+        soon as the API lease is expired. The worker process id must be
+        unique per container so a stale process cannot complete after a
+        different worker has reclaimed the job.
 
         ``started_at`` is preserved on re-claim via a CASE expression
         so the runner can distinguish re-claims from fresh claims
@@ -262,6 +267,13 @@ class ProductScanJobRepository:
                             SCAN_STAGE_RENDERING,
                         ]),
                         ProductScanJob.lease_expires_at < cutoff,
+                    ),
+                    and_(
+                        ProductScanJob.stage.in_([
+                            SCAN_STAGE_ENUMERATING,
+                            SCAN_STAGE_TRACKING,
+                        ]),
+                        ProductScanJob.lease_expires_at <= now,
                     ),
                 ),
             )

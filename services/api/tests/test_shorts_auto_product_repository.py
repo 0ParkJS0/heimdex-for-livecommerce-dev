@@ -393,9 +393,11 @@ class TestFindClaimableRenderChildren:
 
 class TestClaimReClaim:
     """PR 3 widened claim() to accept queued OR expired-lease
-    assembling/rendering. started_at is preserved on re-claim via
-    a CASE expression so the runner can distinguish re-claims from
-    fresh claims (started_at < claimed_at)."""
+    assembling/rendering. Product-enumerate/track SQS jobs are also
+    reclaimable once their API lease expires so an Aircloud sleep/restart
+    cannot strand an ``enumerating`` row after SQS redelivery. started_at
+    is preserved on re-claim via a CASE expression so the runner can
+    distinguish re-claims from fresh claims (started_at < claimed_at)."""
 
     @pytest.mark.asyncio
     async def test_rejects_invalid_next_stage(self, repo, session):
@@ -446,6 +448,31 @@ class TestClaimReClaim:
         assert "'rendering'" in sql
         assert "lease_expires_at" in sql, (
             f"Re-claim WHERE must guard on lease_expires_at:\n{sql}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_where_clause_accepts_expired_enumeration_branch(
+        self, repo, session,
+    ):
+        """SQS redelivery for product enumeration must be able to
+        reclaim an expired ``enumerating`` row. Otherwise a stopped
+        Aircloud container causes the redelivered message to 409/ack
+        and the job remains stuck forever."""
+        result = MagicMock()
+        result.scalar_one_or_none = MagicMock(return_value=None)
+        session.execute = AsyncMock(return_value=result)
+
+        await repo.claim(
+            job_id=uuid4(),
+            claimed_by="test",
+            lease_seconds=300,
+            next_stage="enumerating",
+        )
+        sql = _compile(session.execute.await_args.args[0])
+        assert "'enumerating'" in sql
+        assert "'tracking'" in sql
+        assert "lease_expires_at" in sql, (
+            f"Enumeration re-claim WHERE must guard on lease_expires_at:\n{sql}"
         )
 
     @pytest.mark.asyncio

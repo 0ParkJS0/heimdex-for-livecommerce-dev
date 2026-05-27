@@ -1119,6 +1119,49 @@ Overlay pipeline:
   clusters, accepted products, and returned products.
 ```
 
+Staging follow-up after GPU image deploy:
+
+```text
+Old Aircloud 409:
+  job_id: 6305ab7d-4723-4e85-9c83-120977c3ec45
+  log time: 2026-05-27 00:58:53 UTC
+  DB state: enumeration_done at 2026-05-27 00:58:52.677862 UTC
+
+  Conclusion: this 409 was a duplicate/stale SQS delivery after the job had
+  already completed. The worker correctly acked it as a no-op; it was not the
+  publish-before-commit race.
+
+Current post-fix staging rescan:
+  job_id: 273aa001-d72c-4ba9-98f5-b547250fcd15
+  SQS message_id: 19fcde9c-6351-4987-a041-6145c012d4f9
+  claim: succeeded immediately
+  progress: Reading overlay 1/7
+  last_heartbeat_at: 2026-05-27 09:23:40 UTC
+  lease_expires_at: 2026-05-27 09:33:40 UTC
+  queue: ApproximateNumberOfMessagesNotVisible=1
+
+  Conclusion: the commit-before-publish fix worked. The remaining issue is
+  resiliency when Aircloud stops or sleeps after claim. The current API claim
+  logic only allows fresh queued claims and expired render-child reclaims; it
+  does not let a redelivered SQS message reclaim an expired enumerating job.
+```
+
+Resiliency fix added:
+
+```text
+API:
+  ProductScanJobRepository.claim() now allows expired-lease reclaim for
+  enumerating/tracking stages as well as the existing render-child
+  assembling/rendering stages. This lets a redelivered SQS product-enumerate
+  message recover a job if Aircloud stops after claiming it.
+
+Worker:
+  product-enumerate-worker now expands the configured worker_id into a
+  per-process runtime id using hostname, pid, and a random suffix. This keeps
+  the claimed_by lease guard meaningful after Aircloud restarts: a stale
+  process cannot complete a job after another process has reclaimed it.
+```
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when
