@@ -184,6 +184,9 @@ export function usePlaybackSync({
               videoRef.current.load();
             }
             videoRef.current.currentTime = firstClip.trimStartMs / 1000;
+            videoRef.current.play().catch(() => {
+              dispatchPlaybackEvent({ kind: "HARD_PAUSE" });
+            });
           }
           lastClipIndexRef.current = 0;
           animFrameRef.current = requestAnimationFrame(tick);
