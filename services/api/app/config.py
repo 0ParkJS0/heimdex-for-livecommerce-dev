@@ -631,7 +631,9 @@ class Settings(BaseSettings):
     # Prompt version stamp — bumping forces a re-consolidation pass
     # on the next scan even when the catalog set hasn't changed.
     # Goldens-eval gate, same shape as the STT enum prompt version.
-    auto_shorts_product_v2_consolidate_prompt_version: str = "v1.0"
+    # Must stay in lockstep with
+    # ``llm_consolidator._DEFAULT_PROMPT_VERSION``.
+    auto_shorts_product_v2_consolidate_prompt_version: str = "v2.1-stt-cross-reference"
     # STT-grounded consolidation. When ON, the orchestrator builds a
     # ``host_spoken_terms`` anchor (the union of ``llm_label`` and
     # ``spoken_aliases`` from active ``enumeration_source='stt'``

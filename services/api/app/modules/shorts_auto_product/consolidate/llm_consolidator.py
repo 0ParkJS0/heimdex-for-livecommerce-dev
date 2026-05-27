@@ -71,7 +71,18 @@ _DEFAULT_RELABEL_JACCARD = 0.4
 # relabel-rule changes; service.py overrides via the
 # ``auto_shorts_product_v2_consolidate_prompt_version`` setting when
 # the org needs to pin an older version.
-_DEFAULT_PROMPT_VERSION = "v2.0-stt-grounded"
+#
+# v2.1-stt-cross-reference (2026-05-27): tightened the
+# ``unspoken_visual`` instruction to require an EXPLICIT cross-source
+# substring check (strip container suffixes from the vision label →
+# substring against every STT row's llm_label + spoken_aliases →
+# MERGE if any match) BEFORE rejecting a vision row as unspoken. Fixes
+# the on-staging case where vision '포기김치 봉지' was rejected even
+# though STT '일상행복 포기김치 10kg' clearly referenced the same
+# product, causing the wizard to lose vision's crop for that SKU. The
+# previous instruction left the cross-reference to the LLM's loose
+# "category" judgment.
+_DEFAULT_PROMPT_VERSION = "v2.1-stt-cross-reference"
 
 # Cost-per-million tokens (USD) for gpt-4o, 2026-04 pricing.
 _GPT_4O_INPUT_USD_PER_M = 2.50
@@ -214,15 +225,25 @@ _SYSTEM_PROMPT = (
     "  • placeholder — numbered, lettered, or disjunctive labels that "
     "indicate the model couldn't identify the product: 'Bottle 1', "
     "'Product A', 'Body wash or lotion bottle'.\n"
-    "  • unspoken_visual — the vision row's label sits in a completely "
-    "different product category from EVERY host_spoken_terms entry "
-    "(e.g. host only sells 영양제/supplement, vision row says "
-    "'serum'/세럼) AND the row's visual confidence is not high enough "
-    "to override that domain mismatch. Use this category SPARINGLY — "
-    "only when the category gap is wide. A close domain mismatch "
-    "(e.g. STT mentions skincare cream, vision says skincare toner) "
-    "is NOT unspoken_visual — fold it into the most plausible group "
-    "or keep as its own group instead.\n"
+    "  • unspoken_visual — RARELY USED. Only when (1) the vision row's "
+    "category is completely different from EVERY host_spoken_terms "
+    "entry AND (2) no STT row (any row with source='stt' in the "
+    "input) references the same physical product as the vision row. "
+    "Test (2) by stripping container suffixes from the vision label "
+    "( 봉지 / 병 / 통 / 박스 / 컵 / 그릇 / 패키지 / 세트 ) and checking "
+    "whether the resulting product noun appears as a substring in ANY "
+    "STT row's llm_label or spoken_aliases (case-INSENSITIVE, "
+    "word-order-INSENSITIVE). If yes, MERGE the vision row into the "
+    "STT row's group instead of rejecting — vision contributes the "
+    "canonical crop image; STT contributes the spoken/branded label. "
+    "Example: vision '포기김치 봉지' + STT '일상행복 포기김치 10kg' "
+    "share '포기김치' after stripping ' 봉지' → MERGE, NOT "
+    "unspoken_visual. Example: vision '금색 냄비' (gold pot) + no STT "
+    "row mentions 냄비/pot → unspoken_visual is correct (host equipment "
+    "is even more specific — prefer host_equipment for kitchenware "
+    "props). When the vision label is generic enough that the "
+    "product-noun strip would leave nothing (e.g. vision='Bottle'), "
+    "use generic_noun, NOT unspoken_visual.\n"
     "\n"
     "CONSERVATIVE PRINCIPLE — when in doubt, KEEP. Emit the row as "
     "its own group rather than rejecting. A false rejection (real "

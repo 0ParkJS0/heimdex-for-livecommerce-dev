@@ -69,6 +69,7 @@ tests/test_search_mode_routing.py
 tests/test_search_rate_limit.py
 tests/test_shorts_auto_product_alias_generator.py
 tests/test_shorts_auto_product_child_runner.py
+tests/test_shorts_auto_product_consolidate_prompt.py
 tests/test_shorts_auto_product_enumerate_stt.py
 tests/test_shorts_auto_product_enumeration_source.py
 tests/test_shorts_auto_product_phase4_foundation.py

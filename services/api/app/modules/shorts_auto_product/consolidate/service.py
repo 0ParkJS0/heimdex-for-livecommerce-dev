@@ -74,7 +74,7 @@ async def run_consolidation(
     org_id: UUID,
     video_db_id: UUID,
     consolidator: CatalogConsolidator | None = None,
-    prompt_version: str = "v1.0",
+    prompt_version: str | None = None,
     stt_grounding_enabled: bool = False,
 ) -> tuple[int, int, int]:
     """Run the consolidation pipeline end-to-end.
@@ -167,6 +167,17 @@ async def run_consolidation(
         return (0, 0, 0)
 
     # ---- 3. LLM call ----
+    # ``prompt_version=None`` defers to the code's current
+    # ``_DEFAULT_PROMPT_VERSION``. The earlier signature defaulted to
+    # the hardcoded "v1.0" string, which drifted whenever the code
+    # constant bumped — bumping the code without also updating call
+    # sites silently stamped the old version on every row. The None
+    # sentinel removes the drift.
+    if prompt_version is None:
+        from app.modules.shorts_auto_product.consolidate.llm_consolidator import (
+            _DEFAULT_PROMPT_VERSION,
+        )
+        prompt_version = _DEFAULT_PROMPT_VERSION
     consolidator = consolidator or CatalogConsolidator(
         openai_client=openai_client,
         prompt_version=prompt_version,
