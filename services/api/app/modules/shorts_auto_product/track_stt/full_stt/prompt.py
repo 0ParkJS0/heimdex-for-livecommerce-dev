@@ -9,29 +9,31 @@ Imports only: full_stt/types.FullSttScene (no other track_stt deps).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
+from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
 
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 _SYSTEM_PROMPT = (
-    "You are a video editor. Given a live commerce video transcript, select "
-    "segments that together explain the product clearly to someone who was not "
-    "present at the live stream.\n\n"
+    "You are a video editor. The transcript below is split into consecutive "
+    "multi-scene chunks (each entry merges several adjacent scenes). Select "
+    "chunk(s) that explain the product clearly to someone who was not present "
+    "at the live stream.\n\n"
+    "Each transcript entry is context for a source range. The final rendered "
+    "short will be assembled from original scenes inside the selected chunk(s), "
+    "so pick the chunk(s) with the best product story even if a full chunk is "
+    "longer than the target duration.\n\n"
     "Guidelines:\n"
-    "- Select 3-8 segments whose combined length is approximately the target duration\n"
-    "- Each segment must explain, demonstrate, or describe the product "
+    "- Select 1-2 chunks. Prefer 1 if it already covers the product story well.\n"
+    "- Each chunk must explain, demonstrate, or describe the product "
     "(what it does, who it is for, why it matters)\n"
-    "- Avoid redundancy — do not pick multiple segments that say the same thing\n"
-    "- Prefer clear, self-contained segments over heavily context-dependent ones\n"
+    "- If picking 2, they must cover distinct story beats — no redundancy\n"
+    "- Prefer chunks that are self-contained over heavily context-dependent ones\n"
     "- Avoid time-sensitive language (\"today only\", \"limited stock\", \"right now\") "
     "— this clip will be watched weeks or months after the live stream\n"
-    "- Segments must be in chronological order\n\n"
-    "Return the segment_index of each chosen scene and a short rationale. "
-    "Segments must be in chronological order."
+    "- Chunks must be in chronological order\n\n"
+    "Return the segment_index of each chosen chunk and a short rationale. "
+    "Chunks must be in chronological order."
 )
 
 
@@ -39,34 +41,82 @@ _SYSTEM_PROMPT = (
 # Parallel to the single-short prompt above. The shared planner asks for
 # N meaningfully-different shorts in ONE call. The legacy single-short
 # prompt is left byte-stable so the flag-off path is an exact rollback.
-MULTI_PROMPT_VERSION = "v3"
+MULTI_PROMPT_VERSION = "v4"
 
 _MULTI_SYSTEM_PROMPT = (
-    "You are a video editor. Given a live commerce video transcript, produce "
+    "You are a video editor. The transcript below is split into consecutive "
+    "multi-scene chunks (each entry merges several adjacent scenes). Produce "
     "several distinct short video edits that each explain the product clearly "
     "to someone who was not present at the live stream.\n\n"
+    "Each transcript entry is context for a source range. The final rendered "
+    "short will be assembled from original scenes inside the selected chunk(s), "
+    "so pick the chunk(s) with the best product story even if a full chunk is "
+    "longer than the target duration.\n\n"
     "Guidelines:\n"
     "- Produce exactly the requested number of shorts\n"
-    "- Each short selects 3-8 segments whose combined length is approximately "
-    "the target duration\n"
-    "- Every segment must explain, demonstrate, or describe the product "
+    "- Each short selects 1-2 chunks. Prefer 1 if a single chunk already covers "
+    "the product story well.\n"
+    "- Every chunk must explain, demonstrate, or describe the product "
     "(what it does, who it is for, why it matters)\n"
-    "- Within a short, avoid redundancy and keep segments in chronological order\n"
-    "- Make the shorts MEANINGFULLY DIFFERENT from one another: vary the angle, "
-    "the aspect of the product emphasized, the pacing, or which moments you "
-    "feature. Do not return the same selection twice.\n"
+    "- Within a short, avoid redundancy and keep chunks in chronological order\n"
+    "- Make the shorts MEANINGFULLY DIFFERENT from one another: feature distinct "
+    "moments of the video and vary the aspect of the product emphasized. "
+    "Do not return the same selection twice.\n"
     "- Avoid time-sensitive language (\"today only\", \"limited stock\", "
     "\"right now\") — these clips will be watched weeks or months later\n\n"
-    "For each short return: the segment_index of each chosen scene with a short "
+    "For each short return: the segment_index of each chosen chunk with a short "
     "per-segment rationale, a global_rationale for the short, and a "
     "differentiation_note saying how this short differs from the others. "
-    "Segments within each short must be in chronological order."
+    "Chunks within each short must be in chronological order."
 )
 
 
 def _ms_to_mmss(ms: int) -> str:
     total_s = ms // 1000
     return f"{total_s // 60:02d}:{total_s % 60:02d}"
+
+
+def group_consecutive_scenes(
+    scenes: list[FullSttScene],
+    group_size: int = 15,
+) -> list[list[FullSttScene]]:
+    """Group every ``group_size`` consecutive scenes.
+
+    Returns one-scene groups when ``group_size <= 1``. The picker uses these
+    groups to map LLM-selected prompt chunks back to original renderable scenes.
+    """
+    if not scenes:
+        return []
+    if group_size <= 1:
+        return [[scene] for scene in scenes]
+    return [scenes[i : i + group_size] for i in range(0, len(scenes), group_size)]
+
+
+def merge_consecutive_scenes(
+    scenes: list[FullSttScene],
+    group_size: int = 15,
+) -> list[FullSttScene]:
+    """Merge every ``group_size`` consecutive scenes into one combined scene.
+
+    Concatenates transcript text, spans time range from the first scene's
+    ``start_ms`` to the last scene's ``end_ms``, and takes the first
+    scene's ``scene_id``. The last group may contain fewer than
+    ``group_size`` scenes.
+
+    Returns the input unchanged when ``group_size <= 1``.
+    """
+    merged: list[FullSttScene] = []
+    for group in group_consecutive_scenes(scenes, group_size=group_size):
+        combined_text = " ".join(s.text for s in group if s.text).strip()
+        merged.append(
+            FullSttScene(
+                scene_id=group[0].scene_id,
+                start_ms=group[0].start_ms,
+                end_ms=group[-1].end_ms,
+                text=combined_text,
+            )
+        )
+    return merged
 
 
 def select_scenes_for_prompt(

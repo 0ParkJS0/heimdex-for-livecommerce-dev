@@ -25,8 +25,8 @@ _RESPONSE_JSON_SCHEMA: dict[str, Any] = {
         "properties": {
             "segments": {
                 "type": "array",
-                "minItems": 3,
-                "maxItems": 8,
+                "minItems": 1,
+                "maxItems": 2,
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -65,8 +65,8 @@ _MULTI_SHORT_OBJECT_SCHEMA: dict[str, Any] = {
     "properties": {
         "segments": {
             "type": "array",
-            "minItems": 3,
-            "maxItems": 8,
+            "minItems": 1,
+            "maxItems": 2,
             "items": {
                 "type": "object",
                 "additionalProperties": False,

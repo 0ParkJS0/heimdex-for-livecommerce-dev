@@ -12,6 +12,8 @@ from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
     PROMPT_VERSION,
     build_multi_user_prompt,
     build_user_prompt,
+    group_consecutive_scenes,
+    merge_consecutive_scenes,
     select_scenes_for_prompt,
 )
 from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
@@ -22,8 +24,8 @@ def _scene(idx: int, *, start_ms: int, end_ms: int, text: str = "hello") -> Full
 
 
 class TestPromptVersion:
-    def test_constant_is_v2(self):
-        assert PROMPT_VERSION == "v2"
+    def test_constant_is_v3(self):
+        assert PROMPT_VERSION == "v3"
 
     def test_system_prompt_non_empty(self):
         assert len(_SYSTEM_PROMPT) > 100
@@ -145,9 +147,35 @@ class TestCap:
         assert "[5]" not in out
 
 
+class TestMergeConsecutiveScenes:
+    def test_groups_consecutive_scenes(self):
+        scenes = [
+            _scene(i, start_ms=i * 10_000, end_ms=(i + 1) * 10_000, text=f"t{i}")
+            for i in range(5)
+        ]
+        groups = group_consecutive_scenes(scenes, group_size=2)
+        assert [[scene.scene_id for scene in group] for group in groups] == [
+            ["sc_0", "sc_1"],
+            ["sc_2", "sc_3"],
+            ["sc_4"],
+        ]
+
+    def test_merge_preserves_time_span_and_text_context(self):
+        scenes = [
+            _scene(0, start_ms=0, end_ms=10_000, text="first"),
+            _scene(1, start_ms=10_000, end_ms=20_000, text="second"),
+        ]
+        merged = merge_consecutive_scenes(scenes, group_size=2)
+        assert len(merged) == 1
+        assert merged[0].scene_id == "sc_0"
+        assert merged[0].start_ms == 0
+        assert merged[0].end_ms == 20_000
+        assert merged[0].text == "first second"
+
+
 class TestMultiPrompt:
-    def test_multi_prompt_version_is_v3(self):
-        assert MULTI_PROMPT_VERSION == "v3"
+    def test_multi_prompt_version_is_v4(self):
+        assert MULTI_PROMPT_VERSION == "v4"
 
     def test_multi_system_prompt_non_empty(self):
         assert len(_MULTI_SYSTEM_PROMPT) > 100
