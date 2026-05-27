@@ -55,6 +55,20 @@ describe("getSourceTime", () => {
   it("returns null for empty clips", () => {
     expect(getSourceTime([], 0)).toBeNull();
   });
+
+  it("returns null at the totalDuration boundary (last clip's end is exclusive)", () => {
+    // clip ranges use ``timelineMs < clipEnd`` (strict less-than),
+    // so the exact end-of-timeline ms maps to no clip. The playback
+    // sync layer depends on this — when the playhead reaches the
+    // end the source-time lookup is null and the loop-back path in
+    // usePlaybackSync.rAF takes over without trying to derive a
+    // source-video position from a non-existent clip slot.
+    const clips = recomputeTimeline([
+      makeClip(0, 15000, "v1", "c1"),
+      makeClip(0, 15000, "v1", "c2"),
+    ]);
+    expect(getSourceTime(clips, 30000)).toBeNull();
+  });
 });
 
 describe("getClipIndexAtTime", () => {
