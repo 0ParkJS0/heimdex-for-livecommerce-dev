@@ -34,3 +34,51 @@ export function formatDuration(startMs: number, endMs: number): string {
 export function isAuthRequired(): boolean {
   return AUTH0_ENABLED;
 }
+
+/**
+ * Coerce a FastAPI/Pydantic ``detail`` field into a human-readable string.
+ *
+ * Backends return ``detail`` in three shapes:
+ *   * ``string`` — Starlette/HTTPException; pass through verbatim.
+ *   * ``Array<{msg, loc, type, ...}>`` — Pydantic 422 validation errors;
+ *     join the ``msg`` fields so the operator sees actual messages
+ *     instead of ``[object Object],[object Object]`` (which is what
+ *     ``new Error(arr).message`` produces via ``Array#toString``).
+ *   * any other object — fall back to ``JSON.stringify`` so at least
+ *     the keys are visible.
+ *
+ * When ``detail`` is null/undefined/empty, returns ``fallback`` (callers
+ * pass a context-specific message like ``"Render submission failed (422)"``).
+ */
+export function formatErrorDetail(detail: unknown, fallback: string): string {
+  if (detail == null) return fallback;
+  if (typeof detail === "string") return detail || fallback;
+  if (Array.isArray(detail)) {
+    if (detail.length === 0) return fallback;
+    const parts = detail.map((e) => {
+      if (typeof e === "string") return e;
+      if (e && typeof e === "object") {
+        const msg = (e as Record<string, unknown>).msg;
+        if (typeof msg === "string" && msg) return msg;
+        const loc = (e as Record<string, unknown>).loc;
+        if (Array.isArray(loc) && loc.length > 0) {
+          // ``msg`` is guaranteed non-usable here (the usable-string case
+          // returned above), so don't interpolate it — a non-string msg
+          // would render "undefined"/a number. Use a stable label.
+          return `validation error at ${loc.join(".")}`;
+        }
+        return JSON.stringify(e);
+      }
+      return String(e);
+    });
+    return parts.join(", ");
+  }
+  if (typeof detail === "object") {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return fallback;
+    }
+  }
+  return String(detail) || fallback;
+}

@@ -44,9 +44,11 @@ def _build_app(monkeypatch, *, drive_file=None):
         return_value=MagicMock(
             parent_job_id=uuid4(),
             deduped=False,
+            skipped_reason=None,
             model_dump=lambda: {
                 "parent_job_id": str(uuid4()),
                 "deduped": False,
+                "skipped_reason": None,
             },
         ),
     )

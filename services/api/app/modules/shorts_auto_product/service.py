@@ -117,6 +117,15 @@ class ProductScanService:
                 detail="product mode v2 is not enabled for this org",
             )
 
+    def _enumeration_mode(self) -> str:
+        """Enumeration mode for the worker enqueue. Overlay enumeration
+        runs as a SECOND pass inside the same worker invocation when the
+        flag is on (``vision+overlay``); off (default) preserves the
+        legacy single-pass ``vision`` behavior byte-identically."""
+        if self.settings.auto_shorts_product_v2_overlay_track_enabled:
+            return "vision+overlay"
+        return "vision"
+
     async def _require_budget(self, org_id: UUID) -> Decimal:
         """402 if today's cost exceeds the cap. Returns the running
         cost so the caller can include it in logs."""
@@ -292,6 +301,37 @@ class ProductScanService:
         self._require_enabled_for_org(org_id)
         await self._require_budget(org_id)
 
+        if self.settings.tangibility_gate_enabled:
+            # Loose-coupling carve-out: lazy import keeps the video_summary
+            # domain out of this module's module-level import graph (only
+            # auth/tenancy/users are top-level cross-imports here).
+            from app.modules.video_summary.repository import (
+                VideoSummaryRepository,
+            )
+
+            vs_row = await VideoSummaryRepository(self.session).get_by_video(
+                org_id, str(video_id),
+            )
+            if (
+                vs_row is not None
+                and vs_row.tangibility == "intangible"
+                and vs_row.tangibility_p_intangible is not None
+                and vs_row.tangibility_p_intangible
+                    >= self.settings.tangibility_min_confidence_to_block
+            ):
+                logger.info(
+                    "product_v2_scan_skipped_intangible "
+                    "org_id=%s video_id=%s p_intangible=%.3f source=%s",
+                    str(org_id), str(video_id),
+                    vs_row.tangibility_p_intangible,
+                    vs_row.tangibility_source,
+                )
+                return ScanResponse(
+                    job_id=None,
+                    deduped=False,
+                    skipped_reason="intangible_product",
+                )
+
         # Idempotency: same (org, video, user) within window → return existing.
         # ``org_id`` is mandatory (codex defensive fix; see repositories/job.py).
         existing = await self.job_repo.find_recent_duplicate(
@@ -336,6 +376,7 @@ class ProductScanService:
                 enumeration_prompt_version=self.settings.auto_shorts_product_v2_enumeration_prompt_version,
                 max_keyframes=self.settings.auto_shorts_product_v2_max_keyframes_per_video,
                 callback_base_url=self.settings.auto_shorts_product_v2_callback_base_url,
+                enumeration_mode=self._enumeration_mode(),
             )
         except Exception:
             logger.exception(
@@ -355,23 +396,17 @@ class ProductScanService:
                 detail="failed to enqueue scan; please retry",
             )
 
-        # v0.16.0 — fan out to the STT-first enumeration path. Runs
-        # in-process on the same event loop, OUTSIDE the request
-        # lifecycle. The function is a no-op when the feature flag
-        # is off or the OpenAI key isn't configured. Vision still
-        # owns the ``enumerating → enumeration_done`` job lifecycle
-        # transition; STT only writes additional catalog rows.
-        # Plan: .claude/plans/shorts-auto-product-stt-enum-2026-05-06.md
-        from app.modules.shorts_auto_product.enumerate_stt.service import (
-            schedule_stt_enumeration_task,
-        )
-        schedule_stt_enumeration_task(
-            settings=self.settings,
-            org_id=org_id,
-            video_db_id=video_id,
-            video_drive_id=None,  # resolved inside the task
-        )
-
+        # STT enumeration is NOT scheduled from this path. The
+        # original 2026-05-06 plan ran STT alongside vision here, but
+        # the parallel scheduling raced :meth:`promote_latest_enumeration_done_stt`
+        # against the in-flight vision worker's lease — STT would
+        # finish first (one LLM call on the transcript, ~10s) and
+        # null out the lease, causing vision's later complete_enumeration
+        # to no-op and silently discard the vision-enumerated rows
+        # (with crops). STT is now invoked from the vision callback
+        # path (``internal_router.complete`` augment + ``.fail``
+        # recover), so it always runs AFTER vision is in a terminal
+        # state. See the ``stt-vision-race`` fix PR.
         logger.info(
             "product_v2_scan_enqueued",
             job_id=str(job.id),
@@ -574,6 +609,7 @@ class ProductScanService:
                 enumeration_prompt_version=self.settings.auto_shorts_product_v2_enumeration_prompt_version,
                 max_keyframes=self.settings.auto_shorts_product_v2_max_keyframes_per_video,
                 callback_base_url=self.settings.auto_shorts_product_v2_callback_base_url,
+                enumeration_mode=self._enumeration_mode(),
             )
         except Exception:
             logger.exception(
@@ -592,6 +628,16 @@ class ProductScanService:
                 detail="failed to enqueue rescan; please retry",
             )
 
+        # STT enumeration is NOT scheduled from this path. It is
+        # triggered from the vision worker's ``/complete`` (augment)
+        # and ``/fail`` (recover) callbacks in :mod:`internal_router`
+        # so it never races the in-flight vision lease. PR #275
+        # originally added the call here but surfaced a pre-existing
+        # race in :meth:`promote_latest_enumeration_done_stt` (it set
+        # ``claimed_by=None`` atomically, revoking vision's lease →
+        # vision's complete_enumeration matched 0 rows → vision's
+        # catalog rows with crops were silently discarded). See the
+        # ``stt-vision-race`` fix PR + ``[[feedback-scan-paths-must-mirror-fanout-calls]]``.
         return RescanResponse(job_id=job.id, invalidated_count=invalidated)
 
     # ------------------------------------------------------------------
@@ -659,6 +705,37 @@ class ProductScanService:
         """
         self._require_enabled_for_org(org_id)
         await self._require_budget(org_id)
+
+        if self.settings.tangibility_gate_enabled:
+            # Loose-coupling carve-out: lazy import keeps the video_summary
+            # domain out of this module's module-level import graph (only
+            # auth/tenancy/users are top-level cross-imports here).
+            from app.modules.video_summary.repository import (
+                VideoSummaryRepository,
+            )
+
+            vs_row = await VideoSummaryRepository(self.session).get_by_video(
+                org_id, str(video_id),
+            )
+            if (
+                vs_row is not None
+                and vs_row.tangibility == "intangible"
+                and vs_row.tangibility_p_intangible is not None
+                and vs_row.tangibility_p_intangible
+                    >= self.settings.tangibility_min_confidence_to_block
+            ):
+                logger.info(
+                    "product_v2_scan_order_skipped_intangible "
+                    "org_id=%s video_id=%s p_intangible=%.3f source=%s",
+                    str(org_id), str(video_id),
+                    vs_row.tangibility_p_intangible,
+                    vs_row.tangibility_source,
+                )
+                return ScanOrderResponse(
+                    parent_job_id=None,
+                    deduped=False,
+                    skipped_reason="intangible_product",
+                )
 
         # Service-layer validation that complements the DB CHECKs with
         # better error messages for the frontend.

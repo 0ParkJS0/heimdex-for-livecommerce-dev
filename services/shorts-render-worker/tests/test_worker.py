@@ -90,9 +90,11 @@ def test_worker_exits_when_sqs_disabled():
     mock_settings.drive_internal_api_key = "test-key"
     mock_settings.sqs_consumer_enabled = False
     mock_settings.sqs_shorts_render_queue_url = ""
+    mock_settings.queue_backend = "sqs"
 
     with (
         patch("src.worker.importlib") as mock_importlib,
+        patch("src.worker._verify_fonts_or_exit"),
         pytest.raises(SystemExit) as exc_info,
     ):
         mock_settings_mod = MagicMock()
@@ -125,9 +127,11 @@ def test_worker_exits_when_queue_url_empty():
     mock_settings.drive_internal_api_key = "test-key"
     mock_settings.sqs_consumer_enabled = True
     mock_settings.sqs_shorts_render_queue_url = ""
+    mock_settings.queue_backend = "sqs"
 
     with (
         patch("src.worker.importlib") as mock_importlib,
+        patch("src.worker._verify_fonts_or_exit"),
         pytest.raises(SystemExit) as exc_info,
     ):
         mock_settings_mod = MagicMock()

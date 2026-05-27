@@ -1,0 +1,254 @@
+{
+  "$schema_version": "1",
+  "_comment": "Auto-derived from annotator-supplied exposure xlsx/csv on 2026-05-26. Source: AOU.xlsx (annotator: hj). expected_clip_for_product + expected_negatives are EMPTY — they need a Phase-B human pass (scrub the video, mark ideal 30/60/90s windows + host-accessory negatives). The enumeration-recall and enumeration-precision gates work without Phase B; the Window-IoU gate is OFF until Phase B lands.",
+  "video_id": "gd_3e3bdad06e81ec70",
+  "org_slug": "devorg",
+  "category": "overlay",
+  "authored_at": "2026-05-26T00:00:00Z",
+  "authored_by": "claude+ljin0906@gmail.com",
+  "enumeration_prompt_version": "v1.0",
+  "enumeration_version": "v1.0",
+  "tracker_version": "v1.0",
+  "_corrections_applied": [
+    "C2: AOU.eval_overlays row idx=12 (A-2 11번째 노출) end corrected 01:00:00 → 01:01:00 (start=01:00:07)",
+    "C2: AOU.eval_mentions row idx=12 (A-2 11번째 노출) end corrected 01:00:00 → 01:01:00 (start=01:00:07)",
+    "C4: AOU.eval_mentions row idx=7 (A-2 재언급) free-form mention_type 「선 spoken + 12초 후 both」 split into two rows: spoken@00:41:31-00:41:43 + both@00:41:43-00:42:02",
+    "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
+  ],
+  "_todo_phase_b": [
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
+    "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
+  ],
+  "expected_products": [
+    {
+      "label_kr": "매트바/촉촉바 단품",
+      "first_appearance_ms": 549000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 10,
+      "expected_windows_ms": [
+        [
+          549000,
+          559000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "A"
+    },
+    {
+      "label_kr": "매트바/촉촉바 2개 세트",
+      "first_appearance_ms": 559000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 29,
+      "expected_windows_ms": [
+        [
+          559000,
+          588000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "A-1"
+    },
+    {
+      "label_kr": "매트바 2개 + 촉촉바 2개 세트",
+      "first_appearance_ms": 588000,
+      "expected_appearance_count_min": 12,
+      "expected_total_seconds_min": 358,
+      "expected_windows_ms": [
+        [
+          588000,
+          644000
+        ],
+        [
+          672000,
+          679000
+        ],
+        [
+          1669000,
+          1702000
+        ],
+        [
+          2398000,
+          2406000
+        ],
+        [
+          2431000,
+          2449000
+        ],
+        [
+          2491000,
+          2522000
+        ],
+        [
+          2984000,
+          3006000
+        ],
+        [
+          3028000,
+          3089000
+        ],
+        [
+          3105000,
+          3140000
+        ],
+        [
+          3275000,
+          3288000
+        ],
+        [
+          3607000,
+          3681000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "A-2"
+    },
+    {
+      "label_kr": "매트바/촉촉바 2개 + 립펜슬 1개 세트",
+      "first_appearance_ms": 644000,
+      "expected_appearance_count_min": 3,
+      "expected_total_seconds_min": 70,
+      "expected_windows_ms": [
+        [
+          644000,
+          653000
+        ],
+        [
+          1702000,
+          1725000
+        ],
+        [
+          2522000,
+          2560000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "B"
+    },
+    {
+      "label_kr": "블렌딩 립펜슬 06 아몬드 + 펜슬 샤프너",
+      "first_appearance_ms": 419000,
+      "expected_appearance_count_min": 5,
+      "expected_total_seconds_min": 52,
+      "expected_windows_ms": [
+        [
+          419000,
+          440000
+        ],
+        [
+          797000,
+          807000
+        ],
+        [
+          1115000,
+          1119000
+        ],
+        [
+          3755000,
+          3762000
+        ],
+        [
+          3850000,
+          3860000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "C"
+    },
+    {
+      "label_kr": "블렌딩 립 펜슬",
+      "first_appearance_ms": 2656000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 22,
+      "expected_windows_ms": [
+        [
+          2656000,
+          2678000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "C-1"
+    },
+    {
+      "label_kr": "촉촉바",
+      "first_appearance_ms": 1808000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 2,
+      "expected_windows_ms": [
+        [
+          1808000,
+          1810000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "D"
+    },
+    {
+      "label_kr": "보들 크림 블러셔 01 하츄볼",
+      "first_appearance_ms": 387000,
+      "expected_appearance_count_min": 4,
+      "expected_total_seconds_min": 61,
+      "expected_windows_ms": [
+        [
+          387000,
+          419000
+        ],
+        [
+          2117000,
+          2127000
+        ],
+        [
+          3640000,
+          3654000
+        ],
+        [
+          3836000,
+          3841000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "E"
+    },
+    {
+      "label_kr": "글로이 틴트밤",
+      "first_appearance_ms": 474000,
+      "expected_appearance_count_min": 4,
+      "expected_total_seconds_min": 72,
+      "expected_windows_ms": [
+        [
+          474000,
+          500000
+        ],
+        [
+          3089000,
+          3098000
+        ],
+        [
+          3762000,
+          3783000
+        ],
+        [
+          3905000,
+          3921000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "F"
+    },
+    {
+      "label_kr": "AOU 매트 포슬밤 전컬러 SET",
+      "first_appearance_ms": 440000,
+      "expected_appearance_count_min": 1,
+      "expected_total_seconds_min": 34,
+      "expected_windows_ms": [
+        [
+          440000,
+          474000
+        ]
+      ],
+      "category_hint": "color cosmetics",
+      "annotator_product_id": "G"
+    }
+  ],
+  "expected_clip_for_product": [],
+  "expected_negatives": []
+}

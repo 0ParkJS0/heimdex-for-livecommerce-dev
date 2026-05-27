@@ -132,6 +132,13 @@ class Settings(BaseSettings):
     agent_intent_max_per_org: int = 10
     agent_intent_exchange_max_attempts: int = 5
 
+    # --- Agent high-quality export ---
+    # Gates GET /api/drive/source-facts, which hands the agent the per-video
+    # Drive facts (google_file_id, md5, mount-relative path) it needs to locate
+    # the ORIGINAL on a locally-mounted Google Drive and render at source
+    # resolution. Off by default; flip per-environment once the agent ships.
+    agent_hq_export_enabled: bool = False
+
     people_enabled: bool = True
     face_match_threshold: float = 0.55
     face_thumbnail_s3_primary: bool = False
@@ -565,6 +572,34 @@ class Settings(BaseSettings):
     # take that long; surface as ``enumeration_llm_failed``.
     auto_shorts_product_v2_stt_enum_timeout_s: float = 90.0
 
+    # ---------- overlay-driven enumeration (parallel to vision / STT) ----------
+    #
+    # Discovers products from operator-placed overlay graphics
+    # (product cards, price banners) that the existing vision path
+    # filters out via the per-crop ``is_product=false`` rule for
+    # on-screen graphics. Overlay ENUMERATION runs in the
+    # ``product-enumerate-worker`` as a SECOND pass of the enumerate job
+    # (mode ``vision+overlay``); the worker owns the extraction model /
+    # budget / detector-threshold knobs now. This flag is the API gate:
+    # when on, ``ProductScanService`` enqueues with
+    # ``enumeration_mode="vision+overlay"``. Default off = legacy
+    # single-pass ``vision``.
+    auto_shorts_product_v2_overlay_track_enabled: bool = False
+
+    # ---------- overlay-driven shorts assembly (phase 4 of the track) ----------
+    #
+    # Consumes the OverlayEnumerationResult above and produces a
+    # slot-assembled shorts plan (HOOK / HERO / DEMO(s) / CLOSE).
+    # Renders no media -- the plan is meant for the existing
+    # ``shorts-render-worker`` to execute at phase 5.
+    #
+    # Module: ``app.modules.shorts_auto_product.overlay_shorts``.
+    # Status: dormant -- not called from any production path yet.
+    auto_shorts_product_v2_overlay_shorts_enabled: bool = False
+    auto_shorts_product_v2_overlay_shorts_default_duration_s: int = 60
+    auto_shorts_product_v2_overlay_shorts_silence_db: int = -28
+    auto_shorts_product_v2_overlay_shorts_silence_min_dur_s: float = 0.18
+
     # --- Auto-shorts: post-enumeration catalog consolidation ---
     #
     # One LLM call that does TWO things in lockstep on the union of
@@ -659,6 +694,23 @@ class Settings(BaseSettings):
     # switch. Has no effect when
     # ``auto_shorts_product_v2_storyboard_mode_enabled`` is True.
     auto_shorts_product_v2_storyboard_shadow_mode: bool = False
+
+    # --- Tangibility gate (video-level intangible filter for product scan) ---
+    tangibility_gate_enabled: bool = False
+    # "hybrid"   — LR + LLM routing (default)
+    # "lr_only"  — LR only, external dependency 0, cost 0, latency <= 1ms
+    # "llm_only" — LLM only, skip LR
+    tangibility_mode: Literal["hybrid", "lr_only", "llm_only"] = "hybrid"
+    tangibility_classifier_version: str = "v1"
+    # if LR confidence is in 0.5±threshold -> LLM (gap < 0.15 ≡ max(p) < 0.65)
+    tangibility_lr_gap_threshold: float = 0.15
+    # if classified as intangible but p_intangible is below this threshold, 
+    # do not block — false positive mitigation
+    tangibility_min_confidence_to_block: float = 0.7
+    tangibility_llm_model: str = "gpt-4o-mini"
+    tangibility_llm_prompt_version: str = "v1"
+    tangibility_llm_timeout_s: float = 5.0
+    tangibility_llm_daily_budget_usd: float = 5.0
 
     # --- Auto-shorts: OCR re-rank in mention_extractor ---
     # Plan: ``.claude/plans/ocr-mention-extractor-rerank.md``.

@@ -185,6 +185,87 @@ export async function pickDirectory(): Promise<string | null> {
   }
 }
 
+// --- High-quality export (agent renders at source resolution from the local
+// Google Drive mount). Types mirror heimdex-agent internal/api/hq_render_handler.go
+// field-for-field; keep them in sync. ---
+
+export interface HqRenderSource {
+  video_id: string;
+  google_file_id: string;
+  file_name: string;
+  file_size_bytes: number | null;
+  md5_checksum: string | null;
+  mount_relative_path: string;
+}
+
+export interface HqRenderRequest {
+  spec: Record<string, unknown>; // CompositionSpec (opaque to the agent)
+  sources: HqRenderSource[];
+  mount_path?: string;
+  encoder?: string; // default "auto"
+  max_height?: number; // default 2160
+  verify_md5?: boolean;
+}
+
+export type HqRenderStatus =
+  | "queued" | "resolving" | "rendering" | "done" | "failed";
+
+export interface HqRenderJob {
+  job_id: string;
+  status: HqRenderStatus;
+  error?: string;
+  error_code?: string;
+  width?: number;
+  height?: number;
+  encoder?: string;
+}
+
+const HQ_POST_TIMEOUT_MS = 10_000;
+
+export async function startAgentHqRender(req: HqRenderRequest): Promise<HqRenderJob> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HQ_POST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${AGENT_BASE}/hq-render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error ?? `Agent error (${res.status})`);
+    }
+    return res.json();
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("HQ 렌더 요청 시간이 초과되었습니다.");
+    }
+    throw error;
+  }
+}
+
+export async function getAgentHqRenderStatus(jobId: string): Promise<HqRenderJob | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STATUS_TIMEOUT_MS);
+    const res = await fetch(`${AGENT_BASE}/hq-render/${encodeURIComponent(jobId)}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+export function getAgentHqRenderOutputUrl(jobId: string): string {
+  return `${AGENT_BASE}/hq-render/${encodeURIComponent(jobId)}/output`;
+}
+
 export interface PickFolderResult {
   source_id: string;
   path: string;

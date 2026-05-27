@@ -23,13 +23,37 @@ interface EffectsSectionProps {
   hideStroke?: boolean;
 }
 
-const DEFAULT_STROKE: StrokeProps = { color: "#FF0000", widthPx: 25 };
+// Per operator request 2026-05-24: a freshly-added text overlay must
+// render with stroke OFF (effects.stroke === null). The previous
+// behaviour materialised DEFAULT_STROKE on mount, which produced a
+// red 5 px outline before the operator had touched any control —
+// reads as a bug the moment "+ 텍스트 추가" is clicked. Stroke is now
+// opt-in: BorderControl shows widthPx=0 / no swatch until the operator
+// picks a colour, at which point the stroke is materialised into
+// state with width seeded to 5 px (DEFAULT_STROKE_WIDTH_PX).
+//
+// Shadow is opt-in alongside stroke (operator request 2026-05-25): a
+// freshly added text overlay carries ``effects.shadow === null`` so
+// the canvas shows no drop. The first interaction in ShadowControl
+// (most commonly picking a colour from the palette) materialises the
+// shadow into state using DEFAULT_SHADOW. The default offset is
+// +1/+1 px — a tight halo that reads as "just barely visible" so the
+// operator notices the shadow turned on without it overpowering the
+// glyph. Earlier defaults (+5/+5 px) felt like a heavy second copy.
+export const DEFAULT_STROKE_WIDTH_PX = 5;
 const DEFAULT_SHADOW: ShadowProps = {
+  color: "#000000",
+  offsetX: 1,
+  offsetY: 1,
+  blurPx: 0,
+  spreadPx: 0,
+};
+// Placeholder values rendered by BorderControl when stroke === null.
+// The stepper still shows a number and the swatch a colour, but the
+// underlying overlay carries no stroke until the operator interacts.
+const STROKE_OFF_PLACEHOLDER: StrokeProps = {
   color: "#FF0000",
-  offsetX: 0,
-  offsetY: 99,
-  blurPx: 12,
-  spreadPx: 25,
+  widthPx: 0,
 };
 
 /**
@@ -47,8 +71,16 @@ export function EffectsSection({ effects, onChange, hideStroke = false }: Effect
     onChange({ ...effects, ...patch });
   };
 
-  const stroke = effects.stroke ?? DEFAULT_STROKE;
+  // Shadow stays opt-in to match stroke (operator request 2026-05-25:
+  // a freshly added text overlay must render with NO shadow, not the
+  // 5/5 black drop the mount-time materialiser used to inject). Render
+  // the controls against DEFAULT values when shadow is null so the
+  // sliders show numbers; the first user interaction in ShadowControl
+  // calls onChange with a full ShadowProps and materialises the
+  // shadow into state.
+  const stroke = effects.stroke ?? STROKE_OFF_PLACEHOLDER;
   const shadow = effects.shadow ?? DEFAULT_SHADOW;
+  const strokeOff = effects.stroke === null;
 
   return (
     <div className="space-y-4">
@@ -65,15 +97,34 @@ export function EffectsSection({ effects, onChange, hideStroke = false }: Effect
         />
       </section>
 
-      {/* Stroke — hidden when the panel hosts it alongside Transform ------------ */}
+      {/* Stroke — hidden when the panel hosts it alongside Transform ------------
+         BorderControl is headless of the OFF state; when stroke is null
+         the controls render placeholder values (width 0, swatch shown
+         as the placeholder hex) and the first colour pick materialises
+         the stroke into state with the Q4 default width so the outline
+         appears at a thin, readable thickness. Once materialised, width
+         and colour edits flow through the normal patch path. */}
       {!hideStroke && (
         <section>
           <Header label={t.effects.stroke} />
           <BorderControl
             width={stroke.widthPx}
             color={stroke.color}
-            onWidthChange={(widthPx) => update({ stroke: { ...stroke, widthPx } })}
-            onColorChange={(color) => update({ stroke: { ...stroke, color } })}
+            strokeIsOff={strokeOff}
+            onWidthChange={(widthPx) =>
+              update({
+                stroke: strokeOff
+                  ? { color: stroke.color, widthPx }
+                  : { ...stroke, widthPx },
+              })
+            }
+            onColorChange={(color) =>
+              update({
+                stroke: strokeOff
+                  ? { color, widthPx: DEFAULT_STROKE_WIDTH_PX }
+                  : { ...stroke, color },
+              })
+            }
           />
         </section>
       )}
@@ -106,6 +157,9 @@ export function EffectsSection({ effects, onChange, hideStroke = false }: Effect
 
 // Standalone stroke section — same content as EffectsSection's stroke block.
 // Used by panels that pair stroke with Transform in a 2-col row.
+// Mirrors the OFF-state behaviour: when effects.stroke is null the
+// controls render placeholder values and the first colour pick
+// materialises the stroke into state.
 export function StrokeBlock({
   effects,
   onChange,
@@ -113,26 +167,42 @@ export function StrokeBlock({
   effects: EffectsProps;
   onChange: (effects: EffectsProps) => void;
 }) {
-  const stroke = effects.stroke ?? DEFAULT_STROKE;
+  const stroke = effects.stroke ?? STROKE_OFF_PLACEHOLDER;
+  const strokeOff = effects.stroke === null;
   return (
     <section>
       <Header label={t.effects.stroke} />
       <BorderControl
         width={stroke.widthPx}
         color={stroke.color}
+        strokeIsOff={strokeOff}
         onWidthChange={(widthPx) =>
-          onChange({ ...effects, stroke: { ...stroke, widthPx } })
+          onChange({
+            ...effects,
+            stroke: strokeOff
+              ? { color: stroke.color, widthPx }
+              : { ...stroke, widthPx },
+          })
         }
         onColorChange={(color) =>
-          onChange({ ...effects, stroke: { ...stroke, color } })
+          onChange({
+            ...effects,
+            stroke: strokeOff
+              ? { color, widthPx: DEFAULT_STROKE_WIDTH_PX }
+              : { ...stroke, color },
+          })
         }
       />
     </section>
   );
 }
 
+// figma 2015:249496 — section headers use text-[14px] SemiBold, same as
+// 변형/윤곽선/레터박스/불투명도/그림자 labels in the 배경 tab spec.
 function Header({ label }: { label: string }) {
   return (
-    <h3 className="mb-2 text-xs font-semibold text-grayscale-800">{label}</h3>
+    <h3 className="mb-2.5 text-[14px] font-semibold leading-[1.4] tracking-[-0.35px] text-grayscale-800">
+      {label}
+    </h3>
   );
 }

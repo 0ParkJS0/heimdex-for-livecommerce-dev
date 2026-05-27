@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from "./utils";
+import { formatErrorDetail, getApiBaseUrl } from "./utils";
 import type { RenderJobResponse } from "./highlight-reel";
 
 export type { RenderJobResponse };
@@ -67,8 +67,11 @@ export async function submitRender(
     body: JSON.stringify({ video_id: videoId, title, composition }),
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    const message = detail.detail || `Render submission failed (${res.status})`;
+    const body = await res.json().catch(() => ({}));
+    const message = formatErrorDetail(
+      body?.detail,
+      `Render submission failed (${res.status})`,
+    );
     if (res.status === 429) {
       throw new RenderRateLimitError(message);
     }
@@ -109,8 +112,10 @@ export async function getRenderJob(
     headers,
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `Failed to get render job (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      formatErrorDetail(body?.detail, `Failed to get render job (${res.status})`),
+    );
   }
   return res.json();
 }
@@ -125,8 +130,10 @@ export async function getShortComposition(
     headers,
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `Failed to get composition (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      formatErrorDetail(body?.detail, `Failed to get composition (${res.status})`),
+    );
   }
   return res.json();
 }
@@ -150,8 +157,10 @@ export async function updateRenderJobTitle(
     body: JSON.stringify({ title }),
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    throw new Error(detail.detail || `Failed to update title (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      formatErrorDetail(body?.detail, `Failed to update title (${res.status})`),
+    );
   }
   return res.json();
 }
@@ -210,9 +219,12 @@ export async function generateRenderJobSummary(
     { method: "POST", headers, body },
   );
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
+    const body = await res.json().catch(() => ({}));
     throw new Error(
-      detail.detail || `Failed to generate summary (${res.status})`,
+      formatErrorDetail(
+        body?.detail,
+        `Failed to generate summary (${res.status})`,
+      ),
     );
   }
   return res.json();

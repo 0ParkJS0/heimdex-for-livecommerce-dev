@@ -29,15 +29,39 @@ export function PlayheadCursor({
   const [isHovering, setIsHovering] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
-  const onPointerMove = useCallback(
-    (e: PointerEvent) => {
-      if (!draggingRef.current) return;
-      const dx = e.clientX - startXRef.current;
-      const newMs = Math.max(0, startMsRef.current + pixelsToMs(dx, zoom));
-      onSeek(Math.round(newMs));
-    },
-    [zoom, onSeek],
-  );
+  // 2026-05-26 — operator-reported drag dead-zone: dragging the
+  // playhead handle barely moved the cursor, only the *click* on the
+  // ruler seeked correctly. Root cause was an identity cascade — the
+  // parent timeline rebuilt ``onSeek`` (the snap-wrapped seek) every
+  // render because the snap-points array was rebuilt every render
+  // because the visible-subtitles array was rebuilt every render.
+  // The cascade reached this component as a new ``onSeek`` prop on
+  // every dispatched seek, which invalidated ``onPointerMove``'s
+  // useCallback identity, which triggered the cleanup effect below
+  // to remove the document listener — and ``onPointerDown`` only
+  // re-attaches on mouse-down. So the first move worked, the next
+  // re-render dropped the listener, and the rest of the drag was
+  // dead.
+  //
+  // Pinning ``onSeek`` + ``zoom`` behind refs lets ``onPointerMove``
+  // keep a stable identity for the lifetime of the component, so the
+  // cleanup effect only fires on actual unmount. The drag listener
+  // is added in onPointerDown and removed in onPointerUp; the
+  // useEffect is only there for the unmount-mid-drag case.
+  const onSeekRef = useRef(onSeek);
+  const zoomRef = useRef(zoom);
+  onSeekRef.current = onSeek;
+  zoomRef.current = zoom;
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!draggingRef.current) return;
+    const dx = e.clientX - startXRef.current;
+    const newMs = Math.max(
+      0,
+      startMsRef.current + pixelsToMs(dx, zoomRef.current),
+    );
+    onSeekRef.current(Math.round(newMs));
+  }, []);
 
   const onPointerUp = useCallback(
     (e: PointerEvent) => {

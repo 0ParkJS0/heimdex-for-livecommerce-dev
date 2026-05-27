@@ -28,6 +28,16 @@ interface InspectorPanelProps {
    * tooltip explaining the user has to render first).
    */
   onTitleSave?: (title: string | null) => Promise<void> | void;
+
+  // --- High-quality export (agent renders at source resolution). Discrete
+  // props (not the hook's state object) keep this component callback-driven. ---
+  /** Show the HQ-export action — true only when the local agent is available
+   *  AND this clip has a completed render to source from. */
+  showHqExport?: boolean;
+  hqStatus?: "idle" | "preparing" | "rendering" | "done" | "failed";
+  hqOutputUrl?: string;
+  hqError?: string | null;
+  onExportHq?: () => void;
 }
 
 /**
@@ -55,6 +65,11 @@ export function InspectorPanel({
   isDownloading,
   renderJobTitle,
   onTitleSave,
+  showHqExport,
+  hqStatus,
+  hqOutputUrl,
+  hqError,
+  onExportHq,
 }: InspectorPanelProps) {
   if (!clip) {
     return (
@@ -90,6 +105,14 @@ export function InspectorPanel({
             {isDownloading ? "준비 중..." : "다운로드"}
           </button>
         </div>
+        {showHqExport && (
+          <HqExportAction
+            status={hqStatus ?? "idle"}
+            outputUrl={hqOutputUrl}
+            error={hqError ?? null}
+            onExport={onExportHq}
+          />
+        )}
       </Section>
 
       <Section title="제목">
@@ -150,6 +173,59 @@ function DownloadIcon() {
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
     </svg>
+  );
+}
+
+interface HqExportActionProps {
+  status: "idle" | "preparing" | "rendering" | "done" | "failed";
+  outputUrl?: string;
+  error?: string | null;
+  onExport?: () => void;
+}
+
+/**
+ * High-quality (source-resolution) export, rendered locally by the agent from
+ * the original on the user's mounted Google Drive. Only shown when the agent is
+ * available and the clip already has a completed (proxy) render to source from.
+ *
+ * "done" renders an <a> straight to the agent's localhost output (the agent
+ * sets Content-Disposition, so the browser downloads). The HTTPS→localhost
+ * fetch works via the agent's Private-Network-Access headers, same channel as
+ * the Premiere flow.
+ */
+function HqExportAction({ status, outputUrl, error, onExport }: HqExportActionProps) {
+  const busy = status === "preparing" || status === "rendering";
+  return (
+    <div className="mt-2 space-y-1">
+      {status === "done" && outputUrl ? (
+        <a
+          href={outputUrl}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 transition-colors hover:bg-violet-100"
+        >
+          <DownloadIcon />
+          고화질 다운로드 (원본 화질)
+        </a>
+      ) : (
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={busy || !onExport}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-violet-300 bg-white px-3 py-2 text-sm font-medium text-violet-700 transition-colors hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {status === "preparing" && "원본 준비 중..."}
+          {status === "rendering" && "고화질 렌더링 중..."}
+          {(status === "idle" || status === "failed") && "고화질 내보내기 (원본 화질)"}
+        </button>
+      )}
+      {status === "failed" && error && (
+        <p className="line-clamp-2 text-[11px] text-red-500">{error}</p>
+      )}
+      {(status === "preparing" || status === "rendering") && (
+        <p className="text-[10px] text-gray-400">
+          이 컴퓨터에서 원본 영상으로 렌더링 중입니다. 시간이 걸릴 수 있어요.
+        </p>
+      )}
+    </div>
   );
 }
 

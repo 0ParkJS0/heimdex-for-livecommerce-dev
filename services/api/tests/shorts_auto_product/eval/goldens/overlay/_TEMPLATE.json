@@ -1,0 +1,30 @@
+{
+  "$schema_version": "1",
+  "_comment": "OVERLAY golden. Overlay enumeration grades products shown on ON-SCREEN INFO CARDS (price cards, spec panels, name banners baked into the broadcast graphics) — NOT products merely held up in-frame (that is the vision pass). Fill expected_products with the products the on-screen overlay graphics name; put host accessories / sponsor banners / decorative UI chrome in expected_negatives. Rename this file to {org_slug}_{video_id}.json and remove the leading underscore so the harness picks it up (files starting with _ are skipped). Curate against a real staging video; do NOT look at pipeline output while authoring.",
+  "video_id": "gd_REPLACE_ME",
+  "org_slug": "devorg",
+  "category": "overlay",
+  "authored_at": "2026-05-25T10:00:00Z",
+  "authored_by": "user@heimdex.dev",
+
+  "enumeration_prompt_version": "v1.0",
+  "enumeration_version": "v1.0",
+  "tracker_version": "v1.0",
+
+  "expected_products": [
+    {
+      "label_kr": "핑크 세럼 병",
+      "label_en_hint": "pink rectangular serum bottle",
+      "first_appearance_ms": 14200,
+      "expected_appearance_count_min": 4,
+      "expected_total_seconds_min": 28,
+      "category_hint": "skincare"
+    }
+  ],
+
+  "expected_negatives": [
+    "호스트 손목시계",
+    "협찬사 배너 로고",
+    "스튜디오 링라이트"
+  ]
+}

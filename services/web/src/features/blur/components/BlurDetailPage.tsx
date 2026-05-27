@@ -34,8 +34,8 @@ import {
 } from "@/lib/api/blur";
 import { useBlurExport, useBlurJob, useBlurJobsForFile } from "@/features/blur/hooks/useBlurJob";
 import { useAuth } from "@/lib/auth";
-import { getVideoScenes } from "@/lib/api/videos";
-import type { VideoScene, VideoScenesResponse } from "@/lib/types/videos";
+import { getAllVideoScenes } from "@/lib/api/videos";
+import type { VideoScene } from "@/lib/types/videos";
 import { TimelineRuler, PlayheadCursor, msToPixels, pixelsToMs, formatTimelineTimestamp, DEFAULT_ZOOM, MIN_ZOOM, MAX_ZOOM } from "@/lib/timeline";
 
 // ---------- shared types sourced from the manifest JSON on S3 ----------
@@ -279,7 +279,7 @@ function useBlurScenes(videoId: string) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getVideoScenes(videoId, 100, 0, getAccessToken)
+    getAllVideoScenes(videoId, getAccessToken)
       .then((res) => {
         if (!cancelled) setScenes(res.scenes);
       })

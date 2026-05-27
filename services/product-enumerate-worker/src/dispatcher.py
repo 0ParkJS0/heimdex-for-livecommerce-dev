@@ -52,6 +52,18 @@ def dispatch(
 
     msg_type = body.get("type")
     if msg_type == "product.enumerate_job":
+        # v0.19.0 contract: ``enumeration_mode`` selects the pass(es) the
+        # handler runs. Read here for routing visibility; the handler
+        # parses it off the same body dict (default "vision" for old
+        # senders, preserving the legacy single-pass behavior).
+        enumeration_mode = body.get("enumeration_mode", "vision")
+        logger.info(
+            "dispatch_enumerate_job",
+            extra={
+                "job_id": body.get("job_id"),
+                "enumeration_mode": enumeration_mode,
+            },
+        )
         try:
             handle_enumerate_job(
                 message=body, settings=settings, vlm_client=vlm_client,

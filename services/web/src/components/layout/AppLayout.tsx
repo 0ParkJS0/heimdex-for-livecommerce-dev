@@ -107,7 +107,19 @@ export function AppLayout({ children }: AppLayoutProps) {
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={toggleSidebar}
           />
-          <main className="min-w-0 flex-1 overflow-hidden px-6 pb-6">{children}</main>
+          <main
+            className={cn(
+              "min-w-0 flex-1 overflow-hidden",
+              // Editor route owns its own gutters (pl/pr/pt/pb on
+              // EditorLayout) so the 20-px bottom gap from the timeline
+              // wrapper to the viewport bottom isn't doubled by main's
+              // own pb-6. Non-editor routes keep the historical
+              // px-6 pb-6 outer padding.
+              editorMode ? "" : "px-6 pb-6",
+            )}
+          >
+            {children}
+          </main>
         </div>
       </div>
     </TopHeaderActionsProvider>

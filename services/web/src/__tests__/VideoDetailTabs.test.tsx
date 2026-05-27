@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 
@@ -55,8 +55,32 @@ vi.mock("@/lib/api/videos", () => ({
       keyframe_timestamp_ms: i * 10000,
     })),
   }),
+  getAllVideoScenes: vi.fn().mockResolvedValue({
+    video_title: "Test Video",
+    total: 25,
+    scenes: Array.from({ length: 25 }, (_, i) => ({
+      scene_id: `s${i}`,
+      start_ms: i * 10000,
+      end_ms: (i + 1) * 10000,
+      transcript_raw: "",
+      transcript_char_count: 0,
+      keyword_tags: [],
+      product_tags: [],
+      product_entities: [],
+      speech_segment_count: 0,
+      people_cluster_ids: [],
+      ingest_time: null,
+      keyframe_timestamp_ms: i * 10000,
+    })),
+  }),
   getReprocessStatus: vi.fn().mockResolvedValue(null),
   reprocessScenes: vi.fn(),
+  patchSceneOverride: vi.fn(),
+  resetSceneOverride: vi.fn(),
+  getVideoSummary: vi.fn().mockResolvedValue(null),
+  generateVideoSummary: vi.fn().mockResolvedValue(null),
+  editVideoSummary: vi.fn(),
+  resetVideoSummary: vi.fn(),
   getVideoPeople: vi.fn().mockResolvedValue({ people: [] }),
 }));
 
@@ -85,6 +109,16 @@ vi.mock("@/features/videos/hooks/useSceneGroups", () => ({
   useSceneGroups: () => ({ groups: null, isLoading: false, error: null, fetchGroups: vi.fn() }),
 }));
 
+vi.mock("@/features/shorts-auto", () => ({
+  AutoShortsCTA: ({ onClick }: { onClick?: () => void }) => (
+    <button type="button" onClick={onClick}>AI 쇼츠 생성</button>
+  ),
+}));
+
+vi.mock("@/features/shorts-auto-product-wizard/components/InlineWizardContainer", () => ({
+  InlineWizardContainer: () => <div data-testid="inline-wizard">wizard</div>,
+}));
+
 vi.mock("@/features/basket/useSceneBasket", () => ({
   useSceneBasket: () => ({
     items: [],
@@ -97,7 +131,7 @@ vi.mock("@/features/basket/useSceneBasket", () => ({
 }));
 
 import { VideoDetailPage } from "@/features/videos/components/VideoDetailPage";
-import { getVideoScenes, getReprocessStatus, getVideoPeople } from "@/lib/api/videos";
+import { getAllVideoScenes, getVideoScenes, getReprocessStatus, getVideoPeople } from "@/lib/api/videos";
 
 function makeSceneResponse() {
   return {
@@ -131,6 +165,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetAccessToken.mockResolvedValue("token");
   vi.mocked(getVideoScenes).mockResolvedValue(makeSceneResponse() as any);
+  vi.mocked(getAllVideoScenes).mockResolvedValue(makeSceneResponse() as any);
   vi.mocked(getReprocessStatus).mockResolvedValue(null);
   vi.mocked(getVideoPeople).mockResolvedValue({ people: [] } as any);
   mockSearchParams = new URLSearchParams();
@@ -141,13 +176,13 @@ beforeEach(() => {
 });
 
 describe("VideoDetailPage tab bar", () => {
-  it("renders three tabs and export button", async () => {
+  it("renders three tabs and AI shorts button", async () => {
     await renderVideoDetail();
 
     expect(screen.getByRole("button", { name: /개요/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /장면 분석/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /인물 관리/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /내보내기/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /AI 쇼츠 생성/ })).toBeInTheDocument();
   });
 
   it("renders scenes tab without count badge", async () => {
@@ -213,6 +248,60 @@ describe("VideoDetailPage tab bar", () => {
     );
   });
 
+  it("paginates scene analysis with backend offsets instead of local first-page slicing", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getVideoScenes).mockImplementation(async (_videoId, pageSize, offset) => ({
+      ...makeSceneResponse(),
+      total: 604,
+      scenes: Array.from({ length: pageSize ?? 10 }, (_, i) => {
+        const n = (offset ?? 0) + i;
+        return {
+          scene_id: `s${n}`,
+          start_ms: n * 10000,
+          end_ms: (n + 1) * 10000,
+          transcript_raw: "",
+          transcript_char_count: 0,
+          keyword_tags: [],
+          product_tags: [],
+          product_entities: [],
+          speech_segment_count: 0,
+          people_cluster_ids: [],
+          ingest_time: null,
+          keyframe_timestamp_ms: n * 10000,
+        };
+      }),
+    }) as any);
+    vi.mocked(getAllVideoScenes).mockResolvedValue({
+      ...makeSceneResponse(),
+      total: 604,
+      scenes: [],
+    } as any);
+
+    await renderVideoDetail("view=scenes");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "61 페이지" })).toBeInTheDocument();
+    });
+    expect(
+      vi.mocked(getVideoScenes).mock.calls.filter(
+        ([videoId, pageSize, offset]) =>
+          videoId === "test-video-123" && pageSize === 10 && offset === 0,
+      ),
+    ).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "다음 페이지" }));
+
+    await waitFor(() => {
+      expect(getVideoScenes).toHaveBeenCalledWith(
+        "test-video-123",
+        10,
+        10,
+        mockGetAccessToken,
+        undefined,
+      );
+    });
+  });
+
   it("removes view param from URL when switching to overview", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "location", {
@@ -228,12 +317,15 @@ describe("VideoDetailPage tab bar", () => {
     );
   });
 
-  it("export button navigates to shorts create page", async () => {
+  it("AI shorts button switches to auto-shorts view", async () => {
     const user = userEvent.setup();
     await renderVideoDetail();
 
-    await user.click(screen.getByRole("button", { name: /내보내기/ }));
-    expect(mockPush).toHaveBeenCalledWith("/export/shorts/editor?videoId=test-video-123");
+    await user.click(screen.getByRole("button", { name: /AI 쇼츠 생성/ }));
+    expect(mockReplace).toHaveBeenCalledWith(
+      expect.stringContaining("view=auto-shorts"),
+      { scroll: false },
+    );
   });
 
   it("ignores invalid ?view= values and defaults to overview", async () => {

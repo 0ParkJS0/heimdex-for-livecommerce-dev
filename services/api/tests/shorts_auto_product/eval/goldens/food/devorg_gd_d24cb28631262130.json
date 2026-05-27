@@ -1,0 +1,158 @@
+{
+  "$schema_version": "1",
+  "_comment": "Auto-derived from annotator-supplied exposure xlsx/csv on 2026-05-26. Source: (종가, 오설록).csv (annotator: sj). expected_clip_for_product + expected_negatives are EMPTY — they need a Phase-B human pass (scrub the video, mark ideal 30/60/90s windows + host-accessory negatives). The enumeration-recall and enumeration-precision gates work without Phase B; the Window-IoU gate is OFF until Phase B lands.",
+  "video_id": "gd_d24cb28631262130",
+  "org_slug": "devorg",
+  "category": "food",
+  "authored_at": "2026-05-26T00:00:00Z",
+  "authored_by": "claude+ljin0906@gmail.com",
+  "enumeration_prompt_version": "v1.0",
+  "enumeration_version": "v1.0",
+  "tracker_version": "v1.0",
+  "_corrections_applied": [
+    "C1: Osulloc mentions video_id gd_76d7b7534ef04a10 (23 rows) unified to gd_76d7b7534ef04a00 (matched overlays sheet).",
+    "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
+  ],
+  "_todo_phase_b": [
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
+    "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
+  ],
+  "expected_products": [
+    {
+      "label_kr": "종가 일상행복 포기김치 10kg",
+      "first_appearance_ms": 163000,
+      "expected_appearance_count_min": 20,
+      "expected_total_seconds_min": 1491,
+      "expected_windows_ms": [
+        [
+          163000,
+          165000
+        ],
+        [
+          392000,
+          400000
+        ],
+        [
+          401000,
+          455000
+        ],
+        [
+          524000,
+          782000
+        ],
+        [
+          944000,
+          951000
+        ],
+        [
+          1010000,
+          1610000
+        ],
+        [
+          1693000,
+          1900000
+        ],
+        [
+          1994000,
+          2024000
+        ],
+        [
+          2891000,
+          2899000
+        ],
+        [
+          2944000,
+          2960000
+        ],
+        [
+          3005000,
+          3008000
+        ],
+        [
+          3057000,
+          3239000
+        ],
+        [
+          3443000,
+          3533000
+        ],
+        [
+          3700000,
+          3726000
+        ]
+      ],
+      "category_hint": "korean side dish",
+      "annotator_product_id": "A"
+    },
+    {
+      "label_kr": "종가 봄동 겉절이 1.1kg",
+      "first_appearance_ms": 154000,
+      "expected_appearance_count_min": 13,
+      "expected_total_seconds_min": 675,
+      "expected_windows_ms": [
+        [
+          154000,
+          171000
+        ],
+        [
+          258000,
+          277000
+        ],
+        [
+          455000,
+          494000
+        ],
+        [
+          949000,
+          977000
+        ],
+        [
+          2025000,
+          2046000
+        ],
+        [
+          2544000,
+          2742000
+        ],
+        [
+          2760000,
+          2840000
+        ],
+        [
+          2961000,
+          2983000
+        ],
+        [
+          3008000,
+          3056000
+        ],
+        [
+          3240000,
+          3443000
+        ]
+      ],
+      "category_hint": "korean side dish",
+      "annotator_product_id": "B"
+    },
+    {
+      "label_kr": "국물내기 한알 100g, 4종 (택 2)",
+      "first_appearance_ms": 349000,
+      "expected_appearance_count_min": 3,
+      "expected_total_seconds_min": 80,
+      "expected_windows_ms": [
+        [
+          349000,
+          400000
+        ],
+        [
+          494000,
+          523000
+        ]
+      ],
+      "category_hint": "korean side dish",
+      "annotator_product_id": "C"
+    }
+  ],
+  "expected_clip_for_product": [],
+  "expected_negatives": []
+}

@@ -1,11 +1,17 @@
-import { useReducer, useCallback } from "react";
+import { useReducer, useCallback, useRef } from "react";
 import type {
   EditorState,
   EditorAction,
   EditorClip,
   EditorSubtitle,
+  SubtitleStyle,
   HistoryEntry,
+  LayerOrderId,
+  Playback,
+  PlaybackEvent,
+  PlaybackRate,
 } from "../lib/types";
+import { nextRate, prevRate } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
 import {
   createDefaultBackgroundOverlay,
@@ -15,6 +21,11 @@ import {
 } from "../lib/overlay-defaults";
 import type { StarterTemplateStyle } from "../lib/starter-templates";
 import { recomputeTimeline, getTotalDuration } from "../lib/timeline-math";
+import {
+  splitSubtitleText,
+  splitSubtitlesAtMs,
+  splitClipsAtMs,
+} from "../lib/clip-subtitle-link";
 import { DEFAULT_OUTPUT, DEFAULT_ZOOM, DEFAULT_SUBTITLE_STYLE, DEFAULT_SUBTITLE_DURATION_MS } from "../constants";
 import { parseSpeakerTranscript } from "@/lib/speaker-transcript";
 
@@ -24,21 +35,233 @@ const INITIAL_STATE: EditorState = {
   clips: [],
   subtitles: [],
   overlays: [],
+  videoTransform: {
+    x: 0.5,
+    y: 0.5,
+    scale: 1,
+    rotationDeg: 0,
+    outline: null,
+    shadow: null,
+  },
+  layerOrder: [{ kind: "video" }, { kind: "subtitles" }],
   selectedClipIndex: null,
   selectedSubtitleIndex: null,
   selectedOverlayId: null,
+  // 2026-05-24 — selection-based routing model. ``selectedVideo`` and
+  // ``selectedLetterbox`` light up when the operator clicks the host
+  // video element or a letterbox bar in the preview canvas; the
+  // background panel's existing 화면정렬 / 레이어순서 / 윤곽선 controls
+  // route by which slot is active.
+  selectedVideo: false,
+  selectedLetterbox: false,
+  razorMode: false,
   playheadMs: 0,
-  isPlaying: false,
+  playback: { kind: "idle" },
   totalDurationMs: 0,
   zoom: DEFAULT_ZOOM,
   isDirty: false,
   history: [],
+  redoHistory: [],
+  // No marks set yet — composition-builder treats null as "use whole clip".
+  inPointMs: null,
+  outPointMs: null,
 };
 
 const HISTORY_LIMIT = 50;
 
 function clampVolume(v: number): number {
   return Math.max(0, Math.min(3, v));
+}
+
+// Build a canonical layerOrder.
+//
+// Stack policy:
+//   bottom → top
+//   1) media segment (free reorder inside): video, background overlays,
+//      letterbox bars. The default insert order is video → backgrounds
+//      → letterbox so a freshly-added background tucks behind the
+//      letterbox and the host video sits at the very bottom — but the
+//      operator can REORDER_LAYER any of the three past the others to
+//      build, for example, a "letterbox as background frame + video
+//      inset on top" template style.
+//   2) subtitles — always above the media segment.
+//   3) text overlays (sorted by layerIndex) — always at the very top.
+//
+// Subtitles + text overlays are pinned: REORDER_LAYER rejects any
+// move on those slots up front, and the normaliser routes them back
+// above the media segment if they ever drift.
+function buildLayerOrder(
+  overlays: EditorOverlay[],
+  hasLetterbox: boolean,
+): LayerOrderId[] {
+  const base: LayerOrderId[] = [{ kind: "video" }];
+  const bgSorted = overlays
+    .filter((o) => o.kind === "background")
+    .sort((a, b) => a.layerIndex - b.layerIndex);
+  for (const o of bgSorted) {
+    base.push({ kind: "overlay", id: o.id });
+  }
+  if (hasLetterbox) base.push({ kind: "letterbox" });
+  base.push({ kind: "subtitles" });
+  const textSorted = overlays
+    .filter((o) => o.kind === "text")
+    .sort((a, b) => a.layerIndex - b.layerIndex);
+  for (const o of textSorted) {
+    base.push({ kind: "overlay", id: o.id });
+  }
+  return base;
+}
+
+// Re-sort a layerOrder so it respects buildLayerOrder's policy without
+// dropping any slot the caller already had. Used by mutators that
+// touch layerOrder directly (ADD_OVERLAY, REORDER_LAYER, APPLY_*)
+// where simply rebuilding from scratch would discard valid state.
+//
+// The media segment (video + letterbox + background overlays) is
+// preserved as a single ordered subsequence — input order is the
+// source of truth inside that band. That is what lets REORDER_LAYER
+// on any media slot rearrange the three against each other while
+// keeping subtitles + text overlays pinned to the very top.
+function normalizeLayerOrder(
+  layerOrder: LayerOrderId[],
+  overlays: EditorOverlay[],
+): LayerOrderId[] {
+  const kindOf = new Map(overlays.map((o) => [o.id, o.kind] as const));
+  const out: LayerOrderId[] = [];
+  // 1) media segment: video + letterbox + background overlays
+  //    interleaved in INPUT order.
+  for (const l of layerOrder) {
+    if (l.kind === "video") {
+      out.push({ kind: "video" });
+    } else if (l.kind === "letterbox") {
+      out.push({ kind: "letterbox" });
+    } else if (l.kind === "overlay" && kindOf.get(l.id) === "background") {
+      out.push({ kind: "overlay", id: l.id });
+    }
+  }
+  // Video fallback — if the input dropped the video slot, insert one
+  // at the bottom of the media segment so render-time zIndex stays
+  // defined.
+  if (!out.some((l) => l.kind === "video")) {
+    out.unshift({ kind: "video" });
+  }
+  // 2) subtitles — exactly one.
+  out.push({ kind: "subtitles" });
+  // 3) text overlays — preserve their original relative order.
+  for (const l of layerOrder) {
+    if (l.kind === "overlay" && kindOf.get(l.id) === "text") {
+      out.push({ kind: "overlay", id: l.id });
+    }
+  }
+  return out;
+}
+
+function layerOrderIdMatches(a: LayerOrderId, b: LayerOrderId): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "overlay" && b.kind === "overlay") return a.id === b.id;
+  return true;
+}
+
+// L8 — playback state machine. Pure function, no side effects.
+// Exported for unit testing (playback-state-machine.test.ts).
+export function reducePlayback(
+  pb: Playback,
+  event: PlaybackEvent,
+  playheadMs: number,
+  totalDurationMs: number,
+): Playback {
+  switch (pb.kind) {
+    case "idle": {
+      switch (event.kind) {
+        case "TOGGLE":
+          return { kind: "playing", rate: 1 };
+        case "PLAY_FORWARD":
+          return { kind: "playing", rate: 1 };
+        case "PLAY_BACKWARD_OR_SLOW": {
+          // jog -1s, stay idle — caller reads playheadMs from state
+          return pb;
+        }
+        case "HARD_PAUSE":
+          return pb;
+        case "SEEK":
+          return { kind: "seeking", from: 0, to: event.toMs, resume: { kind: "idle" } };
+        case "SEEK_DONE":
+          return pb;
+        case "REACHED_END":
+          return pb;
+        case "SET_RATE":
+          return pb;
+      }
+      break;
+    }
+    case "playing": {
+      switch (event.kind) {
+        case "TOGGLE":
+          return { kind: "paused", pausedAtMs: playheadMs, resumeRate: pb.rate };
+        case "PLAY_FORWARD":
+          return { kind: "playing", rate: nextRate(pb.rate) };
+        case "PLAY_BACKWARD_OR_SLOW":
+          if (pb.rate > 1) return { kind: "playing", rate: prevRate(pb.rate) };
+          // rate=1: pause and jog -1s
+          return { kind: "paused", pausedAtMs: Math.max(0, playheadMs - 1000), resumeRate: 1 };
+        case "HARD_PAUSE":
+          return { kind: "paused", pausedAtMs: playheadMs, resumeRate: 1 };
+        case "SEEK":
+          return { kind: "seeking", from: playheadMs, to: event.toMs, resume: { kind: "playing", rate: pb.rate } };
+        case "SEEK_DONE":
+          return pb;
+        case "REACHED_END":
+          return { kind: "paused", pausedAtMs: totalDurationMs, resumeRate: pb.rate };
+        case "SET_RATE":
+          return { kind: "playing", rate: event.rate };
+      }
+      break;
+    }
+    case "paused": {
+      switch (event.kind) {
+        case "TOGGLE":
+          return { kind: "playing", rate: pb.resumeRate };
+        case "PLAY_FORWARD":
+          return { kind: "playing", rate: 1 };
+        case "PLAY_BACKWARD_OR_SLOW":
+          // jog -1s, stay paused
+          return pb;
+        case "HARD_PAUSE":
+          return pb;
+        case "SEEK":
+          return { kind: "seeking", from: pb.pausedAtMs, to: event.toMs, resume: { kind: "paused", pausedAtMs: event.toMs, resumeRate: pb.resumeRate } };
+        case "SEEK_DONE":
+          return pb;
+        case "REACHED_END":
+          return pb;
+        case "SET_RATE":
+          return { kind: "paused", pausedAtMs: pb.pausedAtMs, resumeRate: event.rate };
+      }
+      break;
+    }
+    case "seeking": {
+      switch (event.kind) {
+        case "TOGGLE":
+        case "PLAY_FORWARD":
+        case "PLAY_BACKWARD_OR_SLOW":
+        case "HARD_PAUSE":
+        case "SET_RATE":
+          return pb;
+        case "SEEK":
+          // coalesce: keep from, update to
+          return { kind: "seeking", from: pb.from, to: event.toMs, resume: pb.resume };
+        case "SEEK_DONE": {
+          // resume with playheadMs = to
+          const r = pb.resume;
+          if (r.kind === "paused") return { ...r, pausedAtMs: pb.to };
+          return r;
+        }
+        case "REACHED_END":
+          return { kind: "paused", pausedAtMs: totalDurationMs, resumeRate: 1 };
+      }
+      break;
+    }
+  }
 }
 
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -56,9 +279,42 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
 
     case "INIT_FROM_COMPOSITION": {
       const merged = { ...INITIAL_STATE, ...action.state };
+      // Hydrate scale + outline defaults so saved compositions without
+      // those fields render identically to their pre-scale / pre-outline
+      // state.
+      const incomingVt = merged.videoTransform as {
+        x: number;
+        y: number;
+        scale?: number;
+        rotationDeg?: number;
+        outline?: { color: string; widthPx: number } | null;
+        shadow?: {
+          color: string;
+          offsetX: number;
+          offsetY: number;
+          blurPx: number;
+          spreadPx: number;
+        } | null;
+      };
+      const videoTransform = {
+        x: incomingVt.x,
+        y: incomingVt.y,
+        scale: incomingVt.scale ?? 1,
+        rotationDeg: incomingVt.rotationDeg ?? 0,
+        outline: incomingVt.outline ?? null,
+        shadow: incomingVt.shadow ?? null,
+      };
+      // Rebuild layerOrder from scratch to guarantee consistency with
+      // the hydrated overlays/letterbox, regardless of what was persisted.
+      const layerOrder = buildLayerOrder(
+        merged.overlays,
+        merged.letterbox != null,
+      );
       const clips = recomputeTimeline(merged.clips);
       return {
         ...merged,
+        videoTransform,
+        layerOrder,
         clips,
         totalDurationMs: getTotalDuration(clips),
         isDirty: false,
@@ -77,8 +333,9 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
 
     case "REMOVE_CLIP": {
       if (action.index < 0 || action.index >= state.clips.length) return state;
-      const next = state.clips.filter((_, i) => i !== action.index);
-      const clips = recomputeTimeline(next);
+      // Remove the clip but do NOT recompute timeline or shift
+      // downstream clips/subtitles — gaps are allowed.
+      const clips = state.clips.filter((_, i) => i !== action.index);
       let newSelected = state.selectedClipIndex;
       if (newSelected != null) {
         if (newSelected === action.index) newSelected = null;
@@ -107,11 +364,13 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       const next = [...state.clips];
       const [moved] = next.splice(fromIndex, 1);
       next.splice(toIndex, 0, moved);
-      const clips = recomputeTimeline(next);
+      // Swap timelineStartMs between the moved clip and the displaced
+      // clip so their visual positions exchange. No full recompute —
+      // gaps are preserved.
       return {
         ...state,
-        clips,
-        totalDurationMs: getTotalDuration(clips),
+        clips: next,
+        totalDurationMs: getTotalDuration(next),
         selectedClipIndex: toIndex,
         isDirty: true,
       };
@@ -127,13 +386,64 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       const newEnd = trimEndMs != null
         ? Math.min(clip.originalEndMs, Math.max(trimEndMs, newStart + 1))
         : clip.trimEndMs;
-      const next = state.clips.map((c, i) =>
-        i === index ? { ...c, trimStartMs: newStart, trimEndMs: newEnd } : c,
+      // When the start handle is trimmed, the clip's timelineStartMs
+      // shifts so the visible portion stays anchored at the same visual
+      // position on the timeline. When the end handle is trimmed, only
+      // trimEndMs changes — timelineStartMs is unaffected.
+      const startDelta = newStart - clip.trimStartMs;
+      const newTimelineStart = clip.timelineStartMs + startDelta;
+      // Update only the trimmed clip — no cascading recompute so gaps
+      // are preserved and downstream clips stay in place.
+      const clips = state.clips.map((c, i) =>
+        i === index
+          ? { ...c, trimStartMs: newStart, trimEndMs: newEnd, timelineStartMs: newTimelineStart }
+          : c,
       );
-      const clips = recomputeTimeline(next);
+      // Subtitles are NOT mutated — render-time filtering via
+      // getVisibleSubtitles hides out-of-range subtitles; extending
+      // the trim back restores them.
       return {
         ...state,
         clips,
+        totalDurationMs: getTotalDuration(clips),
+        isDirty: true,
+      };
+    }
+
+    case "MOVE_CLIP": {
+      if (action.index < 0 || action.index >= state.clips.length) return state;
+      const target = state.clips[action.index];
+      const oldStart = target.timelineStartMs;
+      const newStart = Math.max(0, action.timelineStartMs);
+      const delta = newStart - oldStart;
+      if (delta === 0) return state;
+      const clipDuration = target.trimEndMs - target.trimStartMs;
+      const oldEnd = oldStart + clipDuration;
+      // Move the clip + every subtitle / text-overlay that lives
+      // inside its OLD window by the same delta so the operator's
+      // mental model "subtitle is glued to the scene" holds (frame-
+      // level link). Items outside the window stay put — they belong
+      // to other clips or to no clip at all.
+      const clips = state.clips.map((c, i) =>
+        i === action.index ? { ...c, timelineStartMs: newStart } : c,
+      );
+      const subtitles = state.subtitles.map((s) => {
+        const within = s.startMs >= oldStart && s.endMs <= oldEnd;
+        return within
+          ? { ...s, startMs: s.startMs + delta, endMs: s.endMs + delta }
+          : s;
+      });
+      const overlays = state.overlays.map((o) => {
+        const within = o.startMs >= oldStart && o.endMs <= oldEnd;
+        return within
+          ? { ...o, startMs: o.startMs + delta, endMs: o.endMs + delta }
+          : o;
+      });
+      return {
+        ...state,
+        clips,
+        subtitles,
+        overlays,
         totalDurationMs: getTotalDuration(clips),
         isDirty: true,
       };
@@ -151,7 +461,12 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return {
         ...state,
         selectedClipIndex: action.index,
+        // Mutual exclusion — picking a clip clears every other selection
+        // slot so the right-panel controls have an unambiguous target.
         selectedSubtitleIndex: action.index != null ? null : state.selectedSubtitleIndex,
+        selectedOverlayId: action.index != null ? null : state.selectedOverlayId,
+        selectedVideo: action.index != null ? false : state.selectedVideo,
+        selectedLetterbox: action.index != null ? false : state.selectedLetterbox,
       };
 
     case "ADD_SUBTITLE": {
@@ -170,6 +485,15 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return { ...state, subtitles, isDirty: true };
     }
 
+    case "UPDATE_ALL_SUBTITLE_STYLES": {
+      if (state.subtitles.length === 0) return state;
+      const subtitles = state.subtitles.map((s) => ({
+        ...s,
+        style: { ...s.style, ...action.updates },
+      }));
+      return { ...state, subtitles, isDirty: true };
+    }
+
     case "REMOVE_SUBTITLE": {
       if (action.index < 0 || action.index >= state.subtitles.length) return state;
       let newSelected = state.selectedSubtitleIndex;
@@ -177,6 +501,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         if (newSelected === action.index) newSelected = null;
         else if (newSelected > action.index) newSelected -= 1;
       }
+      // Removing a subtitle no longer affects clips — gaps are allowed
+      // and clips keep their positions independently.
       return {
         ...state,
         subtitles: state.subtitles.filter((_, i) => i !== action.index),
@@ -190,27 +516,84 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         ...state,
         selectedSubtitleIndex: action.index,
         selectedClipIndex: action.index != null ? null : state.selectedClipIndex,
+        selectedOverlayId: action.index != null ? null : state.selectedOverlayId,
+        selectedVideo: action.index != null ? false : state.selectedVideo,
+        selectedLetterbox: action.index != null ? false : state.selectedLetterbox,
       };
 
     case "ADD_OVERLAY": {
-      // New overlay lands at the front (highest layer_index) so the user sees
-      // it on top of existing overlays. Caller can REORDER_OVERLAY afterward.
-      const maxLayer = state.overlays.reduce(
-        (m, o) => Math.max(m, o.layerIndex),
-        -1,
-      );
-      const positioned: EditorOverlay = {
-        ...action.overlay,
-        layerIndex: maxLayer + 1,
-      };
+      // Layer policy:
+      //   - background overlays go to the BOTTOM (layerIndex 0; existing
+      //     overlays shift up by 1) so a freshly-added background sits
+      //     behind the video + everything else, acting as the canvas
+      //     filler for landscape video centered on the 9:16 canvas.
+      //   - non-background (text/image) overlays still land at the
+      //     FRONT so the operator sees their new annotation on top of
+      //     prior content. Caller can REORDER_OVERLAY afterward.
+      const isBackground = action.overlay.kind === "background";
+      let overlays: EditorOverlay[];
+      let positioned: EditorOverlay;
+      if (isBackground) {
+        const shifted = state.overlays.map((o) => ({
+          ...o,
+          layerIndex: o.layerIndex + 1,
+        }));
+        positioned = { ...action.overlay, layerIndex: 0 };
+        overlays = [...shifted, positioned];
+      } else {
+        const maxLayer = state.overlays.reduce(
+          (m, o) => Math.max(m, o.layerIndex),
+          -1,
+        );
+        positioned = { ...action.overlay, layerIndex: maxLayer + 1 };
+        overlays = [...state.overlays, positioned];
+      }
+      // Densely repack layerIndex 0..N-1 so there are no gaps after a
+      // background-add shift (mirrors REORDER_OVERLAY's post-splice
+      // repack). Without this, the first text overlay would keep
+      // layerIndex 1 after a background insert, leaving a hole at 0
+      // that confuses downstream assertions and the reorder logic.
+      const sorted = [...overlays].sort((a, b) => a.layerIndex - b.layerIndex);
+      overlays = sorted.map((o, i) => ({ ...o, layerIndex: i }));
+      // A new background slot defaults to BELOW the letterbox (or
+      // before the subtitles slot when no letterbox exists), matching
+      // the operator policy that the letterbox can act as a "frame"
+      // and the operator promotes a background above it via
+      // send-to-front. Text overlays get appended on top; the
+      // normaliser sorts everything into the correct segment either
+      // way.
+      let pendingLayerOrder: LayerOrderId[];
+      if (isBackground) {
+        pendingLayerOrder = [...state.layerOrder];
+        const lbIdx = pendingLayerOrder.findIndex((l) => l.kind === "letterbox");
+        const subIdx = pendingLayerOrder.findIndex((l) => l.kind === "subtitles");
+        const insertAt =
+          lbIdx >= 0 ? lbIdx : subIdx >= 0 ? subIdx : pendingLayerOrder.length;
+        pendingLayerOrder.splice(insertAt, 0, {
+          kind: "overlay",
+          id: positioned.id,
+        });
+      } else {
+        pendingLayerOrder = [
+          ...state.layerOrder,
+          { kind: "overlay", id: positioned.id },
+        ];
+      }
+      const layerOrder = normalizeLayerOrder(pendingLayerOrder, overlays);
       return {
         ...state,
-        overlays: [...state.overlays, positioned],
+        overlays,
+        layerOrder,
         selectedOverlayId: positioned.id,
         // Selecting a new overlay clears clip + subtitle selection so the
-        // panel switches to overlay-edit mode.
+        // panel switches to overlay-edit mode. Also clears the
+        // video/letterbox selection slots so the background-panel
+        // controls stay in sync with the new overlay-selected state
+        // (selection-based routing model — 2026-05-24).
         selectedClipIndex: null,
         selectedSubtitleIndex: null,
+        selectedVideo: false,
+        selectedLetterbox: false,
         isDirty: true,
       };
     }
@@ -230,9 +613,13 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
 
     case "REMOVE_OVERLAY": {
       const overlays = state.overlays.filter((o) => o.id !== action.id);
+      const layerOrder = state.layerOrder.filter(
+        (l) => !(l.kind === "overlay" && l.id === action.id),
+      );
       return {
         ...state,
         overlays,
+        layerOrder,
         selectedOverlayId:
           state.selectedOverlayId === action.id ? null : state.selectedOverlayId,
         isDirty: true,
@@ -245,47 +632,545 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         selectedOverlayId: action.id,
         selectedClipIndex: action.id != null ? null : state.selectedClipIndex,
         selectedSubtitleIndex: action.id != null ? null : state.selectedSubtitleIndex,
+        selectedVideo: action.id != null ? false : state.selectedVideo,
+        selectedLetterbox: action.id != null ? false : state.selectedLetterbox,
+      };
+
+    case "SELECT_VIDEO":
+      return {
+        ...state,
+        selectedVideo: action.active,
+        // Mutual exclusion — selecting the video clears every other
+        // selection slot. ``active=false`` only clears the video slot.
+        selectedClipIndex: action.active ? null : state.selectedClipIndex,
+        selectedSubtitleIndex: action.active ? null : state.selectedSubtitleIndex,
+        selectedOverlayId: action.active ? null : state.selectedOverlayId,
+        selectedLetterbox: action.active ? false : state.selectedLetterbox,
+      };
+
+    case "SELECT_LETTERBOX":
+      return {
+        ...state,
+        selectedLetterbox: action.active,
+        selectedClipIndex: action.active ? null : state.selectedClipIndex,
+        selectedSubtitleIndex: action.active ? null : state.selectedSubtitleIndex,
+        selectedOverlayId: action.active ? null : state.selectedOverlayId,
+        selectedVideo: action.active ? false : state.selectedVideo,
       };
 
     case "REORDER_OVERLAY": {
       const idx = state.overlays.findIndex((o) => o.id === action.id);
       if (idx < 0) return state;
-      const sorted = [...state.overlays].sort(
-        (a, b) => a.layerIndex - b.layerIndex,
+      // Per-overlay reorder. layerIndex doubles as the timeline row
+      // index and the preview-stack zIndex. We mutate ONLY the
+      // dragged overlay's layerIndex so dropping into an empty row
+      // works (no swap target required). Multiple overlays may share
+      // a layerIndex (they overlap visually in the timeline row).
+      // MAX_TEXT_OVERLAY_LAYER caps the row at 2 rows total (0, 1)
+      // — operator policy 2026-05-24: '텍스트용 row는 최대 2개로
+      // 줄여줘, drag 시 새로운 row를 신설하지 않음'. forward beyond
+      // the cap → no-op.
+      const MAX_TEXT_OVERLAY_LAYER = 1;
+      const current = state.overlays[idx];
+      const maxLayer = state.overlays.reduce(
+        (acc, o) => Math.max(acc, o.layerIndex),
+        0,
       );
-      const sortedIdx = sorted.findIndex((o) => o.id === action.id);
-      let targetSortedIdx = sortedIdx;
+      let nextLayer = current.layerIndex;
       switch (action.direction) {
         case "back":
-          targetSortedIdx = 0;
+          nextLayer = 0;
           break;
         case "front":
-          targetSortedIdx = sorted.length - 1;
+          nextLayer = Math.min(MAX_TEXT_OVERLAY_LAYER, maxLayer + 1);
           break;
         case "backward":
-          targetSortedIdx = Math.max(0, sortedIdx - 1);
+          nextLayer = Math.max(0, current.layerIndex - 1);
           break;
         case "forward":
-          targetSortedIdx = Math.min(sorted.length - 1, sortedIdx + 1);
+          nextLayer = Math.min(MAX_TEXT_OVERLAY_LAYER, current.layerIndex + 1);
           break;
       }
-      if (targetSortedIdx === sortedIdx) return state;
-      const [moved] = sorted.splice(sortedIdx, 1);
-      sorted.splice(targetSortedIdx, 0, moved);
-      // Re-pack layer indices densely from 0 to keep the dropdown labels
-      // legible ("프리셋1" stays "프리셋1") and avoids unbounded growth.
-      const overlays = sorted.map((o, i) => ({ ...o, layerIndex: i }));
+      if (nextLayer === current.layerIndex) return state;
+      const overlays = state.overlays.map((o) =>
+        o.id === action.id ? { ...o, layerIndex: nextLayer } : o,
+      );
       return { ...state, overlays, isDirty: true };
+    }
+
+    case "REORDER_LAYER": {
+      const { layer, direction } = action;
+      // 2026-05-25 — subtitles + text-overlay slots are pinned to the
+      // top of the stack (above any background overlay) and may not be
+      // reordered. Reject those attempts up front so the popover's
+      // dispatch is a silent no-op even if the UI's disabled guard is
+      // bypassed.
+      if (layer.kind === "subtitles") return state;
+      if (layer.kind === "overlay") {
+        const overlay = state.overlays.find((o) => o.id === layer.id);
+        if (overlay && overlay.kind === "text") return state;
+      }
+      const idx = state.layerOrder.findIndex((l) => layerOrderIdMatches(l, layer));
+      if (idx < 0) return state;
+      const next = [...state.layerOrder];
+      let targetIdx = idx;
+      switch (direction) {
+        case "back":
+          targetIdx = 0;
+          break;
+        case "front":
+          targetIdx = next.length - 1;
+          break;
+        case "backward":
+          targetIdx = Math.max(0, idx - 1);
+          break;
+        case "forward":
+          targetIdx = Math.min(next.length - 1, idx + 1);
+          break;
+      }
+      if (targetIdx === idx) return state;
+      const [moved] = next.splice(idx, 1);
+      next.splice(targetIdx, 0, moved);
+      // Renormalise so a reorder that would otherwise push a background
+      // overlay above the subtitles slot snaps back into the segment
+      // boundaries (background → subtitles → text). Within-segment
+      // ordering is preserved by normaliseLayerOrder.
+      const normalised = normalizeLayerOrder(next, state.overlays);
+      return { ...state, layerOrder: normalised, isDirty: true };
+    }
+
+    case "UPDATE_VIDEO_POSITION": {
+      const x = Math.max(0, Math.min(1, action.x));
+      const y = Math.max(0, Math.min(1, action.y));
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, x, y },
+        isDirty: true,
+      };
+    }
+
+    case "UPDATE_VIDEO_SCALE": {
+      const scale = Math.max(0.1, Math.min(10, action.scale));
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, scale },
+        isDirty: true,
+      };
+    }
+
+    case "UPDATE_VIDEO_ROTATION": {
+      // Clamp to the same [-360, 360] range used by overlay rotation
+      // so the shift-snap UX (every 90°) lands on the same multiples.
+      const rotationDeg = Math.max(-360, Math.min(360, action.rotationDeg));
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, rotationDeg },
+        isDirty: true,
+      };
+    }
+
+    case "SET_VIDEO_SHADOW": {
+      // ``null`` clears the shadow. Numeric ranges mirror the overlay
+      // ShadowProps clamps: offsetX/offsetY in [-100, 100], blurPx in
+      // [0, 200], spreadPx in [0, 100] (see overlay-types.ts).
+      const shadow =
+        action.shadow === null
+          ? null
+          : {
+              color: action.shadow.color,
+              offsetX: Math.max(-100, Math.min(100, action.shadow.offsetX)),
+              offsetY: Math.max(-100, Math.min(100, action.shadow.offsetY)),
+              blurPx: Math.max(0, Math.min(200, action.shadow.blurPx)),
+              spreadPx: Math.max(0, Math.min(100, action.shadow.spreadPx)),
+            };
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, shadow },
+        isDirty: true,
+      };
+    }
+
+    case "SET_VIDEO_OUTLINE": {
+      // Outline is the operator-added border around the video frame.
+      // ``null`` clears it. Width is clamped to [0, 50] matching the
+      // existing 굵기 step range used by overlay strokes + letterbox
+      // border. We keep the outline object alive at width=0 so the
+      // operator can dial back up without losing their colour pick —
+      // explicit ``null`` is the "remove" signal.
+      const outline =
+        action.outline === null
+          ? null
+          : {
+              color: action.outline.color,
+              widthPx: Math.max(0, Math.min(50, action.outline.widthPx)),
+            };
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, outline },
+        isDirty: true,
+      };
+    }
+
+    case "SET_LETTERBOX": {
+      if (!action.letterbox) {
+        // Strip the letterbox slot from the layer order when the operator
+        // removes the letterbox (undefined → no slot).
+        const layerOrder = state.layerOrder.filter(
+          (l) => l.kind !== "letterbox",
+        );
+        return { ...state, letterbox: undefined, layerOrder, isDirty: true };
+      }
+      // Each bar capped at 50% (360 px on the 720-tall output canvas)
+      // so the two bars together never fully cover the canvas.
+      const topHeightPct = Math.max(0, Math.min(50, action.letterbox.topHeightPct));
+      const bottomHeightPct = Math.max(
+        0,
+        Math.min(50, action.letterbox.bottomHeightPct),
+      );
+      // Q4 — outline (윤곽선) defaults: width seeded to 5 px the
+      // moment the operator picks a colour. Caller may override but
+      // doesn't need to.
+      const borderColor = action.letterbox.borderColor ?? null;
+      const borderWidthPx = Math.max(
+        0,
+        Math.min(50, action.letterbox.borderWidthPx),
+      );
+      // First-add default: letterbox sits just before the subtitles
+      // slot — above any existing background, mirroring the media
+      // segment's default order (video → backgrounds → letterbox).
+      // Adjusts to existing letterbox slot (height/color edits) leave
+      // layerOrder alone so a manual reorder isn't clobbered.
+      const hasLetterboxSlot = state.layerOrder.some(
+        (l) => l.kind === "letterbox",
+      );
+      const layerOrderForLetterbox: LayerOrderId[] = hasLetterboxSlot
+        ? state.layerOrder
+        : (() => {
+            const next = [...state.layerOrder];
+            const subIdx = next.findIndex((l) => l.kind === "subtitles");
+            const insertAt = subIdx >= 0 ? subIdx : next.length;
+            next.splice(insertAt, 0, { kind: "letterbox" });
+            return next;
+          })();
+      return {
+        ...state,
+        letterbox: {
+          topHeightPct,
+          bottomHeightPct,
+          fillColor: action.letterbox.fillColor,
+          borderColor,
+          borderWidthPx,
+        },
+        layerOrder: layerOrderForLetterbox,
+        isDirty: true,
+      };
     }
 
     case "SET_PLAYHEAD":
       return { ...state, playheadMs: Math.max(0, action.ms) };
 
-    case "SET_PLAYING":
-      return { ...state, isPlaying: action.playing };
+    case "PLAYBACK_EVENT": {
+      const pb = reducePlayback(state.playback, action.event, state.playheadMs, state.totalDurationMs);
+      if (pb === state.playback) return state;
+      return { ...state, playback: pb };
+    }
+
+    case "SET_IN_POINT": {
+      // L4 / T2 — clamp to [0, totalDurationMs] and to be < outPointMs
+      // (if set) so the range can never collapse to negative length.
+      // Passing null clears the mark.
+      if (action.ms === null) return { ...state, inPointMs: null };
+      const clamped = Math.max(0, Math.min(state.totalDurationMs, action.ms));
+      const finalMs =
+        state.outPointMs != null
+          ? Math.min(clamped, Math.max(0, state.outPointMs - 1))
+          : clamped;
+      return { ...state, inPointMs: finalMs };
+    }
+
+    case "SET_OUT_POINT": {
+      if (action.ms === null) return { ...state, outPointMs: null };
+      const clamped = Math.max(0, Math.min(state.totalDurationMs, action.ms));
+      const finalMs =
+        state.inPointMs != null
+          ? Math.max(clamped, state.inPointMs + 1)
+          : clamped;
+      return { ...state, outPointMs: finalMs };
+    }
+
+    case "SPLIT_SUBTITLE": {
+      // L5 / T5 — slice the subtitle in two at atMs. No-op if atMs
+      // doesn't strictly straddle the timing window (a split at the
+      // exact edge would create a zero-duration block).
+      const src = state.subtitles[action.index];
+      if (!src) return state;
+      if (action.atMs <= src.startMs || action.atMs >= src.endMs) return state;
+      // Proportional text split: compute the time-fraction of the cut
+      // within this subtitle's window and split the text at the nearest
+      // eojeol (Korean word) boundary. Even with sentence-level seed STT
+      // data (no word-level timestamps) the heuristic produces a
+      // reasonable split at eojeol granularity.
+      const subDuration = src.endMs - src.startMs;
+      const fraction = subDuration > 0
+        ? (action.atMs - src.startMs) / subDuration
+        : 0.5;
+      const [headText, tailText] = splitSubtitleText(src.text, fraction);
+      const head = { ...src, text: headText, endMs: action.atMs };
+      const tail = {
+        ...src,
+        id: generateSubtitleId(),
+        text: tailText,
+        startMs: action.atMs,
+      };
+      const subtitles = [...state.subtitles];
+      subtitles.splice(action.index, 1, head, tail);
+      // Also split any clip whose composition window straddles atMs.
+      // No recomputeTimeline — splitClipsAtMs already sets correct
+      // timelineStartMs for both head and tail.
+      const clips = splitClipsAtMs(state.clips, action.atMs);
+      // Selection stays on the head — the operator just split off the
+      // tail, so the original selection's "anchor" is the head.
+      return {
+        ...state,
+        subtitles,
+        clips,
+        totalDurationMs: getTotalDuration(clips),
+        isDirty: true,
+      };
+    }
+
+    case "SPLIT_OVERLAY": {
+      const idx = state.overlays.findIndex((o) => o.id === action.id);
+      if (idx < 0) return state;
+      const src = state.overlays[idx];
+      if (src.kind !== "text") return state; // only text overlays split
+      if (action.atMs <= src.startMs || action.atMs >= src.endMs) return state;
+      const head: typeof src = { ...src, endMs: action.atMs };
+      const tail: typeof src = {
+        ...src,
+        id: generateOverlayId("text"),
+        startMs: action.atMs,
+      };
+      const overlays = [...state.overlays];
+      overlays.splice(idx, 1, head, tail);
+      return { ...state, overlays, isDirty: true };
+    }
+
+    case "SPLIT_CLIP": {
+      // Splitting a clip at timeline coord atMs means cutting it at
+      // the SOURCE coord (clip.trimStartMs + (atMs - clip.timelineStartMs)).
+      // Head keeps the original id; tail gets a fresh clip id and its
+      // timeline position becomes atMs.
+      const src = state.clips[action.index];
+      if (!src) return state;
+      const clipStart = src.timelineStartMs;
+      const clipEnd = clipStart + (src.trimEndMs - src.trimStartMs);
+      if (action.atMs <= clipStart || action.atMs >= clipEnd) return state;
+      const sourceCut = src.trimStartMs + (action.atMs - clipStart);
+      const head = { ...src, trimEndMs: sourceCut };
+      const tail = {
+        ...src,
+        id: generateClipId(),
+        trimStartMs: sourceCut,
+        timelineStartMs: action.atMs,
+      };
+      const clips = [...state.clips];
+      clips.splice(action.index, 1, head, tail);
+      // No recomputeTimeline — gaps are allowed, and the head/tail
+      // already have correct timelineStartMs values.
+      // Also split any subtitle that straddles atMs within this clip's window.
+      const subtitles = splitSubtitlesAtMs(state.subtitles, action.atMs, [clipStart, clipEnd]);
+      return {
+        ...state,
+        clips,
+        subtitles,
+        totalDurationMs: getTotalDuration(clips),
+        isDirty: true,
+      };
+    }
+
+    case "SET_RAZOR_MODE":
+      return { ...state, razorMode: action.active };
 
     case "SET_ZOOM":
-      return { ...state, zoom: Math.max(25, Math.min(300, action.zoom)) };
+      // Floor reduced from 25 → 0.1 so a multi-minute / multi-hour
+      // video can fully zoom out (1300px viewport / 3600s = 0.36 px/s
+      // for a 1 hr clip). UI-level clamp lives in TimelineZoomControl
+      // where the dynamic min is computed from the actual duration.
+      return { ...state, zoom: Math.max(0.1, Math.min(300, action.zoom)) };
+
+    case "APPLY_COMPOSITION_TEMPLATE": {
+      // Operator-confirmed semantics (2026-05-24):
+      //   * subtitleStyle  → merge into every subtitle.style (text /
+      //                      timing untouched). Skip when null.
+      //   * overlays       → APPEND. Each payload overlay gets a fresh
+      //                      id, startMs = current playhead, endMs =
+      //                      playhead + durationMs.
+      //   * letterbox      → SET (overwrite) when non-null; skip on null.
+      //   * videoTransform → SET (overwrite).
+      // The caller is expected to push a snapshot before dispatching
+      // so Ctrl+Z reverts the whole apply in one stroke.
+      const p = action.payload;
+
+      // --- subtitle style merge -------------------------------------
+      const subtitles =
+        p.subtitleStyle == null
+          ? state.subtitles
+          : state.subtitles.map((s) => ({
+              ...s,
+              style: { ...s.style, ...p.subtitleStyle },
+            }));
+
+      // --- overlay append -------------------------------------------
+      const playhead = state.playheadMs;
+      // Highest existing layerIndex so appended overlays sit on top.
+      const baseLayer = state.overlays.reduce(
+        (m, o) => Math.max(m, o.layerIndex),
+        -1,
+      );
+      const appendedOverlays: EditorOverlay[] = [];
+      let nextLayer = baseLayer + 1;
+      for (const item of p.overlays) {
+        const id = generateOverlayId(item.kind === "text" ? "text" : "bg");
+        const startMs = playhead;
+        const endMs = playhead + Math.max(1, item.durationMs);
+        // payload is the overlay body without identity/timing. Reattach
+        // them along with the regenerated layerIndex so the new overlay
+        // sits above the stack.
+        const overlay = {
+          ...(item.payload as object),
+          kind: item.kind,
+          id,
+          startMs,
+          endMs,
+          layerIndex: nextLayer,
+        } as EditorOverlay;
+        appendedOverlays.push(overlay);
+        nextLayer += 1;
+      }
+      const overlays = [...state.overlays, ...appendedOverlays];
+
+      // --- letterbox SET --------------------------------------------
+      const letterbox = p.letterbox
+        ? {
+            topHeightPct: p.letterbox.topHeightPct,
+            bottomHeightPct: p.letterbox.bottomHeightPct,
+            fillColor: p.letterbox.fillColor,
+            borderColor: p.letterbox.borderColor,
+            borderWidthPx: p.letterbox.borderWidthPx,
+          }
+        : state.letterbox;
+
+      // --- videoTransform SET ---------------------------------------
+      // outline rides along on the videoTransform payload so the
+      // template carries the operator's border choice (Task 3 round-
+      // trip). Missing on legacy payloads → null (no outline).
+      const videoTransform = {
+        x: p.videoTransform.x,
+        y: p.videoTransform.y,
+        scale: p.videoTransform.scale,
+        // Legacy presets (pre-2026-05-24) didn't capture rotation /
+        // shadow — treat their absence as defaults so the apply still
+        // produces a valid state.
+        rotationDeg: p.videoTransform.rotationDeg ?? 0,
+        outline: p.videoTransform.outline ?? null,
+        shadow: p.videoTransform.shadow ?? null,
+      };
+
+      // Rebuild layerOrder.
+      //
+      // When the preset carries a ``layerOrder`` snapshot (2026-05-25
+      // round-trip), use it as the new stack base: overlay slot ids
+      // get rewritten via an index-aligned old→new id map (preset
+      // overlays[i] ↔ appendedOverlays[i]). Existing overlay slots
+      // that the operator already had on the canvas are appended on
+      // top so applying a preset is additive, not destructive.
+      // Letterbox slot is normalised against the (possibly newly-set)
+      // letterbox state.
+      //
+      // When the preset has no layerOrder (legacy presets pre-2026-05-25),
+      // fall back to the previous behaviour: keep state.layerOrder and
+      // simply append the new overlay slots on top.
+      let layerOrder: LayerOrderId[];
+      if (p.layerOrder && p.layerOrder.length > 0) {
+        const idMap = new Map<string, string>();
+        for (let i = 0; i < p.overlays.length; i += 1) {
+          const presetId = p.overlays[i].id;
+          if (presetId) idMap.set(presetId, appendedOverlays[i].id);
+        }
+        const mappedPresetOrder = p.layerOrder
+          .map((l): LayerOrderId | null => {
+            if (l.kind === "overlay") {
+              const newId = idMap.get(l.id);
+              return newId ? { kind: "overlay", id: newId } : null;
+            }
+            return { kind: l.kind };
+          })
+          .filter((l): l is LayerOrderId => l !== null);
+        // Existing overlay slots (operator had overlays before applying)
+        // — preserve order, drop any duplicates with appended ids.
+        const appendedIds = new Set(appendedOverlays.map((o) => o.id));
+        const existingOverlaySlots = state.layerOrder.filter(
+          (l): l is LayerOrderId =>
+            l.kind === "overlay" && !appendedIds.has(l.id),
+        );
+        layerOrder = [...mappedPresetOrder, ...existingOverlaySlots];
+        // Letterbox slot consistency: if letterbox is now null, strip
+        // any letterbox slot the preset may have carried. If letterbox
+        // is set but the mapped order didn't include it, insert above
+        // the video slot.
+        if (letterbox == null) {
+          layerOrder = layerOrder.filter((l) => l.kind !== "letterbox");
+        } else if (!layerOrder.some((l) => l.kind === "letterbox")) {
+          const videoIdx = layerOrder.findIndex((l) => l.kind === "video");
+          const insertAt = videoIdx >= 0 ? videoIdx + 1 : 0;
+          layerOrder.splice(insertAt, 0, { kind: "letterbox" });
+        }
+      } else {
+        layerOrder = [
+          ...state.layerOrder.filter(
+            (l) => !(l.kind === "letterbox" && letterbox == null),
+          ),
+        ];
+        // First-add letterbox lands above existing backgrounds, just
+        // before the subtitles slot — same default as SET_LETTERBOX so
+        // the two paths produce the same media-segment ordering.
+        if (letterbox && !layerOrder.some((l) => l.kind === "letterbox")) {
+          const subIdx = layerOrder.findIndex((l) => l.kind === "subtitles");
+          const insertAt = subIdx >= 0 ? subIdx : layerOrder.length;
+          layerOrder.splice(insertAt, 0, { kind: "letterbox" });
+        }
+        // Background appended overlays default BELOW the letterbox
+        // (or before subtitles when no letterbox); text overlays go on
+        // top via plain append. Mirrors ADD_OVERLAY's default.
+        for (const o of appendedOverlays) {
+          if (o.kind === "background") {
+            const lbIdx = layerOrder.findIndex((l) => l.kind === "letterbox");
+            const subIdx = layerOrder.findIndex((l) => l.kind === "subtitles");
+            const insertAt =
+              lbIdx >= 0 ? lbIdx : subIdx >= 0 ? subIdx : layerOrder.length;
+            layerOrder.splice(insertAt, 0, { kind: "overlay", id: o.id });
+          } else {
+            layerOrder.push({ kind: "overlay", id: o.id });
+          }
+        }
+      }
+
+      // Final normalise — guarantees subtitles + text overlays sit
+      // above any background overlay regardless of how the preset
+      // captured them (operator policy 2026-05-25).
+      const normalisedLayerOrder = normalizeLayerOrder(layerOrder, overlays);
+
+      return {
+        ...state,
+        subtitles,
+        overlays,
+        letterbox,
+        videoTransform,
+        layerOrder: normalisedLayerOrder,
+        isDirty: true,
+      };
+    }
 
     case "MARK_CLEAN":
       return { ...state, isDirty: false };
@@ -296,49 +1181,237 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       // get up to 50 reversible gestures, which mirrors the
       // industry-standard undo depth for design tools.
       const history = [...state.history, action.entry].slice(-HISTORY_LIMIT);
-      return { ...state, history };
+      // A fresh edit invalidates the redo chain (canonical undo/redo
+      // semantics — operators expect Ctrl+Shift+Z to be a no-op after
+      // they continue editing past an undo).
+      return { ...state, history, redoHistory: [] };
     }
 
     case "UNDO": {
       const entry = state.history[state.history.length - 1];
       if (!entry) return state;
       const nextHistory = state.history.slice(0, -1);
-      switch (entry.kind) {
-        case "subtitle_style": {
-          const subtitles = state.subtitles.map((s, i) =>
-            i === entry.index ? { ...s, style: entry.style } : s,
-          );
-          return { ...state, subtitles, history: nextHistory, isDirty: true };
-        }
-        case "subtitle_time": {
-          const subtitles = state.subtitles.map((s, i) =>
-            i === entry.index
-              ? { ...s, startMs: entry.startMs, endMs: entry.endMs }
-              : s,
-          );
-          return { ...state, subtitles, history: nextHistory, isDirty: true };
-        }
-        case "overlay_transform": {
-          const overlays = state.overlays.map((o) =>
-            o.id === entry.id ? ({ ...o, transform: entry.transform } as typeof o) : o,
-          );
-          return { ...state, overlays, history: nextHistory, isDirty: true };
-        }
-        case "overlay_font_size": {
-          const overlays = state.overlays.map((o) =>
-            o.id === entry.id && o.kind === "text"
-              ? ({ ...o, fontSizePx: entry.fontSizePx } as typeof o)
-              : o,
-          );
-          return { ...state, overlays, history: nextHistory, isDirty: true };
-        }
-      }
-      // Unknown entry kind — drop it and continue without mutating state.
-      return { ...state, history: nextHistory };
+      // Capture the current value of the entry's target so REDO can
+      // re-apply it. The HistoryEntry shape already encodes the
+      // entire property being restored, so the redo snapshot is just
+      // the symmetric capture taken from current state.
+      const captureRedo = captureRedoEntry(state, entry);
+      const nextRedo = captureRedo
+        ? [...state.redoHistory, captureRedo].slice(-HISTORY_LIMIT)
+        : state.redoHistory;
+      const restored = applyHistoryEntry(state, entry);
+      return {
+        ...restored,
+        history: nextHistory,
+        redoHistory: nextRedo,
+        isDirty: true,
+      };
+    }
+
+    case "REDO": {
+      const entry = state.redoHistory[state.redoHistory.length - 1];
+      if (!entry) return state;
+      const nextRedo = state.redoHistory.slice(0, -1);
+      // Symmetric to UNDO: take the current value of the entry's
+      // target and push it back onto ``history`` so Ctrl+Z can roll
+      // forward → back → forward.
+      const captureUndo = captureRedoEntry(state, entry);
+      const nextHistory = captureUndo
+        ? [...state.history, captureUndo].slice(-HISTORY_LIMIT)
+        : state.history;
+      const restored = applyHistoryEntry(state, entry);
+      return {
+        ...restored,
+        history: nextHistory,
+        redoHistory: nextRedo,
+        isDirty: true,
+      };
     }
 
     default:
       return state;
+  }
+}
+
+// Returns a HistoryEntry snapshot of the current value of the same
+// target as ``entry``. Used by UNDO to populate ``redoHistory`` and by
+// REDO to populate ``history`` — both directions need the symmetric
+// "what is it now?" capture before mutating state.
+function captureRedoEntry(
+  state: EditorState,
+  entry: HistoryEntry,
+): HistoryEntry | null {
+  switch (entry.kind) {
+    case "subtitle_style": {
+      const current = state.subtitles[entry.index]?.style;
+      if (!current) return null;
+      return { kind: "subtitle_style", index: entry.index, style: current };
+    }
+    case "subtitle_time": {
+      const current = state.subtitles[entry.index];
+      if (!current) return null;
+      return {
+        kind: "subtitle_time",
+        index: entry.index,
+        startMs: current.startMs,
+        endMs: current.endMs,
+      };
+    }
+    case "overlay_time": {
+      const current = state.overlays.find((o) => o.id === entry.id);
+      if (!current) return null;
+      return {
+        kind: "overlay_time",
+        id: entry.id,
+        startMs: current.startMs,
+        endMs: current.endMs,
+      };
+    }
+    case "overlay_transform": {
+      const current = state.overlays.find((o) => o.id === entry.id);
+      if (!current) return null;
+      return { kind: "overlay_transform", id: entry.id, transform: current.transform };
+    }
+    case "overlay_font_size": {
+      const current = state.overlays.find((o) => o.id === entry.id);
+      if (!current || current.kind !== "text") return null;
+      return { kind: "overlay_font_size", id: entry.id, fontSizePx: current.fontSizePx };
+    }
+    case "video_position": {
+      return {
+        kind: "video_position",
+        x: state.videoTransform.x,
+        y: state.videoTransform.y,
+      };
+    }
+    case "video_scale": {
+      return { kind: "video_scale", scale: state.videoTransform.scale };
+    }
+    case "video_rotation": {
+      return {
+        kind: "video_rotation",
+        rotationDeg: state.videoTransform.rotationDeg,
+      };
+    }
+    case "video_outline": {
+      return {
+        kind: "video_outline",
+        outline: state.videoTransform.outline ?? null,
+      };
+    }
+    case "video_shadow": {
+      return {
+        kind: "video_shadow",
+        shadow: state.videoTransform.shadow ?? null,
+      };
+    }
+    case "letterbox": {
+      return { kind: "letterbox", letterbox: state.letterbox };
+    }
+    case "snapshot": {
+      // Capture the post-action state so REDO can re-apply the change
+      // after an UNDO. We deliberately blank history/redoHistory in
+      // the captured copy — those are managed by UNDO / REDO outside
+      // applyHistoryEntry and must not get rolled into the snapshot,
+      // otherwise the redo stack would be carried inside its own
+      // capture.
+      return {
+        kind: "snapshot",
+        state: { ...state, history: [], redoHistory: [] },
+      };
+    }
+  }
+}
+
+// Applies a HistoryEntry to state — used by both UNDO (restoring the
+// pre-gesture state) and REDO (re-applying the previously-undone
+// state). Mutates only the property the entry describes, leaving all
+// other state slots untouched.
+function applyHistoryEntry(state: EditorState, entry: HistoryEntry): EditorState {
+  switch (entry.kind) {
+    case "subtitle_style": {
+      const subtitles = state.subtitles.map((s, i) =>
+        i === entry.index ? { ...s, style: entry.style } : s,
+      );
+      return { ...state, subtitles };
+    }
+    case "subtitle_time": {
+      const subtitles = state.subtitles.map((s, i) =>
+        i === entry.index
+          ? { ...s, startMs: entry.startMs, endMs: entry.endMs }
+          : s,
+      );
+      return { ...state, subtitles };
+    }
+    case "overlay_time": {
+      const overlays = state.overlays.map((o) =>
+        o.id === entry.id
+          ? ({ ...o, startMs: entry.startMs, endMs: entry.endMs } as typeof o)
+          : o,
+      );
+      return { ...state, overlays };
+    }
+    case "overlay_transform": {
+      const overlays = state.overlays.map((o) =>
+        o.id === entry.id ? ({ ...o, transform: entry.transform } as typeof o) : o,
+      );
+      return { ...state, overlays };
+    }
+    case "overlay_font_size": {
+      const overlays = state.overlays.map((o) =>
+        o.id === entry.id && o.kind === "text"
+          ? ({ ...o, fontSizePx: entry.fontSizePx } as typeof o)
+          : o,
+      );
+      return { ...state, overlays };
+    }
+    case "video_position": {
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, x: entry.x, y: entry.y },
+      };
+    }
+    case "video_scale": {
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, scale: entry.scale },
+      };
+    }
+    case "video_rotation": {
+      return {
+        ...state,
+        videoTransform: {
+          ...state.videoTransform,
+          rotationDeg: entry.rotationDeg,
+        },
+      };
+    }
+    case "video_outline": {
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, outline: entry.outline },
+      };
+    }
+    case "video_shadow": {
+      return {
+        ...state,
+        videoTransform: { ...state.videoTransform, shadow: entry.shadow },
+      };
+    }
+    case "letterbox": {
+      return { ...state, letterbox: entry.letterbox };
+    }
+    case "snapshot": {
+      // Restore every slot from the snapshot — except history /
+      // redoHistory, which UNDO / REDO manage on the calling side and
+      // must not be clobbered. The snapshot's own history fields are
+      // intentionally blank (see captureRedoEntry above).
+      return {
+        ...entry.state,
+        history: state.history,
+        redoHistory: state.redoHistory,
+      };
+    }
   }
 }
 
@@ -647,32 +1720,69 @@ export function generateSubtitlesFromTranscript(
 export function useEditorState() {
   const [state, dispatch] = useReducer(editorReducer, INITIAL_STATE);
 
+  // PR 5 follow-up — hybrid undo entry point for complex actions.
+  // Pushes the CURRENT state as a snapshot HistoryEntry so the next
+  // mutation can be rolled back as one stroke. Factory functions
+  // below call this before dispatching add/remove/trim/reorder-style
+  // actions; simple transforms keep their inverse-action history.
+  //
+  // Reads state through a ref so the callback identity stays stable
+  // across renders. Without the ref, every state change would
+  // re-create pushSnapshot, which would in turn invalidate every
+  // factory's useCallback dep list — a single missed dep would land
+  // a stale snapshot in history (the bug pattern that caused the
+  // initial trimClip / reorderOverlay test failures).
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const pushSnapshot = useCallback(() => {
+    dispatch({
+      type: "PUSH_HISTORY",
+      entry: { kind: "snapshot", state: stateRef.current },
+    });
+  }, []);
+
   const initFromScenes = useCallback(
     (videoId: string, sourceType: string, clips: EditorClip[]) => {
+      // INIT actions reset the editor — there's no meaningful "before"
+      // to snapshot, and snapshotting an empty state would let UNDO
+      // strand the operator with a blank canvas.
       dispatch({ type: "INIT_FROM_SCENES", videoId, sourceType, clips });
     },
     [],
   );
 
   const initFromComposition = useCallback((partial: Partial<EditorState>) => {
+    // Same rationale as initFromScenes — bootstrap path, never an
+    // operator gesture.
     dispatch({ type: "INIT_FROM_COMPOSITION", state: partial });
   }, []);
 
   const addClip = useCallback((clip: EditorClip) => {
+    pushSnapshot();
     dispatch({ type: "ADD_CLIP", clip });
-  }, []);
+  }, [pushSnapshot]);
 
   const removeClip = useCallback((index: number) => {
+    pushSnapshot();
     dispatch({ type: "REMOVE_CLIP", index });
-  }, []);
+  }, [pushSnapshot]);
 
   const reorderClips = useCallback((fromIndex: number, toIndex: number) => {
+    pushSnapshot();
     dispatch({ type: "REORDER_CLIPS", fromIndex, toIndex });
-  }, []);
+  }, [pushSnapshot]);
 
   const trimClip = useCallback(
     (index: number, trimStartMs?: number, trimEndMs?: number) => {
+      pushSnapshot();
       dispatch({ type: "TRIM_CLIP", index, trimStartMs, trimEndMs });
+    },
+    [pushSnapshot],
+  );
+
+  const moveClip = useCallback(
+    (index: number, timelineStartMs: number) => {
+      dispatch({ type: "MOVE_CLIP", index, timelineStartMs });
     },
     [],
   );
@@ -703,24 +1813,54 @@ export function useEditorState() {
       style: { ...DEFAULT_SUBTITLE_STYLE },
     };
     const newIndex = state.subtitles.length;
+    pushSnapshot();
     dispatch({ type: "ADD_SUBTITLE", subtitle });
     dispatch({ type: "SELECT_SUBTITLE", index: newIndex });
-  }, [state.playheadMs, state.totalDurationMs, state.subtitles.length]);
+  }, [state.playheadMs, state.totalDurationMs, state.subtitles.length, pushSnapshot]);
 
   const updateSubtitle = useCallback(
     (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) => {
+      // Snapshot for text edits (D5 hybrid — complex action). Style /
+      // timing updates already get snapshotted by their drag-pointer
+      // handlers via subtitle_style / subtitle_time inverse entries,
+      // so we only snapshot when the call is changing text content.
+      // Burst-typing still pushes one snapshot per keystroke, which is
+      // chatty but bounded by HISTORY_LIMIT — debouncing this is a
+      // future refinement.
+      if ("text" in updates) pushSnapshot();
       dispatch({ type: "UPDATE_SUBTITLE", index, updates });
     },
-    [],
+    [pushSnapshot],
   );
 
   const removeSubtitle = useCallback((index: number) => {
+    pushSnapshot();
     dispatch({ type: "REMOVE_SUBTITLE", index });
-  }, []);
+  }, [pushSnapshot]);
 
   const selectSubtitle = useCallback((index: number | null) => {
     dispatch({ type: "SELECT_SUBTITLE", index });
   }, []);
+
+  const updateAllSubtitleStyles = useCallback(
+    (updates: Partial<SubtitleStyle>) => {
+      pushSnapshot();
+      dispatch({ type: "UPDATE_ALL_SUBTITLE_STYLES", updates });
+    },
+    [pushSnapshot],
+  );
+
+  // Composition template apply — wraps a single snapshot around the
+  // reducer dispatch so Ctrl+Z reverts the entire apply (subtitle
+  // style merge + overlay append + letterbox set + video transform
+  // set) in one stroke per operator request 2026-05-24.
+  const applyCompositionTemplate = useCallback(
+    (payload: import("../lib/overlay-types").CompositionPresetPayload) => {
+      pushSnapshot();
+      dispatch({ type: "APPLY_COMPOSITION_TEMPLATE", payload });
+    },
+    [pushSnapshot],
+  );
 
   // ----- V2 overlay actions ------------------------------------------------
 
@@ -732,16 +1872,24 @@ export function useEditorState() {
     return { startMs, endMs };
   };
 
+  // Operator's '텍스트 추가' button — defaults the new overlay to
+  // span the ENTIRE clip duration (per the 2026-05-22 Figma timeline
+  // brief: the new text-overlay track is full-clip by default; the
+  // operator can shorten or reposition the block afterwards). The
+  // legacy 3-second playhead-relative window felt arbitrary and
+  // didn't match the visual model where the top track is a single
+  // wide bar.
   const addTextOverlayAtPlayhead = useCallback(() => {
-    const { startMs, endMs } = _clampOverlayWindow(
-      state.playheadMs,
-      state.totalDurationMs,
-    );
+    const totalMs =
+      state.totalDurationMs > 0
+        ? state.totalDurationMs
+        : DEFAULT_OVERLAY_DURATION_MS;
+    pushSnapshot();
     dispatch({
       type: "ADD_OVERLAY",
-      overlay: createDefaultTextOverlay({ startMs, endMs }),
+      overlay: createDefaultTextOverlay({ startMs: 0, endMs: totalMs }),
     });
-  }, [state.playheadMs, state.totalDurationMs]);
+  }, [state.totalDurationMs, pushSnapshot]);
 
   // Auto-subtitle path needs explicit timing + pre-filled text. The
   // playhead-based helper above can't fill text, and the V2 timeline only
@@ -755,12 +1903,13 @@ export function useEditorState() {
         startMs: params.startMs,
         endMs: params.endMs,
       });
+      pushSnapshot();
       dispatch({
         type: "ADD_OVERLAY",
         overlay: { ...overlay, text: params.text },
       });
     },
-    [],
+    [pushSnapshot],
   );
 
   // Hydration helper — drop a fully-formed overlay (already carrying
@@ -777,25 +1926,29 @@ export function useEditorState() {
   // full style payload (text + font + position + stroke/shadow). This
   // helper splices in the playhead-derived timing so the operator can
   // drop a template at the current cursor with one click.
+  // Starter templates follow the same '텍스트 추가' = full-clip
+  // default as addTextOverlayAtPlayhead. Operator can then shorten /
+  // reposition like any other overlay.
   const addStarterTextOverlay = useCallback(
     (style: StarterTemplateStyle) => {
-      const { startMs, endMs } = _clampOverlayWindow(
-        state.playheadMs,
-        state.totalDurationMs,
-      );
+      const totalMs =
+        state.totalDurationMs > 0
+          ? state.totalDurationMs
+          : DEFAULT_OVERLAY_DURATION_MS;
+      pushSnapshot();
       dispatch({
         type: "ADD_OVERLAY",
         overlay: {
           kind: "text",
           id: generateOverlayId("text"),
-          startMs,
-          endMs,
+          startMs: 0,
+          endMs: totalMs,
           layerIndex: 0,
           ...style,
         },
       });
     },
-    [state.playheadMs, state.totalDurationMs],
+    [state.totalDurationMs, pushSnapshot],
   );
 
   // Solid color backgrounds span the whole timeline AND fill the full
@@ -816,9 +1969,10 @@ export function useEditorState() {
         widthPx: DEFAULT_OUTPUT.width,
         heightPx: DEFAULT_OUTPUT.height,
       };
+      pushSnapshot();
       dispatch({ type: "ADD_OVERLAY", overlay });
     },
-    [state.totalDurationMs],
+    [state.totalDurationMs, pushSnapshot],
   );
 
   // Image insert is intentionally NOT canvas-sized — the operator
@@ -858,6 +2012,7 @@ export function useEditorState() {
             heightPx: sizeOverride.heightPx,
           };
         }
+        pushSnapshot();
         dispatch({ type: "ADD_OVERLAY", overlay });
       };
       const img = new Image();
@@ -875,42 +2030,135 @@ export function useEditorState() {
       img.onerror = () => dispatchOverlay(null);
       img.src = imageUrl;
     },
-    [state.totalDurationMs],
+    [state.totalDurationMs, pushSnapshot],
   );
 
   const updateOverlay = useCallback(
     (id: string, updates: Partial<EditorOverlay>) => {
+      // Skip snapshot when the only fields being updated are the ones
+      // the drag pipeline writes (transform / fontSizePx). Those have
+      // dedicated inverse entries pushed on pointerdown so a per-move
+      // snapshot would duplicate history and explode the stack. Other
+      // updates (fillColor, imageUrl, text, fontFamily, etc) flow
+      // from panel controls that DON'T push their own history, so we
+      // snapshot before applying.
+      const dragOnlyKeys = new Set(["transform", "fontSizePx"]);
+      const hasContentChange = Object.keys(updates).some(
+        (k) => !dragOnlyKeys.has(k),
+      );
+      if (hasContentChange) pushSnapshot();
       dispatch({ type: "UPDATE_OVERLAY", id, updates });
     },
-    [],
+    [pushSnapshot],
   );
 
   const removeOverlay = useCallback((id: string) => {
+    pushSnapshot();
     dispatch({ type: "REMOVE_OVERLAY", id });
-  }, []);
+  }, [pushSnapshot]);
 
   const selectOverlay = useCallback((id: string | null) => {
     dispatch({ type: "SELECT_OVERLAY", id });
   }, []);
 
+  // 2026-05-24 — selection slots for the host video element and the
+  // letterbox. Clicking the corresponding region in the preview canvas
+  // dispatches these; mutual-exclusion semantics live in the reducer.
+  const selectVideo = useCallback((active: boolean) => {
+    dispatch({ type: "SELECT_VIDEO", active });
+  }, []);
+
+  const selectLetterbox = useCallback((active: boolean) => {
+    dispatch({ type: "SELECT_LETTERBOX", active });
+  }, []);
+
+  // Clears every selection slot in one dispatch — useful for the preview
+  // canvas background click. Cheaper than dispatching five separate
+  // clears (each of which would mutate state and rerender).
+  const clearAllSelections = useCallback(() => {
+    dispatch({ type: "SELECT_CLIP", index: null });
+    dispatch({ type: "SELECT_SUBTITLE", index: null });
+    dispatch({ type: "SELECT_OVERLAY", id: null });
+    dispatch({ type: "SELECT_VIDEO", active: false });
+    dispatch({ type: "SELECT_LETTERBOX", active: false });
+  }, []);
+
   const reorderOverlay = useCallback(
     (id: string, direction: "front" | "back" | "forward" | "backward") => {
+      pushSnapshot();
       dispatch({ type: "REORDER_OVERLAY", id, direction });
     },
-    [],
+    [pushSnapshot],
   );
 
   const setPlayhead = useCallback((ms: number) => {
     dispatch({ type: "SET_PLAYHEAD", ms });
   }, []);
 
-  const setPlaying = useCallback((playing: boolean) => {
-    dispatch({ type: "SET_PLAYING", playing });
+  const dispatchPlaybackEvent = useCallback((event: PlaybackEvent) => {
+    dispatch({ type: "PLAYBACK_EVENT", event });
   }, []);
+
+  const setPlaying = useCallback((playing: boolean) => {
+    dispatchPlaybackEvent(playing ? { kind: "TOGGLE" } : { kind: "HARD_PAUSE" });
+  }, [dispatchPlaybackEvent]);
 
   const setZoom = useCallback((zoom: number) => {
     dispatch({ type: "SET_ZOOM", zoom });
   }, []);
+
+  // L4 / T2 — export range marks. Passing null clears.
+  const setInPoint = useCallback((ms: number | null) => {
+    dispatch({ type: "SET_IN_POINT", ms });
+  }, []);
+  const setOutPoint = useCallback((ms: number | null) => {
+    dispatch({ type: "SET_OUT_POINT", ms });
+  }, []);
+
+  // L5 / T5 — split / razor. Pushes a snapshot before dispatching so
+  // Ctrl+Z rolls back the entire split (both head and tail) in one
+  // stroke. The reducer dispatches a no-op when atMs doesn't straddle
+  // the target, so the snapshot is wasted in that case — acceptable
+  // trade-off versus duplicating the "straddle" guard here.
+  const splitSubtitle = useCallback(
+    (index: number, atMs: number) => {
+      pushSnapshot();
+      dispatch({ type: "SPLIT_SUBTITLE", index, atMs });
+    },
+    [pushSnapshot],
+  );
+  const splitOverlay = useCallback(
+    (id: string, atMs: number) => {
+      pushSnapshot();
+      dispatch({ type: "SPLIT_OVERLAY", id, atMs });
+    },
+    [pushSnapshot],
+  );
+  const splitClip = useCallback(
+    (index: number, atMs: number) => {
+      pushSnapshot();
+      dispatch({ type: "SPLIT_CLIP", index, atMs });
+    },
+    [pushSnapshot],
+  );
+  // Razor-key dispatcher (S). Priority clip > overlay > subtitle —
+  // mirrors the Delete-key precedence so the operator's mental model
+  // stays consistent. Reads ``stateRef`` so we always split against
+  // the latest playhead/selection, no stale-closure risk.
+  const setRazorMode = useCallback((active: boolean) => {
+    dispatch({ type: "SET_RAZOR_MODE", active });
+  }, []);
+
+  const splitAtPlayhead = useCallback(() => {
+    const s = stateRef.current;
+    if (s.selectedClipIndex != null) {
+      splitClip(s.selectedClipIndex, s.playheadMs);
+    } else if (s.selectedOverlayId != null) {
+      splitOverlay(s.selectedOverlayId, s.playheadMs);
+    } else if (s.selectedSubtitleIndex != null) {
+      splitSubtitle(s.selectedSubtitleIndex, s.playheadMs);
+    }
+  }, [splitClip, splitOverlay, splitSubtitle]);
 
   const markClean = useCallback(() => {
     dispatch({ type: "MARK_CLEAN" });
@@ -920,6 +2168,75 @@ export function useEditorState() {
   // this from pointerdown handlers (move / resize / rotate / time-drag)
   // so that the very first pointermove already has a committed entry
   // to roll back to. Repeated pointerdowns produce one entry each.
+  const updateVideoPosition = useCallback((x: number, y: number) => {
+    dispatch({ type: "UPDATE_VIDEO_POSITION", x, y });
+  }, []);
+
+  const updateVideoScale = useCallback((scale: number) => {
+    dispatch({ type: "UPDATE_VIDEO_SCALE", scale });
+  }, []);
+
+  const updateVideoRotation = useCallback((rotationDeg: number) => {
+    dispatch({ type: "UPDATE_VIDEO_ROTATION", rotationDeg });
+  }, []);
+
+  // Operator-facing outline (윤곽선) toggle. Pushes the previous
+  // outline onto history so Ctrl+Z restores it in one stroke — same
+  // pattern as setLetterbox in the page-level wrapper.
+  const setVideoOutline = useCallback(
+    (outline: { color: string; widthPx: number } | null) => {
+      dispatch({
+        type: "PUSH_HISTORY",
+        entry: {
+          kind: "video_outline",
+          outline: stateRef.current.videoTransform.outline ?? null,
+        },
+      });
+      dispatch({ type: "SET_VIDEO_OUTLINE", outline });
+    },
+    [],
+  );
+
+  // Operator-facing drop shadow toggle. Same history pattern as
+  // setVideoOutline above — snapshot the pre-change shadow so Ctrl+Z
+  // restores it cleanly.
+  const setVideoShadow = useCallback(
+    (
+      shadow: {
+        color: string;
+        offsetX: number;
+        offsetY: number;
+        blurPx: number;
+        spreadPx: number;
+      } | null,
+    ) => {
+      dispatch({
+        type: "PUSH_HISTORY",
+        entry: {
+          kind: "video_shadow",
+          shadow: stateRef.current.videoTransform.shadow ?? null,
+        },
+      });
+      dispatch({ type: "SET_VIDEO_SHADOW", shadow });
+    },
+    [],
+  );
+
+  const reorderLayer = useCallback(
+    (layer: LayerOrderId, direction: "front" | "back" | "forward" | "backward") => {
+      pushSnapshot();
+      dispatch({ type: "REORDER_LAYER", layer, direction });
+    },
+    [pushSnapshot],
+  );
+
+  const setLetterbox = useCallback(
+    (letterbox: EditorState["letterbox"]) => {
+      dispatch({ type: "SET_LETTERBOX", letterbox });
+    },
+    [],
+  );
+
   const pushHistory = useCallback((entry: HistoryEntry) => {
     dispatch({ type: "PUSH_HISTORY", entry });
   }, []);
@@ -928,6 +2245,10 @@ export function useEditorState() {
   // when the stack is empty — Ctrl+Z at session start does nothing.
   const undo = useCallback(() => {
     dispatch({ type: "UNDO" });
+  }, []);
+
+  const redo = useCallback(() => {
+    dispatch({ type: "REDO" });
   }, []);
 
   return {
@@ -939,6 +2260,7 @@ export function useEditorState() {
     removeClip,
     reorderClips,
     trimClip,
+    moveClip,
     setClipVolume,
     selectClip,
     addSubtitle,
@@ -946,6 +2268,8 @@ export function useEditorState() {
     updateSubtitle,
     removeSubtitle,
     selectSubtitle,
+    updateAllSubtitleStyles,
+    applyCompositionTemplate,
     // V2 overlay actions
     addTextOverlay,
     addTextOverlayAtPlayhead,
@@ -956,12 +2280,32 @@ export function useEditorState() {
     updateOverlay,
     removeOverlay,
     selectOverlay,
+    selectVideo,
+    selectLetterbox,
+    clearAllSelections,
     reorderOverlay,
     setPlayhead,
     setPlaying,
+    dispatchPlaybackEvent,
     setZoom,
+    setInPoint,
+    setOutPoint,
+    setRazorMode,
+    splitSubtitle,
+    splitOverlay,
+    splitClip,
+    splitAtPlayhead,
     markClean,
+    updateVideoPosition,
+    updateVideoScale,
+    updateVideoRotation,
+    setVideoOutline,
+    setVideoShadow,
+    reorderLayer,
+    setLetterbox,
     pushHistory,
+    pushSnapshot,
     undo,
+    redo,
   };
 }

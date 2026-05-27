@@ -18,7 +18,7 @@ from heimdex_media_contracts.composition import (
     TextOverlaySpec,
 )
 
-PresetKind = Literal["text", "background"]
+PresetKind = Literal["text", "background", "composition"]
 
 
 # --- Style validation helpers -----------------------------------------------
@@ -43,6 +43,15 @@ def _validate_style_json(kind: PresetKind, style_json: dict[str, Any]) -> dict[s
         "start_ms": 0,
         "end_ms": 1,
     }
+    if kind == "composition":
+        # Whole-canvas snapshot. Validation is structural-only because the
+        # blob holds multiple overlays + letterbox + video transform —
+        # validating every nested overlay here would duplicate the same
+        # checks the editor reducer already performs. Reject obviously
+        # malformed payloads but otherwise pass through.
+        if not isinstance(style_json, dict):
+            raise ValueError("composition style_json must be a JSON object")
+        return dict(style_json)
     if kind == "text":
         merged = {"kind": "text", **placeholder_identity, **style_json}
         spec = TextOverlaySpec(**merged)

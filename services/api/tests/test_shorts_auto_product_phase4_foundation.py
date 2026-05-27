@@ -858,3 +858,217 @@ def test_complete_scan_order_alive_video_does_not_call_fail(monkeypatch):
     fake_job_repo.fail.assert_not_awaited()
     fake_job_repo.transition_parent_to_fanned_out.assert_awaited_once()
     fake_job_repo.create_render_children.assert_awaited_once()
+
+
+# ======================================================================
+# STT enumeration fires from the vision callback path (stt-vision-race fix)
+#
+# Before this PR, scan endpoints (rescan + enqueue_scan) scheduled STT
+# in parallel with the vision SQS publish. STT raced ahead, called
+# ``promote_latest_enumeration_done_stt`` which atomically nulled
+# ``claimed_by``, and revoked the in-flight vision worker's lease →
+# vision's complete_enumeration matched 0 rows → vision's catalog rows
+# (with crops) were silently discarded.
+#
+# Now STT is owned by the vision callback path:
+#   /complete (enumeration kind) → schedule_stt_enumeration_task(mode="augment")
+#   /fail     (enumeration job) → schedule_stt_enumeration_task(mode="recover")
+# Never fires for non-enumeration job modes (render_child, scan_order, ...).
+# ======================================================================
+
+
+def test_complete_enumeration_schedules_stt_augment(monkeypatch):
+    """``/complete`` for a vision-enumeration job must schedule STT
+    in ``augment`` mode AFTER persist + consolidate. Augment mode is
+    what keeps the STT runner from calling promote (vision already
+    promoted via complete_enumeration)."""
+    job_id = uuid4()
+    org_id = uuid4()
+    video_id = uuid4()
+    job = _job_row(
+        job_id=job_id,
+        mode=SCAN_MODE_ENUMERATE,
+        catalog_entry_id=None,
+    )
+    job.claimed_by = "test-worker"
+    job.org_id = org_id
+    job.video_id = video_id
+
+    app = _build_complete_app(
+        monkeypatch, job=job, persisted_catalog_count=1,
+    )
+
+    stt_mock = MagicMock()
+    monkeypatch.setattr(
+        "app.modules.shorts_auto_product.enumerate_stt.service."
+        "schedule_stt_enumeration_task",
+        stt_mock,
+    )
+
+    client = TestClient(app)
+    body = {
+        "claimed_by": "test-worker",
+        "cost_delta_usd": "0",
+        "catalog_entries": [
+            {
+                "canonical_crop_s3_key": "products/x/y/abc.jpg",
+                "canonical_video_id": str(uuid4()),
+                "canonical_frame_idx": 100,
+                "canonical_bbox": {"x": 10, "y": 20, "w": 100, "h": 150},
+                "llm_label": "테스트 상품",
+                "siglip2_embedding": [0.1] * 768,
+                "enumeration_confidence": 0.95,
+                "prominence_score": 0.8,
+                "enumeration_version": "v1.0",
+                "enumeration_prompt_version": "v1.0",
+                "enumeration_source": "vision",
+            },
+        ],
+    }
+    resp = client.post(
+        f"/internal/products/{job_id}/complete",
+        json=body,
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    stt_mock.assert_called_once()
+    kwargs = stt_mock.call_args.kwargs
+    assert kwargs["org_id"] == org_id
+    assert kwargs["video_db_id"] == video_id
+    assert kwargs["mode"] == "augment"
+    assert kwargs["video_drive_id"] is None
+
+
+def test_fail_enumeration_schedules_stt_recover(monkeypatch):
+    """``/fail`` for a vision-enumeration job must schedule STT in
+    ``recover`` mode. Recover mode is what allows the runner to call
+    promote_latest_enumeration_done_stt — the repo method's tightened
+    WHERE ``stage = SCAN_STAGE_FAILED`` only matches in this state, so
+    a stale recover call from any other state safely no-ops."""
+    from app.dependencies import get_db_session, verify_internal_token
+    from app.modules.shorts_auto_product.internal_router import (
+        router as internal_router,
+    )
+    job_id = uuid4()
+    org_id = uuid4()
+    video_id = uuid4()
+    failed_job = _job_row(
+        job_id=job_id,
+        mode=SCAN_MODE_ENUMERATE,
+        catalog_entry_id=None,
+    )
+    failed_job.org_id = org_id
+    failed_job.video_id = video_id
+
+    fake_job_repo = MagicMock()
+    fake_job_repo.fail = AsyncMock(return_value=failed_job)
+    fake_cost_repo = MagicMock()
+    fake_cost_repo.add_cost = AsyncMock()
+
+    import app.modules.shorts_auto_product.repositories as repos_pkg
+    import app.modules.shorts_auto_product.internal_router as router_module
+    for name, fake_factory in [
+        ("ProductScanJobRepository", lambda _db: fake_job_repo),
+        ("ProductScanDailyCostRepository", lambda _db: fake_cost_repo),
+    ]:
+        wrapped = MagicMock(side_effect=fake_factory)
+        monkeypatch.setattr(repos_pkg, name, wrapped)
+        monkeypatch.setattr(router_module, name, wrapped)
+
+    stt_mock = MagicMock()
+    monkeypatch.setattr(
+        "app.modules.shorts_auto_product.enumerate_stt.service."
+        "schedule_stt_enumeration_task",
+        stt_mock,
+    )
+
+    app = FastAPI()
+    app.include_router(internal_router)
+    fake_db = MagicMock()
+    fake_db.commit = AsyncMock()
+    app.dependency_overrides[get_db_session] = lambda: fake_db
+    app.dependency_overrides[verify_internal_token] = lambda: "test-token"
+
+    client = TestClient(app)
+    resp = client.post(
+        f"/internal/products/{job_id}/fail",
+        json={
+            "claimed_by": "test-worker",
+            "error_code": "llm_timeout",
+            "error_message": "openai timeout after 90s",
+            "cost_delta_usd": "0",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 204, resp.text
+
+    stt_mock.assert_called_once()
+    kwargs = stt_mock.call_args.kwargs
+    assert kwargs["org_id"] == org_id
+    assert kwargs["video_db_id"] == video_id
+    assert kwargs["mode"] == "recover"
+
+
+def test_fail_render_child_does_not_schedule_stt(monkeypatch):
+    """``/fail`` for a non-enumeration job (e.g., render_child failure)
+    must NOT schedule STT — STT enumeration is video-level, not
+    per-clip, and recovering with STT in this scope would be wrong.
+    Mirrors the ``failed.mode == SCAN_MODE_ENUMERATE`` guard in the
+    fail endpoint."""
+    from app.dependencies import get_db_session, verify_internal_token
+    from app.modules.shorts_auto_product.internal_router import (
+        router as internal_router,
+    )
+    from app.modules.shorts_auto_product.models import SCAN_MODE_RENDER_CHILD
+    job_id = uuid4()
+    catalog_entry_id = uuid4()
+    failed_job = _job_row(
+        job_id=job_id,
+        mode=SCAN_MODE_RENDER_CHILD,
+        catalog_entry_id=catalog_entry_id,
+    )
+
+    fake_job_repo = MagicMock()
+    fake_job_repo.fail = AsyncMock(return_value=failed_job)
+    fake_cost_repo = MagicMock()
+    fake_cost_repo.add_cost = AsyncMock()
+
+    import app.modules.shorts_auto_product.repositories as repos_pkg
+    import app.modules.shorts_auto_product.internal_router as router_module
+    for name, fake_factory in [
+        ("ProductScanJobRepository", lambda _db: fake_job_repo),
+        ("ProductScanDailyCostRepository", lambda _db: fake_cost_repo),
+    ]:
+        wrapped = MagicMock(side_effect=fake_factory)
+        monkeypatch.setattr(repos_pkg, name, wrapped)
+        monkeypatch.setattr(router_module, name, wrapped)
+
+    stt_mock = MagicMock()
+    monkeypatch.setattr(
+        "app.modules.shorts_auto_product.enumerate_stt.service."
+        "schedule_stt_enumeration_task",
+        stt_mock,
+    )
+
+    app = FastAPI()
+    app.include_router(internal_router)
+    fake_db = MagicMock()
+    fake_db.commit = AsyncMock()
+    app.dependency_overrides[get_db_session] = lambda: fake_db
+    app.dependency_overrides[verify_internal_token] = lambda: "test-token"
+
+    client = TestClient(app)
+    resp = client.post(
+        f"/internal/products/{job_id}/fail",
+        json={
+            "claimed_by": "test-worker",
+            "error_code": "internal_error",
+            "error_message": "ffmpeg exit 137",
+            "cost_delta_usd": "0",
+        },
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code == 204, resp.text
+
+    stt_mock.assert_not_called()

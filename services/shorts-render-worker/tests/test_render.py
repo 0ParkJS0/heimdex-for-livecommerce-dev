@@ -33,7 +33,7 @@ def render_job() -> RenderJobMessage:
         job_id="job-001",
         org_id="org-001",
         input_spec={
-            "output": {"width": 405, "height": 720, "fps": 30, "format": "mp4", "background_color": "#000000"},
+            "output": {"width": 406, "height": 720, "fps": 30, "format": "mp4", "background_color": "#000000"},
             "scene_clips": [
                 {
                     "scene_id": "s001",
@@ -55,7 +55,7 @@ def two_clip_render_job() -> RenderJobMessage:
         job_id="job-002",
         org_id="org-001",
         input_spec={
-            "output": {"width": 405, "height": 720, "fps": 30, "format": "mp4", "background_color": "#000000"},
+            "output": {"width": 406, "height": 720, "fps": 30, "format": "mp4", "background_color": "#000000"},
             "scene_clips": [
                 {
                     "scene_id": "s001",
@@ -88,15 +88,24 @@ def mock_api_client():
     put_resp = MagicMock()
     put_resp.raise_for_status = MagicMock()
     client._session.put.return_value = put_resp
-    # Default: GET media-source returns gdrive proxy
-    get_resp = MagicMock()
-    get_resp.raise_for_status = MagicMock()
-    get_resp.json.return_value = {
+    # Default: GET routes by URL — /exists returns 200 (alive),
+    # /media-source returns gdrive proxy data.
+    exists_resp = MagicMock()
+    exists_resp.status_code = 200
+    media_resp = MagicMock()
+    media_resp.raise_for_status = MagicMock()
+    media_resp.json.return_value = {
         "video_id": "gd_vid1",
         "source_type": "gdrive",
         "proxy_s3_key": "org-001/gd_vid1/proxy.mp4",
     }
-    client._session.get.return_value = get_resp
+
+    def _routed_get(url, **kwargs):
+        if "/exists" in url:
+            return exists_resp
+        return media_resp
+
+    client._session.get.side_effect = _routed_get
     return client
 
 
@@ -185,6 +194,7 @@ class TestDownloadMedia:
             "video_id": "yt_vid1",
             "source_type": "youtube",
         }
+        mock_api_client._session.get.side_effect = None
         mock_api_client._session.get.return_value = get_resp
 
         with pytest.raises(ValueError, match="Unsupported source type"):
@@ -198,6 +208,7 @@ class TestDownloadMedia:
             "source_type": "gdrive",
             "proxy_s3_key": None,
         }
+        mock_api_client._session.get.side_effect = None
         mock_api_client._session.get.return_value = get_resp
 
         with pytest.raises(ValueError, match="No proxy S3 key"):
@@ -388,7 +399,7 @@ class TestProcessRenderJob:
         call_kwargs = mock_render.call_args[1]
         spec = call_kwargs["spec"]
         # Verify it's a real CompositionSpec (parsed from dict)
-        assert spec.output.width == 405
+        assert spec.output.width == 406
         assert spec.output.height == 720
         assert len(spec.scene_clips) == 1
 
@@ -558,6 +569,7 @@ def _make_resp(status_code: int) -> MagicMock:
 
 class TestCheckJobAlive:
     def test_returns_true_on_200(self, mock_api_client: MagicMock) -> None:
+        mock_api_client._session.get.side_effect = None
         mock_api_client._session.get.return_value = _make_resp(200)
         assert _check_job_alive(mock_api_client, "job-1") is True
         # Hits the /exists path, not /status or /media-source.
@@ -567,11 +579,13 @@ class TestCheckJobAlive:
     def test_returns_false_on_404(self, mock_api_client: MagicMock) -> None:
         # 404 is the row-deleted signal — the only path that
         # legitimately tells the worker to skip.
+        mock_api_client._session.get.side_effect = None
         mock_api_client._session.get.return_value = _make_resp(404)
         assert _check_job_alive(mock_api_client, "job-1") is False
 
     def test_fails_open_on_5xx(self, mock_api_client: MagicMock) -> None:
         # api hiccup → over-render rather than silently drop the job.
+        mock_api_client._session.get.side_effect = None
         mock_api_client._session.get.return_value = _make_resp(503)
         assert _check_job_alive(mock_api_client, "job-1") is True
 

@@ -1,6 +1,11 @@
 "use client";
 
-import { type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useState,
+} from "react";
 
 import { resolveFontFamily } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
@@ -18,6 +23,9 @@ type Corner = "nw" | "ne" | "sw" | "se";
 interface OverlayRendererProps {
   overlay: EditorOverlay;
   isSelected: boolean;
+  // When provided, overrides the zIndex derived from overlay.layerIndex
+  // so the unified layerOrder stack in PreviewPanel controls stacking.
+  zIndex?: number;
   // Body drag — caller wires this to a "move" gesture that updates
   // overlay.transform.x / .y.
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
@@ -42,6 +50,10 @@ interface OverlayRendererProps {
   onPointerMove?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerUp?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onClick?: () => void;
+  // Inline-edit support (Figma 2031:328972). Double-clicking a text
+  // overlay swaps the <p> for a textarea on top so the operator can
+  // type directly on the canvas. Background overlays ignore this.
+  onUpdateText?: (next: string) => void;
 }
 
 /**
@@ -64,15 +76,18 @@ interface OverlayRendererProps {
 export function OverlayRenderer({
   overlay,
   isSelected,
+  zIndex,
   onMovePointerDown,
   onResizePointerDown,
   onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
+  onUpdateText,
 }: OverlayRendererProps) {
   const sharedProps = {
     isSelected,
+    zIndex,
     onMovePointerDown,
     onResizePointerDown,
     onRotatePointerDown,
@@ -81,7 +96,13 @@ export function OverlayRenderer({
     onClick,
   };
   if (overlay.kind === "text") {
-    return <TextOverlayBox overlay={overlay} {...sharedProps} />;
+    return (
+      <TextOverlayBox
+        overlay={overlay}
+        {...sharedProps}
+        onUpdateText={onUpdateText}
+      />
+    );
   }
   return <BackgroundOverlayBox overlay={overlay} {...sharedProps} />;
 }
@@ -93,15 +114,18 @@ export function OverlayRenderer({
 function TextOverlayBox({
   overlay,
   isSelected,
+  zIndex,
   onMovePointerDown,
   onResizePointerDown,
   onRotatePointerDown,
   onPointerMove,
   onPointerUp,
   onClick,
+  onUpdateText,
 }: {
   overlay: EditorTextOverlay;
   isSelected: boolean;
+  zIndex?: number;
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown?: (
     corner: Corner,
@@ -114,8 +138,31 @@ function TextOverlayBox({
   onPointerMove?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerUp?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onClick?: () => void;
+  onUpdateText?: (next: string) => void;
 }) {
-  const containerStyle = positionContainerStyle(overlay.transform, overlay.layerIndex);
+  // Inline edit state (Figma 2031:328972). Double-clicking the
+  // rendered text opens a textarea that sits in place of the <p> so
+  // the operator can type directly on the canvas instead of bouncing
+  // to the right panel (right-panel textarea is gone in the new
+  // design). Enter commits, Escape cancels, blur commits.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(overlay.text);
+  useEffect(() => {
+    if (!editing) setDraft(overlay.text);
+  }, [overlay.text, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    if (onUpdateText && draft !== overlay.text) onUpdateText(draft);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setDraft(overlay.text);
+  };
+  const containerStyle: CSSProperties = {
+    ...positionContainerStyle(overlay.transform, overlay.layerIndex),
+    ...(zIndex != null ? { zIndex } : {}),
+  };
 
   const textStyle: CSSProperties = {
     fontFamily: resolveFontFamily(overlay.fontFamily),
@@ -152,31 +199,114 @@ function TextOverlayBox({
       style={{
         ...containerStyle,
         opacity: overlay.effects.opacity,
-        // 2026-05-19 — without `width: max-content` the absolute box's
-        // auto-width is capped by the parent's right edge. When the
-        // operator drags the overlay near the right side of the canvas
-        // the available right-of-anchor space shrinks, forcing the
-        // <p>'s pre-wrap text to wrap and the box to grow tall
-        // (operator reported the caption "stretching vertically as it
-        // approached the right edge"). max-content keeps the box at
-        // the text's intrinsic single-line width regardless of where
-        // it sits on the canvas; visually it may extend past the
-        // preview frame, but the box no longer reshapes mid-drag.
+        // 2026-05-19 — ``max-content`` keeps the box at the text's
+        // intrinsic single-line width regardless of where it sits on
+        // the canvas, so dragging near the right edge no longer makes
+        // the box reshape mid-drag. 2026-05-23 — pair it with a
+        // canvas-relative ``maxWidth`` (85cqw of the surface's
+        // container-query width) so eventual soft-wrapping is
+        // identical across preview, fullscreen modal, and the backend
+        // 720×1280 render canvas. Without this cap the two preview
+        // surfaces wrapped at different columns because each parent
+        // box constrained the absolute child differently.
         width: "max-content",
+        maxWidth: "85cqw",
       }}
       className={cn(
-        "absolute select-none cursor-grab active:cursor-grabbing",
+        "absolute select-none",
+        editing ? "cursor-text" : "cursor-grab active:cursor-grabbing",
         isSelected && "ring-2 ring-indigo-400 ring-offset-1",
       )}
-      onPointerDown={onMovePointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
+      onPointerDown={editing ? undefined : onMovePointerDown}
+      onPointerMove={editing ? undefined : onPointerMove}
+      onPointerUp={editing ? undefined : onPointerUp}
       onClick={(e) => {
         e.stopPropagation();
         onClick?.();
       }}
+      onDoubleClick={
+        onUpdateText
+          ? (e) => {
+              e.stopPropagation();
+              setDraft(overlay.text);
+              setEditing(true);
+            }
+          : undefined
+      }
     >
-      {overlay.text === "" ? (
+      {editing ? (
+        // 2026-05-22 — inline-grid ghost trick so the textarea grows to fit
+        // its content (both width AND height) instead of stretching to a
+        // fixed cols default. A hidden <span> mirrors the draft text and
+        // dictates the cell size; the textarea sits in the same grid area
+        // and inherits that size. The result: edit box visually matches
+        // the rendered <p>, expanding only when the operator types longer
+        // text (per operator request 2026-05-22).
+        <div
+          style={{
+            ...textStyle,
+            display: "inline-grid",
+            background: "rgba(255,255,255,0.85)",
+            outline: "1px solid #234C77",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span
+            aria-hidden
+            style={{
+              gridArea: "1 / 1 / 2 / 2",
+              visibility: "hidden",
+              whiteSpace: "pre-wrap",
+              // Trailing space so the caret line is reflected when the
+              // operator hits Enter (otherwise the ghost ends one row
+              // shorter than the textarea).
+              minWidth: "1ch",
+            }}
+          >
+            {draft + (draft.endsWith("\n") ? " " : "")}
+          </span>
+          <textarea
+            autoFocus
+            value={draft}
+            // cols/rows = 1 so the textarea's intrinsic size doesn't
+            // claim the grid cell — the ghost <span> mirroring the
+            // draft dictates the cell width/height. Without this the
+            // textarea's default cols=20 (~280 px at 29 pt) forced
+            // the grid cell wider than the text actually needs, so
+            // the edit box visually inflated on first double-click.
+            cols={1}
+            rows={1}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                commit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancel();
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              gridArea: "1 / 1 / 2 / 2",
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              resize: "none",
+              padding: 0,
+              margin: 0,
+              font: "inherit",
+              color: "inherit",
+              textAlign: "inherit",
+              letterSpacing: "inherit",
+              lineHeight: "inherit",
+              whiteSpace: "pre-wrap",
+              overflow: "hidden",
+            }}
+          />
+        </div>
+      ) : overlay.text === "" ? (
         <div
           className="h-12 w-12 rounded bg-red-500/70"
           aria-label="empty text overlay placeholder"
@@ -210,6 +340,7 @@ function TextOverlayBox({
 function BackgroundOverlayBox({
   overlay,
   isSelected,
+  zIndex,
   onMovePointerDown,
   onResizePointerDown,
   onRotatePointerDown,
@@ -219,6 +350,7 @@ function BackgroundOverlayBox({
 }: {
   overlay: EditorBackgroundOverlay;
   isSelected: boolean;
+  zIndex?: number;
   onMovePointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onResizePointerDown?: (
     corner: Corner,
@@ -232,10 +364,10 @@ function BackgroundOverlayBox({
   onPointerUp?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   onClick?: () => void;
 }) {
-  const containerStyle = positionContainerStyle(
-    overlay.transform,
-    overlay.layerIndex,
-  );
+  const containerStyle: CSSProperties = {
+    ...positionContainerStyle(overlay.transform, overlay.layerIndex),
+    ...(zIndex != null ? { zIndex } : {}),
+  };
 
   // When imageUrl is set the overlay carries a user-picked picture; we
   // paint it via background-image (cover) over the underlying fillColor
@@ -440,19 +572,41 @@ function textShadowAndStrokeStyles(e: EffectsProps): CSSProperties {
 }
 
 function cssTextShadow(s: ShadowProps): string {
-  if (s.spreadPx > 0) {
-    const offsets: Array<[number, number]> = [];
-    const r = Math.max(1, s.spreadPx);
-    for (let dx = -r; dx <= r; dx += Math.max(1, Math.floor(r / 2))) {
-      for (let dy = -r; dy <= r; dy += Math.max(1, Math.floor(r / 2))) {
-        offsets.push([s.offsetX + dx, s.offsetY + dy]);
-      }
-    }
-    return offsets
-      .map(([x, y]) => `${x}px ${y}px ${s.blurPx}px ${s.color}`)
-      .join(", ");
-  }
-  return `${s.offsetX}px ${s.offsetY}px ${s.blurPx}px ${s.color}`;
+  // CSS text-shadow has no native "spread" parameter (unlike box-shadow),
+  // so we stack 8 offset shadows in cardinal + ordinal directions at the
+  // spread radius around the central offset. Each layer carries the
+  // user's blur, so the visible result reads as a single colored halo
+  // whose thickness tracks the spread slider 1:1.
+  //
+  // The previous "fold spread into blur" approximation
+  // (effectiveBlur = blur + 2*spread) made the slider feel inert — at
+  // default spread=25 the textShadow became a ~50px diffuse glow that
+  // washed out below visibility on small glyphs, so dragging the
+  // slider looked like "nothing happens" even though state updated.
+  // Compare to cssBoxShadow which uses native spread on background
+  // overlays — those updates are immediately visible. The multi-layer
+  // stack closes that perception gap.
+  const r = Math.max(0, s.spreadPx);
+  const dirs: ReadonlyArray<[number, number]> =
+    r > 0
+      ? [
+          [0, 0],
+          [r, 0],
+          [-r, 0],
+          [0, r],
+          [0, -r],
+          [r, r],
+          [-r, -r],
+          [r, -r],
+          [-r, r],
+        ]
+      : [[0, 0]];
+  return dirs
+    .map(
+      ([dx, dy]) =>
+        `${s.offsetX + dx}px ${s.offsetY + dy}px ${s.blurPx}px ${s.color}`,
+    )
+    .join(", ");
 }
 
 function cssBoxShadow(s: ShadowProps): string {

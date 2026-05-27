@@ -276,6 +276,81 @@ async def test_rescan_bypasses_completion_guard():
     assert resp.job_id == fake_job.id
 
 
+# ---------- STT-enum NOT scheduled from scan endpoints ----------
+#
+# PR #275 wired ``schedule_stt_enumeration_task`` into ``rescan`` to
+# match ``enqueue_scan``. Both were then removed in the
+# stt-vision-race fix: the parallel STT call was racing the in-flight
+# vision worker's lease via ``promote_latest_enumeration_done_stt``
+# (the function nulled ``claimed_by`` atomically → vision's later
+# complete_enumeration matched 0 rows → vision's catalog rows with
+# crops were silently discarded). STT now fires ONLY from the vision
+# callback path in :mod:`internal_router` (augment after
+# /complete, recover after /fail), so it always runs AFTER vision has
+# reached a terminal state.
+#
+# These two tests pin the regression: scan endpoints must NOT
+# schedule STT. They guard against accidental reintroduction.
+
+
+@pytest.mark.asyncio
+async def test_rescan_does_not_schedule_stt_enumeration(monkeypatch):
+    """Regression for the stt-vision-race fix: rescan must NEVER
+    call ``schedule_stt_enumeration_task`` directly. STT is owned by
+    the vision callback path (:mod:`internal_router`) so it runs
+    strictly after vision is terminal."""
+    svc = _build_service(_settings())
+    svc.catalog_repo.invalidate_video_catalog = AsyncMock(return_value=0)
+    fake_job = MagicMock(id=uuid4())
+    svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
+    import app.sqs_producer as sqs_producer
+    sqs_producer.publish_product_enumerate_job = MagicMock()
+
+    # The function is imported function-locally in service.py via
+    # ``from app.modules.shorts_auto_product.enumerate_stt.service
+    # import schedule_stt_enumeration_task``. Patch the SOURCE module
+    # so any (forbidden) call from rescan would resolve to this mock.
+    stt_mock = MagicMock()
+    monkeypatch.setattr(
+        "app.modules.shorts_auto_product.enumerate_stt.service."
+        "schedule_stt_enumeration_task",
+        stt_mock,
+    )
+
+    await svc.rescan(
+        org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
+        duration_preset_sec=60,
+    )
+
+    stt_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_scan_does_not_schedule_stt_enumeration(monkeypatch):
+    """Regression for the stt-vision-race fix. ``enqueue_scan`` was
+    the original site that scheduled STT in parallel with the vision
+    SQS publish. Now the call lives in the vision callback path."""
+    svc = _build_service(_settings())
+    fake_job = MagicMock(id=uuid4())
+    svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
+    import app.sqs_producer as sqs_producer
+    sqs_producer.publish_product_enumerate_job = MagicMock()
+
+    stt_mock = MagicMock()
+    monkeypatch.setattr(
+        "app.modules.shorts_auto_product.enumerate_stt.service."
+        "schedule_stt_enumeration_task",
+        stt_mock,
+    )
+
+    await svc.enqueue_scan(
+        org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
+        duration_preset_sec=60,
+    )
+
+    stt_mock.assert_not_called()
+
+
 # ---------- catalog entry not found ----------
 
 @pytest.mark.asyncio

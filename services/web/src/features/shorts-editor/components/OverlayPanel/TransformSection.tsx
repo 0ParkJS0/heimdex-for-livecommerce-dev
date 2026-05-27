@@ -34,51 +34,20 @@ export function TransformSection({ overlay, onChange }: TransformSectionProps) {
   // overlays add an extra size (W/H) row below. The earlier "위치/회전"
   // single-row layout with three steppers did not match the goal capture.
   return (
-    <section className="space-y-2">
-      <header className="text-xs font-semibold text-grayscale-800">
+    <section className="space-y-2.5">
+      {/* figma 2015:249496 — section header: 14px SemiBold, tracking -0.35px */}
+      <header className="text-[14px] font-semibold leading-[1.4] tracking-[-0.35px] text-grayscale-800">
         {t.transform.sectionLabel}
       </header>
 
-      {/* Position + rotation are display-first: operators drag the
-          overlay in the preview to move it, and the boxes mirror the
-          resulting transform.x / transform.y / transform.rotationDeg
-          values. Typing in either box still updates the overlay, but
-          we drop the +/- stepper chrome per 2026-05-18 figma. */}
-      {/* 회전 column slimmed to a fixed 60px (right-aligned) so the 위치
-          column can spread X/Y values without clipping. Operators rarely
-          type free-form degrees here — the box mirrors the preview drag
-          rotation, so a narrow display column is enough. */}
-      <div className="grid grid-cols-[1fr_60px] gap-2">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-grayscale-500">위치</span>
-          <ValueBoxXY
-            x={xPct}
-            y={yPct}
-            min={0}
-            max={100}
-            onChangeX={(v) => updateTransform({ x: v / 100 })}
-            onChangeY={(v) => updateTransform({ y: v / 100 })}
-            ariaLabel="overlay position"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-grayscale-500">회전</span>
-          <ValueBox
-            value={rotInt}
-            min={-360}
-            max={360}
-            onChange={(v) => updateTransform({ rotationDeg: v })}
-            suffix="°"
-            ariaLabel="overlay rotation"
-            className="px-1"
-          />
-        </div>
-      </div>
-
-      {/* Background-only: explicit W/H underneath 위치/회전 */}
+      {/* figma 2015:249496 — for background overlays: 크기 (W/H) row
+          appears ABOVE 위치 + 회전, matching the Figma 배경 tab spec.
+          Text overlays keep the original 위치/회전-only layout. */}
       {overlay.kind === "background" && (
         <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium text-grayscale-500">{t.transform.size}</span>
+          <span className="text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-grayscale-500">
+            {t.transform.size}
+          </span>
           <ValueBoxWH
             width={tf.widthPx ?? 0}
             height={tf.heightPx ?? 0}
@@ -90,6 +59,42 @@ export function TransformSection({ overlay, onChange }: TransformSectionProps) {
           />
         </div>
       )}
+
+      {/* Position + rotation row: 위치 (X/Y) + 회전 (°) side by side.
+          min-w-0 on the 1fr cell stops browser input min-width from
+          overflowing the grid column boundary. 회전 cell trimmed to
+          50 px so 위치 picks up ~10 px more breathing room — operator
+          feedback at 1440 viewport. */}
+      <div className="grid grid-cols-[1fr_50px] gap-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-grayscale-500">
+            위치
+          </span>
+          <ValueBoxXY
+            x={xPct}
+            y={yPct}
+            min={0}
+            max={100}
+            onChangeX={(v) => updateTransform({ x: v / 100 })}
+            onChangeY={(v) => updateTransform({ y: v / 100 })}
+            ariaLabel="overlay position"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-[12px] font-medium leading-[1.4] tracking-[-0.3px] text-grayscale-500">
+            회전
+          </span>
+          <ValueBox
+            value={rotInt}
+            min={-360}
+            max={360}
+            onChange={(v) => updateTransform({ rotationDeg: v })}
+            suffix="°"
+            ariaLabel="overlay rotation"
+            className="px-1"
+          />
+        </div>
+      </div>
     </section>
   );
 }

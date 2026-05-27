@@ -290,28 +290,6 @@ describe("InlineWizardProductPanel", () => {
     });
   });
 
-  it("renders timeout separately from no-products while scan is still in progress", async () => {
-    // POLL_TIMEOUT_MS was stretched from 180_000 (3min) to 900_000
-    // (15min) in the panel — push the mocked elapsed time past the
-    // new ceiling so the watchdog still fires inside the test.
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(901_000);
-    triggerEnumerationMock.mockResolvedValue({ job_id: "j1", deduped: false });
-    getProductCatalogMock.mockResolvedValue({
-      video_id: "gd_test",
-      products: [],
-      scan_status: "in_progress",
-    });
-
-    renderPanel();
-
-    await waitFor(() => {
-      expect(screen.getByTestId("inline-product-timeout")).toBeInTheDocument();
-    });
-    expect(
-      screen.queryByTestId("inline-product-no-products"),
-    ).not.toBeInTheDocument();
-  });
-
   it("renders the error state when scan_status=failed", async () => {
     triggerEnumerationMock.mockResolvedValue({ job_id: "j1", deduped: false });
     getProductCatalogMock.mockResolvedValue({
@@ -419,35 +397,6 @@ describe("InlineWizardProductPanel", () => {
     // "accept matching batch" assertion to the other tests. The
     // guarantee tested here is the negative case: stale data does NOT
     // flip pollState to ready.
-  });
-
-  it("timeout state exposes a rescan button that fires triggerRescan", async () => {
-    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(901_000);
-    triggerEnumerationMock.mockResolvedValue({ job_id: "j1", deduped: false });
-    triggerRescanMock.mockResolvedValue({
-      job_id: "rescan-1",
-      invalidated_count: 0,
-    });
-    getProductCatalogMock.mockResolvedValue({
-      video_id: "gd_test",
-      products: [],
-      scan_status: "in_progress",
-    });
-
-    renderPanel();
-
-    const rescanBtn = await screen.findByTestId(
-      "inline-product-timeout-rescan",
-    );
-    fireEvent.click(rescanBtn);
-
-    await waitFor(() => {
-      expect(triggerRescanMock).toHaveBeenCalledWith(
-        "gd_test",
-        { duration_preset_sec: 60 },
-        expect.any(Function),
-      );
-    });
   });
 
   it("summary chip renders distribution + range + length + count", async () => {

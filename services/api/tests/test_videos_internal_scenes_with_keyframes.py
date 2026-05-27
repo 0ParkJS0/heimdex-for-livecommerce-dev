@@ -107,16 +107,21 @@ def test_returns_chronologically_ordered_scenes_with_keyframe_keys(_build_app):
                 "scene_id": "gd_abc123_scene_002",
                 "start_ms": 30000, "end_ms": 45000,
                 "keyframe_timestamp_ms": 37500,
+                "ocr_text_raw": "29,900 원 한정수량",
             },
             {
                 "scene_id": "gd_abc123_scene_001",
                 "start_ms": 0, "end_ms": 30000,
                 "keyframe_timestamp_ms": 15000,
+                # ocr_text_raw absent — OCR enrichment not yet complete
+                # for this scene. Endpoint must collapse the missing
+                # field to "" so the worker contract stays a string.
             },
             {
                 "scene_id": "gd_abc123_scene_003",
                 "start_ms": 45000, "end_ms": 60000,
                 "keyframe_timestamp_ms": None,
+                "ocr_text_raw": None,
             },
         ],
     }
@@ -154,6 +159,20 @@ def test_returns_chronologically_ordered_scenes_with_keyframe_keys(_build_app):
     # Null-pass-through for keyframe_timestamp_ms when OS doesn't have it.
     assert scenes[2]["keyframe_timestamp_ms"] is None
     assert scenes[0]["keyframe_timestamp_ms"] == 15000
+
+    # ocr_text_raw is the on-wire field the product-enumerate-worker
+    # reads for the overlay Tier 1 detector's OCR signals + structural
+    # gate. Three boundary cases pinned together:
+    #   * scene_001 — OS source has no ``ocr_text_raw`` key at all →
+    #     endpoint must surface ``""`` (not None, not missing).
+    #   * scene_002 — real KRW price string passes through verbatim.
+    #   * scene_003 — explicit ``None`` from OS also collapses to ``""``.
+    # Silent-fail-open regression from 2026-05-26 (overlay worker
+    # constructed OverlayKeyframe without ocr_text → detector gate dead).
+    by_id = {s["scene_id"]: s for s in scenes}
+    assert by_id["gd_abc123_scene_001"]["ocr_text_raw"] == ""
+    assert by_id["gd_abc123_scene_002"]["ocr_text_raw"] == "29,900 원 한정수량"
+    assert by_id["gd_abc123_scene_003"]["ocr_text_raw"] == ""
 
 
 # ---------- auth ----------

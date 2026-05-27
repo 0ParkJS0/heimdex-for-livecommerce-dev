@@ -14,6 +14,8 @@ export const t = {
   actions: {
     addText: "텍스트 추가",
     addBackground: "단색 배경 추가",
+    letterbox: "레터박스",
+    removeLetterbox: "레터박스 제거",
     insertImage: "이미지 삽입",
     insertImageDisabledTooltip: "곧 제공 예정",
     deleteSelected: "삭제",
@@ -38,10 +40,7 @@ export const t = {
   },
   background: {
     fillColor: "채우기 색",
-    layerOrder: "레이어",
     sendToBack: "맨 뒤로",
-    sendBackward: "뒤로",
-    bringForward: "앞으로",
     bringToFront: "맨 앞으로",
   },
   transform: {

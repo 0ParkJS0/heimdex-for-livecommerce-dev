@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,8 @@ from app.dependencies import (
     get_scene_opensearch_client,
 )
 from app.db.base import get_db_session
+from app.lib.drive_mount_path import build_mount_relative_path
+from app.modules.drive.models import DriveConnection
 from app.modules.drive.repository import DriveConnectionRepository, DriveFileRepository, DriveSecretRepository
 from app.modules.search.scene_client import SceneSearchClient
 from app.modules.drive.schemas import (
@@ -38,6 +40,8 @@ from app.modules.drive.schemas import (
     DriveSecretCreate,
     DriveSecretResponse,
     DriveStatusResponse,
+    SourceFact,
+    SourceFactsResponse,
     SyncTriggerResponse,
 )
 from app.modules.auth.dependencies import require_role
@@ -68,6 +72,62 @@ def _decrypt_oauth_token_data(secret: Any, encryption_key_hex: str) -> dict[str,
 
 
 PROCESSING_STATUSES = frozenset({"downloading", "transcoding", "processing"})
+
+
+@router.get("/source-facts", response_model=SourceFactsResponse)
+async def get_source_facts(
+    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
+    file_repo: Annotated[DriveFileRepository, Depends(get_drive_file_repository)],
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+    video_ids: Annotated[list[str], Query(min_length=1, max_length=200)],
+) -> SourceFactsResponse:
+    """Per-video facts the agent needs to locate ORIGINALS on the local mount.
+
+    Gated behind ``agent_hq_export_enabled``. Org-scoped: only returns files
+    belonging to the caller's org; unknown/foreign video_ids land in ``missing``.
+    Returns mount-RELATIVE paths — the agent prepends its own detected Google
+    Drive mount root and verifies by size/md5 before rendering.
+    """
+    if not get_settings().agent_hq_export_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="High-quality export is not enabled",
+        )
+
+    files = await file_repo.get_by_video_ids(org_ctx.org_id, video_ids)
+
+    conn_cache: dict[Any, DriveConnection | None] = {}
+    items: list[SourceFact] = []
+    for vid in video_ids:
+        df = files.get(vid)
+        if df is None:
+            continue
+        if df.connection_id not in conn_cache:
+            conn_cache[df.connection_id] = (
+                await db.get(DriveConnection, df.connection_id)
+                if df.connection_id
+                else None
+            )
+        conn = conn_cache[df.connection_id]
+        rel = build_mount_relative_path(
+            scope_type=conn.scope_type if conn else "",
+            drive_name=conn.drive_name if conn else None,
+            folder_path=conn.folder_path if conn else None,
+            drive_path=df.drive_path or df.file_name,
+        )
+        items.append(
+            SourceFact(
+                video_id=vid,
+                google_file_id=df.google_file_id,
+                file_name=df.file_name,
+                file_size_bytes=df.file_size_bytes,
+                md5_checksum=df.md5_checksum,
+                mount_relative_path=rel,
+            )
+        )
+
+    missing = [vid for vid in video_ids if vid not in files]
+    return SourceFactsResponse(items=items, missing=missing)
 
 
 @router.get("/status", response_model=DriveStatusResponse)

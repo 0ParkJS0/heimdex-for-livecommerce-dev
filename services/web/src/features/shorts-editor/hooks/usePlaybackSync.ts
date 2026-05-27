@@ -1,18 +1,15 @@
 import { useRef, useEffect, useCallback } from "react";
 import { getAgentPlaybackUrl, getCloudPlaybackUrl } from "@/lib/agent";
-import type { EditorClip } from "../lib/types";
+import type { EditorClip, Playback, PlaybackEvent } from "../lib/types";
 import { getSourceTime } from "../lib/source-time";
 import { getClipDuration } from "../lib/timeline-math";
 
 interface PlaybackSyncOptions {
   clips: EditorClip[];
   playheadMs: number;
-  isPlaying: boolean;
+  playback: Playback;
   onPlayheadChange: (ms: number) => void;
-  onPlayingChange: (playing: boolean) => void;
-  // playback rate (1.0 default, 1.5 fast). Optional so existing
-  // callers don't need to pass it; applied to <video>.playbackRate.
-  rate?: number;
+  dispatchPlaybackEvent: (event: PlaybackEvent) => void;
 }
 
 function getVideoUrl(videoId: string, sourceType: string): string {
@@ -22,17 +19,25 @@ function getVideoUrl(videoId: string, sourceType: string): string {
   return getAgentPlaybackUrl(videoId);
 }
 
+function isPlaybackActive(pb: Playback): boolean {
+  return pb.kind === "playing";
+}
+
+function getPlaybackRate(pb: Playback): number {
+  if (pb.kind === "playing") return pb.rate;
+  return 1;
+}
+
 /**
- * Syncs a <video> element with editor playhead state.
+ * Syncs a <video> element with editor playback state machine.
  * Handles multi-clip playback by switching video sources.
  */
 export function usePlaybackSync({
   clips,
   playheadMs,
-  isPlaying,
+  playback,
   onPlayheadChange,
-  onPlayingChange,
-  rate,
+  dispatchPlaybackEvent,
 }: PlaybackSyncOptions) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
@@ -43,12 +48,12 @@ export function usePlaybackSync({
   const playheadAtStartRef = useRef(0);
   const startTimeRef = useRef(0);
 
-  // Keep a ref to playheadMs so effects can read the latest value
-  // without adding it to dependency arrays (avoids stale closures).
   const playheadMsRef = useRef(playheadMs);
   playheadMsRef.current = playheadMs;
 
-  // Resolve current source from playhead
+  const playing = isPlaybackActive(playback);
+  const rate = getPlaybackRate(playback);
+
   const currentSource = getSourceTime(clips, playheadMs);
   const currentClipIndex = currentSource?.clipIndex ?? -1;
 
@@ -65,7 +70,6 @@ export function usePlaybackSync({
       video.load();
     }
 
-    // Seek when clip index changes
     if (currentClipIndex !== lastClipIndexRef.current) {
       lastClipIndexRef.current = currentClipIndex;
       const targetTime = currentSource.sourceMs / 1000;
@@ -74,29 +78,26 @@ export function usePlaybackSync({
     }
   }, [currentClipIndex, currentSource?.videoId, currentSource?.sourceType]);
 
-  // apply playbackRate whenever it changes or after a source reload.
-  // Kept separate from seek/sync logic so playhead math stays untouched.
-  // Browsers reset playbackRate to 1.0 on `video.src = ...; video.load()`,
-  // so we re-apply on currentClipIndex change as well as rate change.
+  // Apply playbackRate whenever it changes or after a source reload.
   useEffect(() => {
-    if (videoRef.current && rate != null) {
+    if (videoRef.current) {
       videoRef.current.playbackRate = rate;
     }
   }, [rate, currentClipIndex]);
 
-  // Seek video when playhead changes while paused (user scrubbing)
+  // Seek video when playhead changes while NOT playing (user scrubbing)
   useEffect(() => {
-    if (isPlaying || !currentSource || !videoRef.current) return;
+    if (playing || !currentSource || !videoRef.current) return;
 
     const targetTime = currentSource.sourceMs / 1000;
     if (Math.abs(videoRef.current.currentTime - targetTime) > 0.3) {
       videoRef.current.currentTime = targetTime;
     }
-  }, [isPlaying, playheadMs, currentSource?.sourceMs]);
+  }, [playing, playheadMs, currentSource?.sourceMs]);
 
   // Preload next clip's video when playing
   useEffect(() => {
-    if (!isPlaying || !currentSource || !preloadRef.current) return;
+    if (!playing || !currentSource || !preloadRef.current) return;
 
     const nextClipIndex = currentSource.clipIndex + 1;
     if (nextClipIndex >= clips.length) return;
@@ -108,15 +109,15 @@ export function usePlaybackSync({
       preloadRef.current.src = nextUrl;
       preloadRef.current.preload = "auto";
     }
-  }, [isPlaying, currentClipIndex, clips]);
+  }, [playing, currentClipIndex, clips]);
 
-  // Play/pause sync — reads playhead from ref to avoid stale closure
+  // Play/pause sync
   useEffect(() => {
     const video = videoRef.current;
     const source = getSourceTime(clips, playheadMsRef.current);
     if (!video || !source) return;
 
-    if (isPlaying) {
+    if (playing) {
       playheadAtStartRef.current = playheadMsRef.current;
       startTimeRef.current = performance.now();
 
@@ -132,54 +133,37 @@ export function usePlaybackSync({
         video.currentTime = targetTime;
       }
       video.play().catch(() => {
-        onPlayingChange(false);
+        dispatchPlaybackEvent({ kind: "HARD_PAUSE" });
       });
     } else {
       video.pause();
       cancelAnimationFrame(animFrameRef.current);
     }
-  }, [isPlaying, clips, onPlayingChange]);
+  }, [playing, clips, dispatchPlaybackEvent]);
 
   // Animation frame loop for smooth playhead updates during playback
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!playing) return;
 
     const tick = () => {
       const elapsed = performance.now() - startTimeRef.current;
-      // performance.now() returns sub-millisecond precision; the
-      // timeline + subtitle boundary math is integer-ms throughout
-      // (msToPixels, getActiveSubtitles `>= startMs && < endMs`).
-      // Letting fractional ms reach onPlayheadChange caused captions
-      // to flicker into view ~half a millisecond before the timeline
-      // block visually crossed the playhead — operator-reported as a
-      // ~0.1s drift between the timeline block and the on-canvas
-      // caption appearance. Rounding here pins the playhead to the
-      // same integer ms the timeline already snaps to.
       const newPlayhead = Math.round(
-        playheadAtStartRef.current + elapsed,
+        playheadAtStartRef.current + elapsed * rate,
       );
 
-      // Check if we've gone past all clips — loop back to 0 so a
-      // multi-clip composition replays automatically without the user
-      // having to scrub back to the start.
       const totalEnd = clips.length > 0
         ? clips[clips.length - 1].timelineStartMs + getClipDuration(clips[clips.length - 1])
         : 0;
 
       if (newPlayhead >= totalEnd) {
-        onPlayheadChange(0);
-        playheadAtStartRef.current = 0;
-        startTimeRef.current = performance.now();
-        lastClipIndexRef.current = -1;
-        animFrameRef.current = requestAnimationFrame(tick);
+        dispatchPlaybackEvent({ kind: "REACHED_END" });
+        onPlayheadChange(totalEnd);
         return;
       }
 
-      // Check if we crossed into a new clip
       const newSource = getSourceTime(clips, newPlayhead);
       if (newSource && newSource.clipIndex !== lastClipIndexRef.current) {
         onPlayheadChange(newPlayhead);
-        // Re-start timing from this point
         playheadAtStartRef.current = newPlayhead;
         startTimeRef.current = performance.now();
       } else {
@@ -191,11 +175,12 @@ export function usePlaybackSync({
 
     animFrameRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animFrameRef.current);
-  }, [isPlaying, clips, onPlayheadChange, onPlayingChange]);
+  }, [playing, rate, clips, onPlayheadChange, dispatchPlaybackEvent]);
 
   const onSeeked = useCallback(() => {
     seekingRef.current = false;
-  }, []);
+    dispatchPlaybackEvent({ kind: "SEEK_DONE" });
+  }, [dispatchPlaybackEvent]);
 
   const onEnded = useCallback(() => {
     if (!currentSource) return;
@@ -204,14 +189,14 @@ export function usePlaybackSync({
       const nextClip = clips[nextClipIndex];
       onPlayheadChange(nextClip.timelineStartMs);
     } else {
-      // Loop back to the start so the composition keeps playing.
-      onPlayheadChange(0);
+      dispatchPlaybackEvent({ kind: "REACHED_END" });
     }
-  }, [currentSource, clips, onPlayheadChange]);
+  }, [currentSource, clips, onPlayheadChange, dispatchPlaybackEvent]);
 
   const seekTo = useCallback(
     (ms: number) => {
       onPlayheadChange(ms);
+      dispatchPlaybackEvent({ kind: "SEEK", toMs: ms });
       const source = getSourceTime(clips, ms);
       if (source && videoRef.current) {
         const url = getVideoUrl(source.videoId, source.sourceType);
@@ -223,12 +208,12 @@ export function usePlaybackSync({
         videoRef.current.currentTime = source.sourceMs / 1000;
       }
     },
-    [clips, onPlayheadChange],
+    [clips, onPlayheadChange, dispatchPlaybackEvent],
   );
 
   const togglePlay = useCallback(() => {
-    onPlayingChange(!isPlaying);
-  }, [isPlaying, onPlayingChange]);
+    dispatchPlaybackEvent({ kind: "TOGGLE" });
+  }, [dispatchPlaybackEvent]);
 
   return {
     videoRef,

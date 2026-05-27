@@ -36,16 +36,18 @@ docker compose exec api python -m app.seed
 
 ### Access the Application
 
-- **Web UI**: http://localhost:3000
+- **Web UI (canonical)**: http://devorg.app.heimdex.local:3000
 - **API Health**: http://devorg.app.heimdex.local:8000/health
 - **API Docs**: http://devorg.app.heimdex.local:8000/docs
 
-> **Note**: The API must be accessed via the org subdomain (e.g., `devorg.app.heimdex.local`), 
-> not `localhost`. Requests to `localhost:8000` will be rejected by design.
+> **Note**: Visual QA, demos, and any tooling that needs cross-service requests must use
+> the `devorg.app.heimdex.local` host (the API rejects requests on `localhost:8000` by
+> design). `http://localhost:3000` serves the same Next.js process but should not be used
+> for verification — tests and scripts that hard-code `localhost:3000` should be migrated.
 
 ### Test Search
 
-1. Open http://localhost:3000
+1. Open http://devorg.app.heimdex.local:3000
 2. Enter a search query (try Korean: "회의", "프로젝트", "보안")
 3. Adjust the alpha slider:
    - **Exact** (alpha=0): Pure keyword matching (BM25)

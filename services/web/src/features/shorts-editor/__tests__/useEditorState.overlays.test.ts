@@ -111,8 +111,68 @@ describe("useEditorState — V2 overlays", () => {
     });
 
     const moved = result.current.state.overlays.find((o) => o.id === firstId)!;
-    // After densely repacking: front means highest index (length - 1)
-    expect(moved.layerIndex).toBe(result.current.state.overlays.length - 1);
+    // 'front' clamps to MAX_TEXT_OVERLAY_LAYER (1) per operator policy
+    // 2026-05-24 (텍스트 row 최대 2개). Reducer applies the cap to all
+    // overlays uniformly, so the highest reachable index via 'front' is 1.
+    expect(moved.layerIndex).toBe(1);
+  });
+
+  it("media segment: background overlays default below the letterbox; send-to-front lifts above", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+    const lo1 = result.current.state.layerOrder;
+    const idxBg1 = lo1.findIndex((l) => l.kind === "overlay" && l.id === bgId);
+    const idxLb1 = lo1.findIndex((l) => l.kind === "letterbox");
+    expect(idxBg1).toBeLessThan(idxLb1);
+    // send-to-front: bg slot rises above the letterbox
+    act(() =>
+      result.current.reorderLayer({ kind: "overlay", id: bgId }, "front"),
+    );
+    const lo2 = result.current.state.layerOrder;
+    const idxBg2 = lo2.findIndex((l) => l.kind === "overlay" && l.id === bgId);
+    const idxLb2 = lo2.findIndex((l) => l.kind === "letterbox");
+    const idxSub2 = lo2.findIndex((l) => l.kind === "subtitles");
+    expect(idxBg2).toBeGreaterThan(idxLb2);
+    expect(idxBg2).toBeLessThan(idxSub2);
+  });
+
+  it("media segment: REORDER_LAYER on video can rise above the letterbox (template style)", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+    // default: video at the bottom of the media segment
+    const lo1 = result.current.state.layerOrder;
+    const idxVideo1 = lo1.findIndex((l) => l.kind === "video");
+    const idxLb1 = lo1.findIndex((l) => l.kind === "letterbox");
+    expect(idxVideo1).toBeLessThan(idxLb1);
+
+    act(() => result.current.reorderLayer({ kind: "video" }, "forward"));
+    const lo2 = result.current.state.layerOrder;
+    const idxVideo2 = lo2.findIndex((l) => l.kind === "video");
+    const idxLb2 = lo2.findIndex((l) => l.kind === "letterbox");
+    const idxSub2 = lo2.findIndex((l) => l.kind === "subtitles");
+    expect(idxVideo2).toBeGreaterThan(idxLb2);
+    // Subtitles still pinned above the entire media segment.
+    expect(idxVideo2).toBeLessThan(idxSub2);
   });
 
   it("reorderOverlay 'forward' is a single-step swap", () => {
@@ -131,5 +191,120 @@ describe("useEditorState — V2 overlays", () => {
     expect(
       result.current.state.overlays.find((o) => o.id === firstId)!.layerIndex,
     ).toBe(1);
+  });
+});
+
+// B8 (2026-05-26) — bg/letterbox media-background segment policy.
+// Default: a fresh background sits BELOW the letterbox (the operator's
+// stated default after "send-to-front lifts above"). REORDER_LAYER on
+// the background or the letterbox slot can re-stack the two within the
+// segment — subtitles + text overlays stay pinned above either way.
+describe("useEditorState — bg/letterbox layer policy (B8)", () => {
+  function indexOfBg(
+    layerOrder: ReturnType<typeof useEditorState>["state"]["layerOrder"],
+    bgId: string,
+  ): number {
+    return layerOrder.findIndex(
+      (l) => l.kind === "overlay" && l.id === bgId,
+    );
+  }
+  function indexOfLetterbox(
+    layerOrder: ReturnType<typeof useEditorState>["state"]["layerOrder"],
+  ): number {
+    return layerOrder.findIndex((l) => l.kind === "letterbox");
+  }
+
+  it("ADD background lands below an existing letterbox by default", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+    const lo = result.current.state.layerOrder;
+    expect(indexOfBg(lo, bgId)).toBeGreaterThan(0); // above video
+    expect(indexOfBg(lo, bgId)).toBeLessThan(indexOfLetterbox(lo));
+  });
+
+  it("REORDER_LAYER 'front' on a background lifts it above the letterbox", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+
+    act(() =>
+      result.current.reorderLayer({ kind: "overlay", id: bgId }, "front"),
+    );
+
+    const lo = result.current.state.layerOrder;
+    expect(indexOfBg(lo, bgId)).toBeGreaterThan(indexOfLetterbox(lo));
+    // Subtitles + text overlays stay pinned above the media-bg segment.
+    const subIdx = lo.findIndex((l) => l.kind === "subtitles");
+    expect(indexOfBg(lo, bgId)).toBeLessThan(subIdx);
+  });
+
+  it("SET_LETTERBOX with existing backgrounds inserts letterbox above them", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+
+    const lo = result.current.state.layerOrder;
+    expect(indexOfBg(lo, bgId)).toBeLessThan(indexOfLetterbox(lo));
+  });
+
+  it("REORDER_LAYER 'back' on letterbox moves it below an existing background", () => {
+    const { result } = renderHook(() => useEditorState());
+    act(() => result.current.addBackgroundOverlayAtPlayhead());
+    const bgId = result.current.state.overlays.find(
+      (o) => o.kind === "background",
+    )!.id;
+    act(() => {
+      result.current.setLetterbox({
+        topHeightPct: 10,
+        bottomHeightPct: 10,
+        fillColor: "#000000",
+        borderColor: null,
+        borderWidthPx: 0,
+      });
+    });
+
+    act(() => result.current.reorderLayer({ kind: "letterbox" }, "back"));
+
+    const lo = result.current.state.layerOrder;
+    // Letterbox dropped into the media-bg band below the background.
+    expect(indexOfLetterbox(lo)).toBeLessThan(indexOfBg(lo, bgId));
+    // Subtitles still on top of the media-bg segment.
+    const subIdx = lo.findIndex((l) => l.kind === "subtitles");
+    expect(indexOfBg(lo, bgId)).toBeLessThan(subIdx);
   });
 });

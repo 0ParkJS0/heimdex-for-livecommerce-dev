@@ -31,20 +31,27 @@ from uuid import UUID
 
 import httpx
 from heimdex_media_pipelines.product_enum import (
+    OVERLAY_ENUMERATION_VERSION,
     CanonicalProduct,
     EnumerationConfig,
+    OverlayKeyframe,
     SceneKeyframe,
     enumerate_products,
+    enumerate_products_overlay,
 )
 from heimdex_media_pipelines.siglip2 import (
     SiglipConfig,
     embed_pil_image_batch,
+)
+from heimdex_media_pipelines.siglip2 import (
     load as load_siglip,
 )
 from heimdex_worker_sdk.s3 import S3Client
 
 from src.api_client import ApiClient
 from src.openai_vlm import OpenAIVlmClient, VlmSchemaError, VlmTimeoutError
+from src.overlay_extractor import OverlayProductExtractor
+from src.overlay_owlv2_adapter import WorkerOwlV2Detector
 from src.product_merge import merge_products_by_label
 from src.settings import WorkerSettings
 
@@ -52,6 +59,17 @@ if TYPE_CHECKING:  # pragma: no cover
     from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+
+# Source tag for the catalog payload's ``enumeration_source`` field.
+_SOURCE_VISION = "vision"
+_SOURCE_OVERLAY = "overlay"
+
+# Modes that run the overlay pass. ``vision+overlay`` runs both passes
+# in one invocation (shared keyframe fetch + loaded models); ``overlay``
+# runs only the overlay pass; ``vision`` (default) is the legacy path.
+_MODES_WITH_OVERLAY = frozenset({"vision+overlay", "overlay"})
+_MODES_WITH_VISION = frozenset({"vision", "vision+overlay"})
 
 
 @dataclass
@@ -67,6 +85,9 @@ class EnumerateJobMessage:
     enumeration_prompt_version: str
     max_keyframes: int
     callback_base_url: str
+    # v0.19.0 contract addition. Old senders omit it → "vision" preserves
+    # the legacy single-pass behavior byte-identically.
+    enumeration_mode: str = "vision"
 
     @classmethod
     def from_dict(cls, body: dict[str, Any]) -> "EnumerateJobMessage":
@@ -81,6 +102,7 @@ class EnumerateJobMessage:
             # SECURITY (F3): tolerated-but-ignored. Future contract
             # bump should drop this field entirely.
             callback_base_url=str(body.get("callback_base_url", "")),
+            enumeration_mode=str(body.get("enumeration_mode", "vision")),
         )
 
 
@@ -142,7 +164,7 @@ def handle_enumerate_job(
             cost_delta_usd=Decimal("0"),
             lease_seconds=settings.worker_lease_seconds,
         )
-        keyframes = _fetch_keyframes(
+        keyframes, ocr_by_scene_id = _fetch_keyframes(
             settings=settings,
             org_id=decoded.org_id,
             video_id=decoded.video_id,
@@ -157,7 +179,10 @@ def handle_enumerate_job(
             )
             return
 
-        # 4. Run pipeline.
+        # 4. Run pipeline. SigLIP2 is loaded ONCE and shared by both
+        #    passes; the keyframes fetched above are shared too.
+        run_vision = decoded.enumeration_mode in _MODES_WITH_VISION
+        run_overlay = decoded.enumeration_mode in _MODES_WITH_OVERLAY
         api.heartbeat(
             job_id=decoded.job_id, claimed_by=settings.worker_id,
             stage="enumerating", progress_pct=30,
@@ -166,6 +191,10 @@ def handle_enumerate_job(
             lease_seconds=settings.worker_lease_seconds,
         )
         siglip = load_siglip(SiglipConfig(model_id=settings.siglip2_model_id))
+
+        # The SAME embedder closure feeds both passes (one loaded model).
+        def embedder(imgs):  # noqa: ANN001,ANN202 — local closure
+            return embed_pil_image_batch(imgs, loaded=siglip)
         config = EnumerationConfig(
             max_keyframes=decoded.max_keyframes,
             vlm_batch_size=settings.openai_batch_size,
@@ -175,53 +204,76 @@ def handle_enumerate_job(
             min_enumeration_confidence=settings.enum_min_confidence,
             enumeration_version=decoded.enumeration_version,
         )
-        try:
-            # Prompts are ignored by ``OpenAIVlmClient`` in the OWLv2
-            # two-stage refactor — the client owns its own label prompt
-            # (``src.owlv2_prompts.LABEL_PROMPT_SYSTEM``) and OWLv2
-            # takes a query list, not a free-form system prompt. We
-            # pass empty strings to satisfy the protocol while keeping
-            # the pipeline call site unchanged.
-            products, total_cost = enumerate_products(
+
+        # The vision and overlay passes are SEPARATE functions —
+        # orchestration, not coupling. Each produces its own catalog
+        # payload (stamped with its source + version); the two lists are
+        # concatenated into ONE complete callback.
+        vision_products: list[CanonicalProduct] = []
+        overlay_products: list[CanonicalProduct] = []
+        total_cost = 0.0
+
+        if run_vision:
+            try:
+                vision_products, vision_cost = _run_vision_pass(
+                    keyframes=keyframes,
+                    vlm_client=vlm_client,
+                    embedder=embedder,
+                    config=config,
+                    settings=settings,
+                )
+            except VlmTimeoutError as exc:
+                api.fail(
+                    job_id=decoded.job_id, claimed_by=settings.worker_id,
+                    cost_delta_usd=Decimal("0"),
+                    error_code="llm_timeout",
+                    error_message=str(exc)[:1900],
+                )
+                return
+            except VlmSchemaError as exc:
+                api.fail(
+                    job_id=decoded.job_id, claimed_by=settings.worker_id,
+                    cost_delta_usd=Decimal("0"),
+                    error_code="llm_schema_mismatch",
+                    error_message=str(exc)[:1900],
+                )
+                return
+            total_cost += vision_cost
+
+        if run_overlay:
+            # Overlay reuses the already-fetched keyframes + the
+            # already-loaded OWLv2 (via the vlm_client) + the shared
+            # SigLIP2 embedder. In ``vision+overlay`` mode this is an
+            # additive best-effort pass — a failure here must NOT discard
+            # the vision rows; in ``overlay`` mode it is the only source.
+            overlay_products, overlay_cost = _run_overlay_pass(
                 keyframes=keyframes,
+                ocr_by_scene_id=ocr_by_scene_id,
                 vlm_client=vlm_client,
-                embedder=lambda imgs: embed_pil_image_batch(imgs, loaded=siglip),
-                system_prompt="",
-                user_prompt_template="",
+                embedder=embedder,
                 config=config,
+                settings=settings,
             )
-        except VlmTimeoutError as exc:
-            api.fail(
-                job_id=decoded.job_id, claimed_by=settings.worker_id,
-                cost_delta_usd=Decimal("0"),
-                error_code="llm_timeout",
-                error_message=str(exc)[:1900],
-            )
-            return
-        except VlmSchemaError as exc:
-            api.fail(
-                job_id=decoded.job_id, claimed_by=settings.worker_id,
-                cost_delta_usd=Decimal("0"),
-                error_code="llm_schema_mismatch",
-                error_message=str(exc)[:1900],
-            )
-            return
-        products = merge_products_by_label(products, settings=settings)
+            total_cost += overlay_cost
+
         # All-rejected != failure — we still post the rejected entries
         # so the API surfaces the empty-state UI honestly. But "0
-        # candidate clusters at all" (e.g., LLM returned nothing) is a
+        # candidate clusters at all" across every requested pass is a
         # legitimate failure.
-        accepted = [p for p in products if p.rejected_reason is None]
-        if not products:
+        all_products = vision_products + overlay_products
+        accepted = [p for p in all_products if p.rejected_reason is None]
+        if not all_products:
             api.fail(
                 job_id=decoded.job_id, claimed_by=settings.worker_id,
                 cost_delta_usd=Decimal(str(total_cost)),
                 error_code="no_products_detected",
-                error_message="LLM enumeration produced 0 candidate clusters",
+                error_message="enumeration produced 0 candidate clusters",
             )
             return
 
-        # 5. Upload crops + build catalog payload.
+        # 5. Upload crops + build catalog payload. One helper call per
+        #    source so each row carries its own source + version; the
+        #    two lists concatenate into a single complete callback.
         api.heartbeat(
             job_id=decoded.job_id, claimed_by=settings.worker_id,
             stage="enumerating", progress_pct=80,
@@ -229,14 +281,29 @@ def handle_enumerate_job(
             cost_delta_usd=Decimal(str(total_cost)),
             lease_seconds=settings.worker_lease_seconds,
         )
-        catalog_entries = _upload_crops_and_build_payload(
-            settings=settings,
-            org_id=decoded.org_id,
-            video_id=decoded.video_id,
-            products=products,
-            enumeration_version=decoded.enumeration_version,
-            enumeration_prompt_version=decoded.enumeration_prompt_version,
-        )
+        catalog_entries: list[dict[str, Any]] = []
+        if vision_products:
+            catalog_entries += _upload_crops_and_build_payload(
+                settings=settings,
+                org_id=decoded.org_id,
+                video_id=decoded.video_id,
+                products=vision_products,
+                enumeration_version=decoded.enumeration_version,
+                enumeration_prompt_version=decoded.enumeration_prompt_version,
+                enumeration_source=_SOURCE_VISION,
+            )
+        if overlay_products:
+            catalog_entries += _upload_crops_and_build_payload(
+                settings=settings,
+                org_id=decoded.org_id,
+                video_id=decoded.video_id,
+                products=overlay_products,
+                # Overlay rows carry the pipeline's overlay algo version,
+                # NOT the vision enumeration_version from the job message.
+                enumeration_version=OVERLAY_ENUMERATION_VERSION,
+                enumeration_prompt_version=decoded.enumeration_prompt_version,
+                enumeration_source=_SOURCE_OVERLAY,
+            )
 
         # 6. Complete.
         api.complete_enumeration(
@@ -248,13 +315,117 @@ def handle_enumerate_job(
             "product_enumerate_completed",
             extra={
                 "job_id": str(decoded.job_id),
-                "candidate_count": len(products),
+                "enumeration_mode": decoded.enumeration_mode,
+                "candidate_count": len(all_products),
                 "accepted_count": len(accepted),
+                "vision_count": len(vision_products),
+                "overlay_count": len(overlay_products),
                 "cost_usd": float(total_cost),
             },
         )
     finally:
         api.close()
+
+
+# ---------- enumeration passes (vision / overlay) ----------
+
+def _run_vision_pass(
+    *,
+    keyframes: list[SceneKeyframe],
+    vlm_client: OpenAIVlmClient,
+    embedder: Any,
+    config: EnumerationConfig,
+    settings: WorkerSettings,
+) -> tuple[list[CanonicalProduct], float]:
+    """The legacy vision pass — byte-identical to the pre-overlay flow.
+
+    Finds products *shown in frame* via OWLv2 → gpt-4o-mini → SigLIP2
+    cluster, then applies the rule-based label merge. Raises
+    :class:`VlmTimeoutError` / :class:`VlmSchemaError` on model failure
+    so the caller maps them to the right ``error_code``.
+    """
+    # Prompts are ignored by ``OpenAIVlmClient`` in the OWLv2 two-stage
+    # refactor — the client owns its own label prompt
+    # (``src.owlv2_prompts.LABEL_PROMPT_SYSTEM``) and OWLv2 takes a
+    # query list, not a free-form system prompt. We pass empty strings
+    # to satisfy the protocol while keeping the pipeline call site
+    # unchanged.
+    products, total_cost = enumerate_products(
+        keyframes=keyframes,
+        vlm_client=vlm_client,
+        embedder=embedder,
+        system_prompt="",
+        user_prompt_template="",
+        config=config,
+    )
+    products = merge_products_by_label(products, settings=settings)
+    return products, total_cost
+
+
+def _run_overlay_pass(
+    *,
+    keyframes: list[SceneKeyframe],
+    ocr_by_scene_id: dict[str, str],
+    vlm_client: OpenAIVlmClient,
+    embedder: Any,
+    config: EnumerationConfig,
+    settings: WorkerSettings,
+) -> tuple[list[CanonicalProduct], float]:
+    """The overlay pass — reads on-screen info-overlay graphics.
+
+    Reuses the SAME keyframes the vision pass got + the SAME loaded
+    SigLIP2 embedder + the SAME loaded OWLv2 (via the ``vlm_client``'s
+    processor/session/device, wrapped in a thin
+    :class:`WorkerOwlV2Detector` adapter). Only the classical cv2
+    detector + the gpt-4o-mini overlay reader are overlay-specific.
+
+    ``ocr_by_scene_id`` is the per-scene OCR text from the API's
+    ``/internal/videos/{file_id}/scenes-with-keyframes`` response (the
+    same call ``_fetch_keyframes`` made for the vision path). Each
+    :class:`OverlayKeyframe` MUST carry this string — the Tier 1
+    detector reads it for the ``ocr_price`` / ``ocr_text_density`` /
+    ``promo_penalty`` signals AND the structural gate. Wiring an empty
+    string here (or worse, omitting the argument, which is now a
+    ``TypeError`` after the 2026-05-26 fail-loud bump) silently kills
+    the OCR half of the gate.
+    """
+    extractor = OverlayProductExtractor(
+        openai_client=vlm_client._client,
+        model=settings.overlay_extraction_model,
+        daily_cap_usd=settings.overlay_extraction_daily_budget_usd,
+    )
+    owlv2_detector = WorkerOwlV2Detector(
+        processor=vlm_client.owlv2_processor,
+        session=vlm_client.owlv2_session,
+        device=vlm_client.owlv2_device,
+        max_image_side=settings.owlv2_max_image_side,
+    )
+
+    # Map the shared SceneKeyframe rows to OverlayKeyframe rows. The
+    # vision-path keyframe carries ``frame_idx`` (the keyframe ms
+    # timestamp); overlay reuses the same value. The already-indexed
+    # OCR text for the scene comes through ``ocr_by_scene_id`` — see
+    # function docstring + ``_fetch_keyframes``.
+    overlay_keyframes = [
+        OverlayKeyframe(
+            scene_id=kf.scene_id,
+            frame_idx=kf.frame_idx,
+            image=kf.image,
+            ocr_text=ocr_by_scene_id.get(kf.scene_id, ""),
+        )
+        for kf in keyframes
+    ]
+
+    products, total_cost = enumerate_products_overlay(
+        keyframes=overlay_keyframes,
+        extractor=extractor,
+        owlv2_detector=owlv2_detector,
+        embedder=embedder,
+        config=config,
+        overlay_cosine_threshold=settings.overlay_cluster_cosine_threshold,
+        detector_score_threshold=settings.overlay_detector_score_threshold,
+    )
+    return products, total_cost
 
 
 # ---------- I/O helpers (Phase 2.5b — wired) ----------
@@ -266,11 +437,23 @@ def _fetch_keyframes(
     video_id: UUID,
     max_keyframes: int,
     s3_client: S3Client | None = None,
-) -> list[SceneKeyframe]:
+) -> tuple[list[SceneKeyframe], dict[str, str]]:
     """Resolve the scene list via the Phase 2.5a internal endpoint and
     download each scene's keyframe from S3 / MinIO.
 
-    Returns ``[]`` if:
+    Returns ``(scene_keyframes, ocr_by_scene_id)``:
+
+    * ``scene_keyframes`` — one :class:`SceneKeyframe` per successfully
+      downloaded keyframe. Used by the vision-only enumeration path.
+    * ``ocr_by_scene_id`` — ``scene_id -> ocr_text_raw`` for the same
+      scenes. Used by the overlay path to populate
+      :class:`OverlayKeyframe.ocr_text` (the Tier 1 detector's
+      ``ocr_price`` / ``ocr_text_density`` / ``promo_penalty`` signals
+      AND structural gate read from this string). The dict carries one
+      entry per scene we KEPT — scenes whose keyframe download failed
+      drop out of both the list and the map together.
+
+    Returns ``([], {})`` if:
     * the API returns 404 (video not registered) — the caller maps
       this to ``error_code="video_not_found"``;
     * the API returns 0 scenes — same downstream effect;
@@ -305,18 +488,18 @@ def _fetch_keyframes(
                 "fetch_keyframes_video_not_found",
                 extra={"video_id": str(video_id)},
             )
-            return []
+            return [], {}
         resp.raise_for_status()
     except httpx.HTTPError:
         logger.exception(
             "fetch_keyframes_http_error", extra={"video_id": str(video_id)},
         )
-        return []
+        return [], {}
 
     body = resp.json()
     raw_scenes: list[dict[str, Any]] = body.get("scenes", [])
     if not raw_scenes:
-        return []
+        return [], {}
 
     # Subsample evenly when the video has more scenes than the cap.
     # Pipeline.enumerate_products also subsamples, but doing it here
@@ -330,6 +513,7 @@ def _fetch_keyframes(
         sampled = raw_scenes
 
     keyframes: list[SceneKeyframe] = []
+    ocr_by_scene_id: dict[str, str] = {}
     for scene in sampled:
         s3_key = scene.get("keyframe_s3_key")
         scene_id = scene.get("scene_id")
@@ -368,8 +552,16 @@ def _fetch_keyframes(
                 image=image,
             )
         )
+        # Capture the already-indexed OCR text from the API response.
+        # The overlay path's Tier 1 detector reads this for the
+        # ``ocr_price`` / ``ocr_text_density`` / ``promo_penalty``
+        # signals AND the structural gate. Empty string is a legitimate
+        # value when the OCR enrichment hasn't completed for this scene
+        # yet — the detector then falls back to the ``rect >= 0.5`` arm
+        # of the gate.
+        ocr_by_scene_id[str(scene_id)] = scene.get("ocr_text_raw") or ""
 
-    return keyframes
+    return keyframes, ocr_by_scene_id
 
 
 def _upload_crops_and_build_payload(
@@ -380,6 +572,7 @@ def _upload_crops_and_build_payload(
     products: list[CanonicalProduct],
     enumeration_version: str,
     enumeration_prompt_version: str,
+    enumeration_source: str = "vision",
     s3_client: S3Client | None = None,
 ) -> list[dict[str, Any]]:
     """Upload each product's canonical crop to S3 and build the
@@ -391,6 +584,11 @@ def _upload_crops_and_build_payload(
     The catalog row's id is generated by Postgres on insert; the link
     between row and crop is via the persisted ``canonical_crop_s3_key``
     field.
+
+    ``enumeration_source`` ("vision" / "overlay") stamps every row from
+    this call. The vision and overlay passes call this helper once each
+    with their own source + version; the caller concatenates the two
+    payload lists into a single ``complete`` callback.
 
     Payload shape MUST match
     ``app.modules.shorts_auto_product.internal_router._CatalogEntryPayload``
@@ -443,5 +641,8 @@ def _upload_crops_and_build_payload(
             "prominence_score": float(product.prominence_score),
             "enumeration_version": enumeration_version,
             "enumeration_prompt_version": enumeration_prompt_version,
+            # Per-row provenance — the API stops hardcoding "vision" and
+            # persists this verbatim (CHECK constraint allows it).
+            "enumeration_source": enumeration_source,
         })
     return payloads

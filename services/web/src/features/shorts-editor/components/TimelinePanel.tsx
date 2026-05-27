@@ -4,28 +4,74 @@
 // figma: 1669:153949 (toolbar row) — trash + timecode • transport • controls • zoom
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { Maximize, Pause, Trash2, Volume2 } from "lucide-react";
+import { Maximize, Pause, SquareSplitHorizontal, Trash2, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { EditorClip, EditorSubtitle } from "../lib/types";
-import { msToPixels, formatVideoTimestampHMS } from "../lib/timeline-math";
+import type { EditorClip, EditorSubtitle, Playback, PlaybackRate } from "../lib/types";
+import { computeTrackLaneWidth, msToPixels, formatVideoTimestampHMS } from "../lib/timeline-math";
 import { TimelineRuler } from "./TimelineRuler";
 import { ClipTrack } from "./ClipTrack";
 import { SubtitleTrack } from "./SubtitleTrack";
+import { TextOverlayBlock } from "./TextOverlayBlock";
+import {
+  applyPlayheadSnap,
+  boundarySnapPoints,
+  clipEdgeSnapPoints,
+  getSnapThresholdMs,
+  overlayEdgeSnapPoints,
+  playheadSnapPoint,
+  subtitleEdgeSnapPoints,
+  type SnapPoint,
+} from "../lib/snap";
 import { PlayheadCursor } from "./PlayheadCursor";
 import { TimelineZoomControl } from "./TimelineZoomControl";
 
 interface TimelinePanelProps {
   clips: EditorClip[];
   subtitles: EditorSubtitle[];
+  // Q7 — V2 text overlays render in a separate strip ABOVE the
+  // existing subtitle track so 'host auto STT' subtitles and
+  // 'operator-added text overlays' stay visually distinct. Passed as
+  // an already-projected subtitle-shape array so SubtitleBlock-style
+  // math reuses cleanly. Each entry carries layerIndex so the strip
+  // can place rows by it (0 = bottom, increasing upward).
+  textOverlaysForTimeline?: (EditorSubtitle & { layerIndex: number })[];
+  onSelectTextOverlay?: (id: string | null) => void;
+  selectedTextOverlayId?: string | null;
+  // Trim / move dispatch for the upper overlay strip (Phase 3 T3).
+  // SubtitleBlock-style drag handles call this with {startMs, endMs};
+  // optional so embedded read-only timelines can skip wiring it.
+  onUpdateTextOverlay?: (
+    id: string,
+    updates: { startMs?: number; endMs?: number },
+  ) => void;
+  // Cross-track row swap (L2). Called on the overlay's pointerup when
+  // the operator's vertical drag exceeded the row-swap threshold.
+  // ``count`` lets the caller batch multi-row drags into one bookkeeping
+  // unit if desired; current wiring just calls the reducer N times.
+  onReorderTextOverlay?: (
+    id: string,
+    direction: "forward" | "backward",
+    count: number,
+  ) => void;
+  // L5 split-at-playhead — figma 2047:408589 adds a toolbar button
+  // next to Maximize so operators have a clickable surface for the
+  // razor, not just the S keyboard shortcut.
+  onSplitAtPlayhead?: () => void;
+  // Razor mode: button activates mode; block clicks fire the actual split.
+  onActivateRazor?: () => void;
+  razorMode?: boolean;
+  onRazorSplitClip?: (index: number, atMs: number) => void;
+  onRazorSplitSubtitle?: (index: number, atMs: number) => void;
   zoom: number;
   playheadMs: number;
-  isPlaying: boolean;
+  playback: Playback;
   totalDurationMs: number;
   selectedClipIndex: number | null;
   selectedSubtitleIndex: number | null;
   onSelectClip: (index: number | null) => void;
   onSelectSubtitle: (index: number | null) => void;
   onTrimClip: (index: number, trimStartMs?: number, trimEndMs?: number) => void;
+  onMoveClip?: (index: number, timelineStartMs: number) => void;
   onReorderClips: (fromIndex: number, toIndex: number) => void;
   onUpdateSubtitle: (index: number, updates: Partial<Omit<EditorSubtitle, "id">>) => void;
   onAddSubtitle: (subtitle: EditorSubtitle) => void;
@@ -34,10 +80,8 @@ interface TimelinePanelProps {
   onTogglePlay: () => void;
   onSeek: (ms: number) => void;
   onZoomChange: (zoom: number) => void;
-  // playback rate toggle (1.0 ↔ 1.5). Optional so existing tests
-  // and storybook callers don't need updating.
-  playbackRate?: number;
-  onPlaybackRateChange?: (rate: number) => void;
+  playbackRate?: PlaybackRate;
+  onPlaybackRateChange?: (rate: PlaybackRate) => void;
   // figma: 1670:185907 — volume + maximize controls
   volume?: number;
   onVolumeChange?: (volume: number) => void;
@@ -52,16 +96,14 @@ interface TimelinePanelProps {
 const PILL_BUTTON =
   "flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-neutral-h-50 text-neutral-h-800 transition-colors hover:bg-neutral-h-100 disabled:cursor-not-allowed disabled:opacity-30";
 
-const PLAYBACK_OPTIONS = [2.0, 1.5, 1.0] as const;
+const PLAYBACK_OPTIONS: PlaybackRate[] = [8, 4, 2, 1];
 
-// figma: 1669:154051 — vertical 2.0 / 1.5 / 1.0 menu, active option gets a
-// neutral/200 pill behind it.
 function SpeedPopover({
   rate,
   onChange,
 }: {
-  rate: number;
-  onChange?: (rate: number) => void;
+  rate: PlaybackRate;
+  onChange?: (rate: PlaybackRate) => void;
 }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -73,11 +115,11 @@ function SpeedPopover({
         type="button"
         onClick={() => onChange && setOpen((v) => !v)}
         disabled={!onChange}
-        aria-label={`재생 속도 ${rate.toFixed(1)}x`}
+        aria-label={`재생 속도 ${rate}x`}
         aria-expanded={open}
         className="flex h-8 items-center justify-center rounded-[8px] bg-neutral-h-50 px-[10px] py-[2px] text-[14px] font-semibold tracking-[-0.35px] text-neutral-h-800 transition-colors hover:bg-neutral-h-100 disabled:cursor-not-allowed disabled:opacity-30"
       >
-        {rate.toFixed(1)}x
+        {rate}x
       </button>
       {open && (
         // Portalled so the popover escapes the timeline card's
@@ -87,7 +129,7 @@ function SpeedPopover({
         <AnchoredAbovePopover anchorRef={buttonRef} onClose={() => setOpen(false)}>
           <div className="flex flex-col items-center gap-[10px] rounded-[6px] bg-neutral-h-50 p-[6px] shadow-dialog">
             {PLAYBACK_OPTIONS.map((r) => {
-              const selected = Math.abs(r - rate) < 0.01;
+              const selected = r === rate;
               return (
                 <button
                   key={r}
@@ -101,7 +143,7 @@ function SpeedPopover({
                     selected && "bg-neutral-h-200",
                   )}
                 >
-                  {r.toFixed(1)}x
+                  {r}x
                 </button>
               );
             })}
@@ -305,15 +347,26 @@ function VolumePopover({
 export function TimelinePanel({
   clips,
   subtitles,
+  textOverlaysForTimeline,
+  selectedTextOverlayId,
+  onSelectTextOverlay,
+  onUpdateTextOverlay,
+  onReorderTextOverlay,
+  onSplitAtPlayhead,
+  onActivateRazor,
+  razorMode = false,
+  onRazorSplitClip,
+  onRazorSplitSubtitle,
   zoom,
   playheadMs,
-  isPlaying,
+  playback,
   totalDurationMs,
   selectedClipIndex,
   selectedSubtitleIndex,
   onSelectClip,
   onSelectSubtitle,
   onTrimClip,
+  onMoveClip,
   onReorderClips,
   onUpdateSubtitle,
   onAddSubtitle,
@@ -322,19 +375,44 @@ export function TimelinePanel({
   onTogglePlay,
   onSeek,
   onZoomChange,
-  playbackRate = 1.0,
+  playbackRate = 1,
   onPlaybackRateChange,
   volume = 1.0,
   onVolumeChange,
   onToggleFullscreen,
   onPushHistory,
 }: TimelinePanelProps) {
+  const isPlaying = playback.kind === "playing";
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Live track of the scroll viewport's clientWidth. Passed to the
   // TimelineRuler so it can extend its timecode labels past the content
   // extent when the user zooms out far enough that the video occupies
   // only a small fraction of the visible width.
   const [containerWidth, setContainerWidth] = useState(0);
+  // 2026-05-26 — playhead bar wants to span the full track area
+  // (ruler + every track row beneath it). The previous trackHeight
+  // formula derived from textOverlayStripHeight + 48 + 48 which gave
+  // 144px on a single-row strip, but the rendered area is
+  // ruler(24) + inner-tracks(152) = 176px so the bar stopped 32px
+  // short. Measure the actual outer-wrapper height with a
+  // ResizeObserver instead so the bar follows any future strip-height
+  // tweak without another commit.
+  const outerWrapperRef = useRef<HTMLDivElement>(null);
+  const [outerWrapperHeight, setOuterWrapperHeight] = useState(176);
+  // scrollLeft of the same container — needed by the ruler virtualizer
+  // (L7) to filter marks down to the visible window. Tracked via a
+  // throttled rAF wrapper inside onScroll so a fast drag doesn't fire
+  // setState every frame.
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const scrollLeftRafRef = useRef<number | null>(null);
+  const handleScroll = useCallback(() => {
+    if (scrollLeftRafRef.current != null) return;
+    scrollLeftRafRef.current = requestAnimationFrame(() => {
+      scrollLeftRafRef.current = null;
+      const el = scrollContainerRef.current;
+      if (el) setScrollLeft(el.scrollLeft);
+    });
+  }, []);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -348,6 +426,33 @@ export function TimelinePanel({
     return () => observer.disconnect();
   }, []);
 
+  // Track the outer-wrapper (ruler + tracks parent) height. The
+  // PlayheadCursor is absolutely positioned inside this wrapper so
+  // its visual height needs to match the wrapper's actual layout
+  // height — not a derived strip total. Mount-time initial value
+  // covers the first paint before ResizeObserver fires.
+  useEffect(() => {
+    const el = outerWrapperRef.current;
+    if (!el) return;
+    setOuterWrapperHeight(el.clientHeight);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setOuterWrapperHeight(entry.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Cancel any pending scroll rAF on unmount so we don't fire setState
+  // on an unmounted component during a fast navigation.
+  useEffect(() => {
+    return () => {
+      if (scrollLeftRafRef.current != null) {
+        cancelAnimationFrame(scrollLeftRafRef.current);
+      }
+    };
+  }, []);
+
   const SEEK_TOLERANCE_MS = 100;
 
   // Clip-boundary timestamps (sorted, deduped) for transport jump-to-prev/next.
@@ -356,6 +461,36 @@ export function TimelinePanel({
     for (const clip of clips) set.add(clip.timelineStartMs);
     return Array.from(set).sort((a, b) => a - b);
   }, [clips, totalDurationMs]);
+
+  // B10 (2026-05-26) — playhead drag/click magnetic snap.
+  //
+  // Build the same snap-point pool the clip/subtitle/overlay drag
+  // handlers use (subtitle edges + clip edges + 0/totalDuration
+  // boundaries + text-overlay edges) and wrap ``onSeek`` so any seek
+  // that lands within the zoom-aware threshold of one of those points
+  // locks to it. Transport jumps (skipPrev/skipNext) already land on
+  // boundaries by construction so they keep using raw ``onSeek``.
+  //
+  // The snap source build excludes nothing — there is no "dragging
+  // element" identity for the playhead itself, so every edge is fair
+  // game. Threshold uses ``getSnapThresholdMs(zoom)`` so the 10-px
+  // pull radius stays constant in screen space.
+  const playheadSnapPoints: SnapPoint[] = useMemo(() => {
+    return [
+      ...subtitleEdgeSnapPoints(subtitles),
+      ...clipEdgeSnapPoints(clips),
+      ...overlayEdgeSnapPoints(textOverlaysForTimeline ?? []),
+      ...boundarySnapPoints(totalDurationMs),
+    ];
+  }, [subtitles, clips, textOverlaysForTimeline, totalDurationMs]);
+  const handleSeekWithSnap = useCallback(
+    (ms: number) => {
+      onSeek(
+        applyPlayheadSnap(ms, playheadSnapPoints, getSnapThresholdMs(zoom)),
+      );
+    },
+    [onSeek, playheadSnapPoints, zoom],
+  );
 
   const handleSkipPrev = useCallback(() => {
     const target = [...boundaries].reverse().find((b) => b < playheadMs - SEEK_TOLERANCE_MS) ?? 0;
@@ -395,8 +530,31 @@ export function TimelinePanel({
   // to stay constant while zoom only changed horizontal span). The
   // ``expanded`` prop on SubtitleTrack is no longer load-bearing.
   const isSubtitleExpanded = true;
-  // playhead spans ruler (24px) + clip track (48px) + subtitle track (48px) + padding
-  const trackHeight = 88 + 48;
+  // Playhead height now comes from outerWrapperHeight (ResizeObserver
+  // measurement above) — the previous derived constant formula was
+  // dropped because it didn't include the ruler and fell short of the
+  // actual layout height.
+
+  // Magnetic snap targets (T4) — built once per (subtitle/clip/overlay/
+  // playhead/totalDuration) change and passed into draggable blocks.
+  // Each block filters out its own edges via sourceId at drag time, so
+  // we don't need to pre-filter the dragging element here.
+  const snapPoints: SnapPoint[] = useMemo(
+    () => [
+      ...overlayEdgeSnapPoints(textOverlaysForTimeline ?? []),
+      ...subtitleEdgeSnapPoints(subtitles),
+      ...clipEdgeSnapPoints(clips),
+      playheadSnapPoint(playheadMs),
+      ...boundarySnapPoints(totalDurationMs),
+    ],
+    [
+      textOverlaysForTimeline,
+      subtitles,
+      clips,
+      playheadMs,
+      totalDurationMs,
+    ],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -468,25 +626,79 @@ export function TimelinePanel({
               <Maximize className="h-5 w-5" strokeWidth={1.5} />
             </button>
           )}
+          {/* Split / razor (figma 2047:408589). Clicking enters razor
+              mode; operator then clicks a clip or subtitle block to
+              cut at that position. Active state shows navy-100 bg +
+              ring so the operator knows the mode is on. */}
+          {(onActivateRazor || onSplitAtPlayhead) && (
+            <button
+              type="button"
+              onClick={onActivateRazor ?? onSplitAtPlayhead}
+              aria-label="자르기 모드"
+              aria-pressed={razorMode}
+              className={cn(
+                PILL_BUTTON,
+                razorMode && "bg-heimdex-navy-100 ring-2 ring-heimdex-navy-500",
+              )}
+            >
+              <SquareSplitHorizontal className="h-5 w-5" strokeWidth={1.5} />
+            </button>
+          )}
         </div>
 
-        {/* FAR RIGHT: zoom slider (figma 1669:122130 — minus + 88px track + plus) */}
+        {/* FAR RIGHT: zoom slider (figma 1669:122130 — minus + 88px track + plus)
+            Dynamic min so the 'fully zoomed out' state shows the whole
+            clip in one screen — a 1 hr video lands at ~0.36 px/sec
+            (1300 / 3600) instead of being stuck at the legacy 5 px/sec
+            floor that left ~55 minutes off-screen. */}
         <div className="w-[156px] shrink-0">
-          <TimelineZoomControl zoom={zoom} onZoomChange={onZoomChange} />
+          <TimelineZoomControl
+            zoom={zoom}
+            onZoomChange={onZoomChange}
+            minZoom={Math.max(0.1, 1300 / Math.max(1, totalDurationMs / 1000))}
+          />
         </div>
       </div>
 
-      {/* Scrollable timeline area */}
+      {/* Scrollable timeline area — both axes scroll. Horizontal for
+          zoom-out content past the viewport; vertical so additional
+          operator text-overlay rows stack within the fixed wrapper
+          height (2026-05-22 spec). scrollbar-hidden keeps the chrome
+          clean — operators rely on dragging instead.
+          onScroll feeds the ruler virtualizer (L7) so labels off-
+          screen don't pay DOM cost. */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden"
+        onScroll={handleScroll}
+        // 2026-05-22 figma 2047:408670 — wrapper-internal split:
+        //   * outer scroll = horizontal only (zoom past viewport width).
+        //   * track-area vertical scroll lives on the inner container
+        //     so the ruler stays pinned above when text-overlay rows
+        //     stack past 189 px.
+        className="scrollbar-hidden flex-1 overflow-x-auto overflow-y-hidden"
       >
         {/* 12px left inset so the "0s" label and the first clip don't
             sit flush against the wrapper's left edge — matches the
             2026-05-18 spec ("타임라인 0S는 wrapper 좌측끝으로부터 12PX 띄움").
             Padding lives on the inner container so ruler / clips /
             subtitles / playhead all shift together and stay aligned. */}
-        <div className="relative pl-[12px]" style={{ minWidth: "100%" }}>
+        <div
+          ref={outerWrapperRef}
+          // 2026-05-26 — was `relative pl-[12px]` + minWidth=100%.
+          // Block layout pinned the wrapper width to the
+          // scrollContainer's clientWidth even when the children
+          // (ruler + track lanes) were 4500+ px wide, which left
+          // ``scrollContainer.scrollWidth === clientWidth`` → no
+          // horizontal scroll, and any track block past the viewport
+          // (e.g. clip[1] starting at left=msToPixels(15000ms)=1500px
+          // for a 1376px viewport) was simply unreachable. The lanes
+          // looked blank past the viewport edge. ``w-max`` lets the
+          // wrapper grow to its children's natural width so the outer
+          // overflow-x-auto can do its job, while ``min-w-full``
+          // keeps short-content cases (content < viewport) from
+          // collapsing below the viewport width.
+          className="relative w-max min-w-full pl-[12px]"
+        >
           {/* Ruler — clicking anywhere on the ruler seeks the playhead
               to that timecode. Reuses the same onSeek the playhead drag
               already calls, so audio + preview sync paths converge on
@@ -494,9 +706,91 @@ export function TimelinePanel({
           <TimelineRuler
             totalDurationMs={totalDurationMs}
             zoom={zoom}
-            onSeek={onSeek}
+            onSeek={handleSeekWithSnap}
             minWidthPx={containerWidth}
+            viewportLeftPx={scrollLeft}
+            viewportRightPx={scrollLeft + containerWidth}
           />
+
+          {/* Tracks area — figma 2045:330070 caps this at 152 px
+              (44 subtitle + 4 gap + 108 clip-with-thumbnails) so the
+              wrapper height matches the 252-px reference frame at
+              1440 viewport. Surplus rows (operator-added overlays)
+              scroll vertically inside this container; the outer
+              wrapper height + the page's pb-[20px] therefore stay
+              constant on every viewport. */}
+          <div className="scrollbar-hidden h-[152px] overflow-y-auto">
+          {/* Operator text-overlay strip — always renders at least
+              MIN_TEXT_OVERLAY_ROWS slots so the operator sees explicit
+              drop targets above the (host) subtitle row. Empty rows
+              appear ABOVE existing overlay rows so overlays stack from
+              the bottom (closest to the subtitle row), matching the
+              operator's mental model 'from bottom: video, subtitle,
+              text-overlay rows'. */}
+          {(() => {
+            // Row position = overlay.layerIndex (0 = bottom, closest
+            // to subtitle row; higher = visually above). Always show
+            // one empty row above the highest filled row so the
+            // operator sees where the next 텍스트 추가 will land —
+            // BUT cap the total at MAX_TEXT_OVERLAY_ROWS so drag can
+            // never spawn a 3rd row (matches the reducer cap on
+            // REORDER_OVERLAY layerIndex; operator policy 2026-05-24).
+            const MAX_TEXT_OVERLAY_ROWS = 2;
+            const list = textOverlaysForTimeline ?? [];
+            const maxFilledLayer = list.reduce(
+              (acc, o) => Math.max(acc, o.layerIndex ?? 0),
+              -1,
+            );
+            const topRow = Math.min(
+              MAX_TEXT_OVERLAY_ROWS - 1,
+              maxFilledLayer + 1,
+            );
+            const overlaysByRow = new Map<number, typeof list>();
+            for (const o of list) {
+              const row = (o as { layerIndex?: number }).layerIndex ?? 0;
+              const arr = overlaysByRow.get(row) ?? [];
+              arr.push(o);
+              overlaysByRow.set(row, arr);
+            }
+            const rows: number[] = [];
+            for (let r = topRow; r >= 0; r--) rows.push(r);
+            return (
+              <div
+                className="mb-1 flex flex-col gap-0.5"
+                style={{ width: `${computeTrackLaneWidth(totalDurationMs, zoom, containerWidth)}px` }}
+              >
+                {rows.map((row) => {
+                  const overlaysHere = overlaysByRow.get(row) ?? [];
+                  return (
+                    <div
+                      key={`overlay-row-${row}`}
+                      className="relative h-[44px] shrink-0 overflow-hidden rounded-l-[10px] bg-grayscale-100"
+                    >
+                      {overlaysHere.map((sub) => (
+                        <TextOverlayBlock
+                          key={sub.id}
+                          overlayId={sub.id}
+                          text={sub.text}
+                          startMs={sub.startMs}
+                          endMs={sub.endMs}
+                          zoom={zoom}
+                          isSelected={selectedTextOverlayId === sub.id}
+                          onSelect={() => onSelectTextOverlay?.(sub.id)}
+                          onUpdate={(id, updates) =>
+                            onUpdateTextOverlay?.(id, updates)
+                          }
+                          onSeek={onSeek}
+                          onPushHistory={onPushHistory}
+                          snapPoints={snapPoints}
+                          onReorder={onReorderTextOverlay}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           {/* Subtitle track — figma 1669:49003: subtitles row sits ABOVE clips */}
           <SubtitleTrack
@@ -511,28 +805,53 @@ export function TimelinePanel({
             onSeek={onSeek}
             onPushHistory={onPushHistory}
             expanded={isSubtitleExpanded}
+            snapPoints={snapPoints}
+            razorMode={razorMode}
+            onRazorSplitSubtitle={onRazorSplitSubtitle}
+            containerWidthPx={containerWidth}
           />
 
           {/* Clip track — figma 1669:49030: scene row below the subtitle row */}
           <ClipTrack
             clips={clips}
+            subtitles={subtitles}
             zoom={zoom}
             selectedClipIndex={selectedClipIndex}
             totalDurationMs={totalDurationMs}
+            playheadMs={playheadMs}
+            containerWidthPx={containerWidth}
             onSelectClip={onSelectClip}
             onTrimClip={onTrimClip}
-            onReorderClips={onReorderClips}
+            onMoveClip={onMoveClip}
             onSeek={onSeek}
+            razorMode={razorMode}
+            onRazorSplitClip={onRazorSplitClip}
           />
+          </div>
 
-          {/* Playhead cursor — spans ruler + all tracks */}
-          <PlayheadCursor
-            playheadMs={playheadMs}
-            zoom={zoom}
-            height={trackHeight}
-            onSeek={onSeek}
-            showTooltip
-          />
+          {/* Playhead cursor — wrapped in a 12-px-shifted positioned
+              container so its coordinate origin matches the subtitle
+              / clip / overlay blocks. Those blocks live inside
+              SubtitleTrack / ClipTrack which sit at the wrapper's
+              CONTENT edge (= outer wrapper left + 12 px padding).
+              PlayheadCursor is absolutely positioned, so its left is
+              measured from the containing block's PADDING edge —
+              without this wrapper that was the outer wrapper's left,
+              i.e. 12 px behind where a SubtitleBlock at the same ms
+              actually renders. Result: playhead sat 12 px ahead of
+              the subtitle box's visible start. Wrapping moves the
+              containing block to the content edge so left=msToPixels
+              now lines up with SubtitleBlock left=msToPixels at the
+              same ms (Task #18). */}
+          <div className="pointer-events-none absolute inset-y-0 left-[12px] right-0">
+            <PlayheadCursor
+              playheadMs={playheadMs}
+              zoom={zoom}
+              height={outerWrapperHeight}
+              onSeek={handleSeekWithSnap}
+              showTooltip
+            />
+          </div>
         </div>
       </div>
     </div>

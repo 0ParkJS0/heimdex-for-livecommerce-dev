@@ -1,16 +1,22 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
+import { ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { EditorClip, EditorSubtitle, HistoryEntry } from "../lib/types";
+import type { EditorClip, EditorState, EditorSubtitle, HistoryEntry, LayerOrderId, Playback, PlaybackEvent } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
 import { OverlayRenderer } from "./preview/OverlayRenderer";
 import { SubtitleCancelActionBar } from "./SubtitleCancelActionBar";
-import { getActiveSubtitles } from "../lib/source-time";
+import { getActiveSubtitles, getVisibleSubtitles } from "../lib/source-time";
 import { formatTimelineTimestamp } from "../lib/timeline-math";
 import { resolveFontFamily } from "@/lib/fonts";
 import { usePlaybackSync } from "../hooks/usePlaybackSync";
 import { getThumbnailAspectClass, type ThumbnailAspectRatio } from "@/lib/thumbnailUtils";
+
+// Floor for the inverse-scale applied to resize/rotation handles so they keep
+// a constant px size while the video wrapper scales. Guards against 1/0 (and
+// absurd magnification) when the video scale `vs` approaches zero.
+const MIN_INVERSE_SCALE = 0.01;
 
 interface PreviewPanelProps {
   clips: EditorClip[];
@@ -28,14 +34,63 @@ interface PreviewPanelProps {
   onRemoveOverlay?: (id: string) => void;
   onRemoveSubtitle?: (index: number) => void;
   playheadMs: number;
-  isPlaying: boolean;
+  playback: Playback;
   totalDurationMs: number;
   selectedSubtitleIndex: number | null;
   onPlayheadChange: (ms: number) => void;
-  onPlayingChange: (playing: boolean) => void;
+  dispatchPlaybackEvent: (event: PlaybackEvent) => void;
   onSelectSubtitle: (index: number | null) => void;
   onUpdateSubtitlePosition: (index: number, positionX: number, positionY: number) => void;
   onUpdateSubtitleFontSize: (index: number, fontSizePx: number) => void;
+  // PR 7 — drag the dedicated video layer around the canvas. ``x``/``y``
+  // are normalized [0, 1] anchors (0.5/0.5 = centered, the default
+  // position before any drag). ``scale`` defaults to 1. Optional so
+  // embedded preview tiles that don't surface dragging stay untouched.
+  //
+  // ``outline`` is the operator-added border drawn around the video
+  // frame via CSS ``outline`` (NOT ``border`` — outline doesn't
+  // affect layout so width changes can't shift the video element).
+  videoTransform?: {
+    x: number;
+    y: number;
+    scale?: number;
+    rotationDeg?: number;
+    outline?: { color: string; widthPx: number } | null;
+    shadow?: {
+      color: string;
+      offsetX: number;
+      offsetY: number;
+      blurPx: number;
+      spreadPx: number;
+    } | null;
+  };
+  onUpdateVideoPosition?: (x: number, y: number) => void;
+  onUpdateVideoScale?: (scale: number) => void;
+  onUpdateVideoRotation?: (rotationDeg: number) => void;
+  // 2026-05-24 — selection-based routing for the background panel.
+  // ``selectedVideo`` / ``selectedLetterbox`` drive the preview ring,
+  // and the matching click handlers dispatch the selection to the
+  // reducer. All four are optional so embedded preview tiles
+  // (FullscreenOverlay etc.) can skip the selection plumbing without
+  // breaking the type contract.
+  selectedVideo?: boolean;
+  selectedLetterbox?: boolean;
+  onSelectVideo?: (active: boolean) => void;
+  onSelectLetterbox?: (active: boolean) => void;
+  // Clears every selection slot in one dispatch — wired to the empty
+  // canvas click so the operator can deselect by clicking the
+  // background of the preview.
+  onClearSelections?: () => void;
+  // Unified z-order. When provided, each layer is rendered with a zIndex
+  // derived from its position in the array (bottom=0 → top=length-1).
+  // When absent, the pre-layerOrder hard-coded stacking applies.
+  layerOrder?: LayerOrderId[];
+  // PR 3 remainder — global letterbox bars. Rendered above subtitles
+  // (D12). Operators drag the ChevronsUpDown handles on the inner edges
+  // to resize each bar's height. Optional so embedded preview tiles
+  // that don't surface editing stay untouched.
+  letterbox?: EditorState["letterbox"];
+  onUpdateLetterbox?: (letterbox: EditorState["letterbox"]) => void;
   // Undo plumbing — preview captures a pre-gesture snapshot on each
   // drag/resize/rotate pointerdown so Ctrl+Z can roll one step back.
   // Optional so existing callers (e.g. embedded preview tiles that
@@ -44,8 +99,6 @@ interface PreviewPanelProps {
   // when true, the preview container expands to the 352×626 iPhone
   // mockup size used inside FullscreenOverlay. Layout/logic otherwise identical.
   fullscreen?: boolean;
-  // playback rate forwarded to <video>. Optional (1.0 default).
-  playbackRate?: number;
 }
 
 function PlayIcon() {
@@ -74,18 +127,31 @@ export function PreviewPanel({
   onRemoveOverlay,
   onRemoveSubtitle,
   playheadMs,
-  isPlaying,
+  playback,
   totalDurationMs,
   selectedSubtitleIndex,
   onPlayheadChange,
-  onPlayingChange,
+  dispatchPlaybackEvent,
   onSelectSubtitle,
   onUpdateSubtitlePosition,
   onUpdateSubtitleFontSize,
+  videoTransform,
+  onUpdateVideoPosition,
+  onUpdateVideoScale,
+  onUpdateVideoRotation,
+  layerOrder,
+  letterbox,
+  onUpdateLetterbox,
   onPushHistory,
+  selectedVideo = false,
+  selectedLetterbox = false,
+  onSelectVideo,
+  onSelectLetterbox,
+  onClearSelections,
   fullscreen = false,
-  playbackRate,
 }: PreviewPanelProps) {
+  const isPlaying = playback.kind === "playing";
+
   const {
     videoRef,
     preloadRef,
@@ -95,17 +161,17 @@ export function PreviewPanel({
   } = usePlaybackSync({
     clips,
     playheadMs,
-    isPlaying,
+    playback,
     onPlayheadChange,
-    onPlayingChange,
-    rate: playbackRate,
+    dispatchPlaybackEvent,
   });
 
   // The shorts editor canvas is always 9:16 (vertical reels/shorts output);
   // the org-wide thumbnail_aspect_ratio setting governs other surfaces.
   const aspectRatio: ThumbnailAspectRatio = "9:16";
 
-  const activeSubtitles = getActiveSubtitles(subtitles, playheadMs);
+  const visibleSubtitles = getVisibleSubtitles(subtitles, clips);
+  const activeSubtitles = getActiveSubtitles(visibleSubtitles, playheadMs);
   const progressPct = totalDurationMs > 0 ? (playheadMs / totalDurationMs) * 100 : 0;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -140,6 +206,50 @@ export function PreviewPanel({
     origHeightPx: number;
     origRotationDeg: number;
     startAngleRad: number;
+  } | null>(null);
+
+  // PR 7 — drag the dedicated <video> layer. Independent of dragRef /
+  // overlayDragRef so a video drag doesn't clobber an in-flight overlay
+  // gesture (and vice versa). Same normalized-anchor model as overlays:
+  // origX/origY are the videoTransform values at pointerdown, the
+  // pointermove handler reads dx/dy in container coords and clamps
+  // back into [0, 1].
+  const videoDragRef = useRef<{
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
+
+  // Video scale — 4-corner handles, radial-distance model matching the
+  // overlay resize path. origScale and startDist captured at
+  // pointerdown so the same pointermove logic applies regardless of
+  // which corner the operator grabbed.
+  const videoResizeRef = useRef<{
+    startDist: number;
+    origScale: number;
+    centerX: number;
+    centerY: number;
+  } | null>(null);
+
+  // Video rotation — start angle captured at pointerdown so the
+  // pointermove can apply (currentAngle - startAngle) on top of
+  // origRotationDeg. Same model as the overlay rotate path.
+  const videoRotateRef = useRef<{
+    centerX: number;
+    centerY: number;
+    startAngleRad: number;
+    origRotationDeg: number;
+  } | null>(null);
+
+  // PR 3 — letterbox bar drag. ``edge`` records which bar's height the
+  // operator is resizing. ``startY`` is the clientY at pointerdown,
+  // ``origPct`` is the bar's height before the gesture so pointermove
+  // can apply a delta in canvas-percent terms.
+  const letterboxDragRef = useRef<{
+    edge: "top" | "bottom";
+    startY: number;
+    origPct: number;
   } | null>(null);
 
   const getSubtitleIndex = useCallback((subtitleId: string): number => {
@@ -209,10 +319,174 @@ export function PreviewPanel({
     };
   }, [getSubtitleIndex]);
 
+  // PR 7 — pointerdown on the dedicated video layer. Mirrors the
+  // overlay-move path: snapshot the pre-gesture position into history
+  // (so Ctrl+Z can roll the drag back as one stroke) and capture the
+  // pointer so the cursor doesn't lose tracking when it leaves the
+  // canvas mid-drag.
+  const handleVideoPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLVideoElement>) => {
+      if (!onUpdateVideoPosition) return;
+      const current = videoTransform ?? { x: 0.5, y: 0.5 };
+      e.stopPropagation();
+      onPushHistory?.({
+        kind: "video_position",
+        x: current.x,
+        y: current.y,
+      });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      videoDragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: current.x,
+        origY: current.y,
+      };
+    },
+    [videoTransform, onUpdateVideoPosition, onPushHistory],
+  );
+
+  // PR 3 — pointerdown on a letterbox ChevronsUpDown handle. The
+  // operator clicks the handle that sits flush on the bar's inner
+  // edge and drags vertically to resize that bar's height. Top bar
+  // grows downward, bottom bar grows upward, so deltaY has the
+  // opposite sign for each.
+  const handleLetterboxHandlePointerDown = useCallback(
+    (edge: "top" | "bottom") => (e: React.PointerEvent) => {
+      if (!letterbox || !onUpdateLetterbox) return;
+      e.stopPropagation();
+      onPushHistory?.({ kind: "letterbox", letterbox });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      letterboxDragRef.current = {
+        edge,
+        startY: e.clientY,
+        origPct:
+          edge === "top" ? letterbox.topHeightPct : letterbox.bottomHeightPct,
+      };
+    },
+    [letterbox, onUpdateLetterbox, onPushHistory],
+  );
+
+  const handleVideoResizePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!onUpdateVideoScale) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const currentScale = videoTransform?.scale ?? 1;
+      onPushHistory?.({ kind: "video_scale", scale: currentScale });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const cx = rect.left + (videoTransform?.x ?? 0.5) * rect.width;
+      const cy = rect.top + (videoTransform?.y ?? 0.5) * rect.height;
+      videoResizeRef.current = {
+        startDist: Math.hypot(e.clientX - cx, e.clientY - cy),
+        origScale: currentScale,
+        centerX: cx,
+        centerY: cy,
+      };
+    },
+    [videoTransform, onUpdateVideoScale, onPushHistory],
+  );
+
+  const handleVideoRotatePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!onUpdateVideoRotation) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const currentRotation = videoTransform?.rotationDeg ?? 0;
+      onPushHistory?.({ kind: "video_rotation", rotationDeg: currentRotation });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const cx = rect.left + (videoTransform?.x ?? 0.5) * rect.width;
+      const cy = rect.top + (videoTransform?.y ?? 0.5) * rect.height;
+      videoRotateRef.current = {
+        centerX: cx,
+        centerY: cy,
+        startAngleRad: Math.atan2(e.clientY - cy, e.clientX - cx),
+        origRotationDeg: currentRotation,
+      };
+    },
+    [videoTransform, onUpdateVideoRotation, onPushHistory],
+  );
+
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
+
+    // PR 3 — letterbox bar drag (resize via ChevronsUpDown handle).
+    const lDrag = letterboxDragRef.current;
+    if (lDrag && letterbox && onUpdateLetterbox) {
+      const deltaPct = ((e.clientY - lDrag.startY) / rect.height) * 100;
+      // Top bar: drag down → grow (positive delta). Bottom bar: drag
+      // up → grow (negative delta becomes positive growth).
+      const growth = lDrag.edge === "top" ? deltaPct : -deltaPct;
+      const nextPct = Math.max(0, Math.min(50, lDrag.origPct + growth));
+      onUpdateLetterbox(
+        lDrag.edge === "top"
+          ? { ...letterbox, topHeightPct: nextPct }
+          : { ...letterbox, bottomHeightPct: nextPct },
+      );
+    }
+
+    // PR 7 — video layer drag. Same normalized model as overlays:
+    // delta is fraction-of-container, clamped to [0, 1]. Shift-axis
+    // lock reuses the same heuristic so the affordance is consistent
+    // across video / overlay / subtitle drags.
+    const vDrag = videoDragRef.current;
+    if (vDrag && onUpdateVideoPosition) {
+      let deltaX = (e.clientX - vDrag.startX) / rect.width;
+      let deltaY = (e.clientY - vDrag.startY) / rect.height;
+      if (e.shiftKey) {
+        if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+          deltaY = 0;
+        } else {
+          deltaX = 0;
+        }
+      }
+      const newX = Math.max(0, Math.min(1, vDrag.origX + deltaX));
+      const newY = Math.max(0, Math.min(1, vDrag.origY + deltaY));
+      onUpdateVideoPosition(newX, newY);
+    }
+
+    // Video scale resize -----------------------------------------------
+    const vResize = videoResizeRef.current;
+    if (vResize && onUpdateVideoScale) {
+      const currentDist = Math.hypot(
+        e.clientX - vResize.centerX,
+        e.clientY - vResize.centerY,
+      );
+      if (vResize.startDist >= 1) {
+        const next = Math.max(0.1, Math.min(10, vResize.origScale * (currentDist / vResize.startDist)));
+        onUpdateVideoScale(next);
+      }
+    }
+
+    // Video rotation ----------------------------------------------------
+    const vRot = videoRotateRef.current;
+    if (vRot && onUpdateVideoRotation) {
+      const currentAngleRad = Math.atan2(
+        e.clientY - vRot.centerY,
+        e.clientX - vRot.centerX,
+      );
+      const deltaRad = currentAngleRad - vRot.startAngleRad;
+      const deltaDeg = (deltaRad * 180) / Math.PI;
+      const next = vRot.origRotationDeg + deltaDeg;
+      const clamped = Math.max(-360, Math.min(360, next));
+      // Shift-rotate magnetic snap — same window as the overlay rotate
+      // path so the UX matches across video / overlay rotation.
+      let snapped = clamped;
+      if (e.shiftKey) {
+        const nearestMultiple = Math.round(clamped / 90) * 90;
+        if (Math.abs(clamped - nearestMultiple) <= 5) {
+          snapped = nearestMultiple;
+        }
+      }
+      onUpdateVideoRotation(snapped);
+    }
 
     // V1 subtitle drag --------------------------------------------------
     const drag = dragRef.current;
@@ -286,10 +560,22 @@ export function PreviewPanel({
         const deltaDeg = (deltaRad * 180) / Math.PI;
         const next = ovDrag.origRotationDeg + deltaDeg;
         const clamped = Math.max(-360, Math.min(360, next));
+        // Shift-rotate magnetic snap: when the cursor lands within ±5°
+        // of a 90° multiple, pull the angle onto that multiple so the
+        // user feels a slight "catch". Outside the window the rotation
+        // stays free, matching the operator's "약간 걸리는 느낌" cue.
+        const SNAP_WINDOW_DEG = 5;
+        let snapped = clamped;
+        if (e.shiftKey) {
+          const nearestMultiple = Math.round(clamped / 90) * 90;
+          if (Math.abs(clamped - nearestMultiple) <= SNAP_WINDOW_DEG) {
+            snapped = nearestMultiple;
+          }
+        }
         onUpdateOverlay(ovDrag.overlayId, {
           transform: {
             ...overlay.transform,
-            rotationDeg: clamped,
+            rotationDeg: snapped,
           },
         } as Partial<EditorOverlay>);
       } else {
@@ -320,11 +606,15 @@ export function PreviewPanel({
         }
       }
     }
-  }, [onUpdateSubtitlePosition, onUpdateSubtitleFontSize, onUpdateOverlay, overlays]);
+  }, [onUpdateSubtitlePosition, onUpdateSubtitleFontSize, onUpdateOverlay, onUpdateVideoPosition, onUpdateVideoScale, onUpdateLetterbox, letterbox, overlays]);
 
   const handlePointerUp = useCallback(() => {
     dragRef.current = null;
     overlayDragRef.current = null;
+    videoDragRef.current = null;
+    videoResizeRef.current = null;
+    videoRotateRef.current = null;
+    letterboxDragRef.current = null;
   }, []);
 
   // V2 overlay handlers — body drag = move, corner drag = resize.
@@ -480,19 +770,196 @@ export function PreviewPanel({
               ? "aspect-video w-full max-w-[626px] rounded-[10px]"
               : "aspect-video w-full max-w-[480px] rounded-[10px]",
         )}
-        onClick={() => onSelectSubtitle(null)}
+        onClick={() => {
+          // Empty-canvas click — clear every selection slot so the
+          // operator can "deselect" by clicking the background of the
+          // preview. Prefer onClearSelections when wired (one dispatch
+          // path); fall back to the per-slot clears for embedded
+          // surfaces that only surface the legacy handlers.
+          if (onClearSelections) {
+            onClearSelections();
+          } else {
+            onSelectSubtitle(null);
+            onSelectOverlay?.(null);
+          }
+        }}
       >
-        {/* Main video element */}
-        <video
-          ref={videoRef}
-          className="h-full w-full object-contain"
-          playsInline
-          onSeeked={onSeeked}
-          onEnded={onEnded}
-        />
+        {/* Main video element — kept as its own dedicated layer (NOT
+            folded into the overlay array) but exposes drag + scale
+            affordances via handleVideoPointerDown / handleVideoResizePointerDown.
+            scale() applies uniform scaling around the element centre;
+            translate() offsets from the centred (0.5/0.5) default. */}
+        {(() => {
+          const vx = videoTransform?.x ?? 0.5;
+          const vy = videoTransform?.y ?? 0.5;
+          const vs = videoTransform?.scale ?? 1;
+          const vRot = videoTransform?.rotationDeg ?? 0;
+          const vOutline = videoTransform?.outline ?? null;
+          const vShadow = videoTransform?.shadow ?? null;
+          const videoZIndex = layerOrder
+            ? layerOrder.findIndex((l) => l.kind === "video")
+            : undefined;
+          // CSS ``filter: drop-shadow`` follows the alpha mask of the
+          // element so the shadow hugs the <video> rectangle (and any
+          // outline drawn around it). spreadPx has no direct CSS
+          // counterpart — we stack multiple drop-shadow layers when
+          // spread > 0 to fake the "grow" effect, matching what
+          // OverlayRenderer does for text/background overlays.
+          const dropShadowCss = vShadow
+            ? (() => {
+                const layers: string[] = [];
+                const spread = Math.max(0, vShadow.spreadPx);
+                // Single layer for spread == 0; otherwise stack a few
+                // copies at small offset increments along the same
+                // direction so the silhouette appears "thicker".
+                const layerCount = spread > 0 ? Math.min(8, 1 + Math.floor(spread / 4)) : 1;
+                for (let i = 0; i < layerCount; i += 1) {
+                  layers.push(
+                    `drop-shadow(${vShadow.offsetX}px ${vShadow.offsetY}px ${vShadow.blurPx}px ${vShadow.color})`,
+                  );
+                }
+                return layers.join(" ");
+              })()
+            : undefined;
+          // 2026-05-24 — selection ring uses Tailwind's ``ring-inset``
+          // so it sits inside the <video> bounds without pushing the
+          // element. ``ring-2`` matches overlay/subtitle selection
+          // rings (heimdex-navy-500). The existing CSS ``outline`` for
+          // the operator-added 윤곽선 sits OUTSIDE the box, so the two
+          // don't collide visually.
+          // 2026-05-25 — wrapper-transform pattern so the 4 resize
+          // handles and the rotation handle ride the video's actual
+          // visual bbox, not the static canvas inset. Previously the
+          // wrapper was ``absolute inset-0`` (canvas-sized) and only
+          // the <video> received the transform — the handles stayed
+          // glued to the canvas corners as the video shrunk. Now the
+          // wrapper itself carries the scale/translate/rotate transform
+          // so its children (the video AND the corner/rotation handles)
+          // all move together with the video. Handles add an inverse
+          // ``scale(1/vs)`` so they stay constant px size while their
+          // anchor (transformOrigin) keeps them pinned to the matching
+          // video corner / top edge.
+          return (
+            <div
+              className="absolute inset-0"
+              style={{
+                ...(videoZIndex != null ? { zIndex: videoZIndex } : {}),
+                transform: `scale(${vs}) translate(${(vx - 0.5) * 100}%, ${(vy - 0.5) * 100}%) rotate(${vRot}deg)`,
+                transformOrigin: "center center",
+                // ``filter: drop-shadow`` applied on the wrapper so the
+                // shadow includes the operator-added outline; if
+                // applied on the <video> itself the outline would sit
+                // OUTSIDE the shadow source rect and not pick up the
+                // drop.
+                ...(dropShadowCss ? { filter: dropShadowCss } : {}),
+              }}
+            >
+              <video
+                ref={videoRef}
+                className={cn(
+                  "h-full w-full object-contain",
+                  onUpdateVideoPosition && "cursor-grab active:cursor-grabbing",
+                  selectedVideo &&
+                    "ring-2 ring-heimdex-navy-500 ring-inset",
+                )}
+                style={{
+                  // CSS ``outline`` instead of ``border`` so the line
+                  // doesn't push the video element when the operator
+                  // dials the width — the outline sits OUTSIDE the
+                  // element's box without affecting layout.
+                  ...(vOutline && vOutline.widthPx > 0
+                    ? { outline: `${vOutline.widthPx}px solid ${vOutline.color}` }
+                    : {}),
+                }}
+                playsInline
+                onSeeked={onSeeked}
+                onEnded={onEnded}
+                onPointerDown={onUpdateVideoPosition ? handleVideoPointerDown : undefined}
+                onPointerMove={onUpdateVideoPosition ? handlePointerMove : undefined}
+                onPointerUp={onUpdateVideoPosition ? handlePointerUp : undefined}
+                onClick={
+                  onSelectVideo
+                    ? (e) => {
+                        // Selecting the host video element dispatches
+                        // SELECT_VIDEO(true) and clears every other
+                        // selection slot via the reducer's mutex
+                        // semantics. stopPropagation prevents the
+                        // outer empty-canvas click from immediately
+                        // clearing the selection.
+                        e.stopPropagation();
+                        onSelectVideo(true);
+                      }
+                    : undefined
+                }
+              />
+              {/* 4-corner scale handles + rotation handle — only when
+                  the operator has the video selected, mirroring the
+                  overlay selection affordance so the UX matches across
+                  the canvas. Each corner uses the standard nesw/nwse
+                  cursor pair. The rotation handle sits just outside
+                  the top edge so it doesn't overlap the resize dot. */}
+              {onUpdateVideoScale && selectedVideo && (
+                <>
+                  {(["nw", "ne", "sw", "se"] as const).map((corner) => (
+                    <div
+                      key={corner}
+                      className={cn(
+                        "absolute z-10 h-3 w-3 rounded-full border-2 border-white bg-heimdex-navy-500",
+                        corner === "nw" && "-top-1.5 -left-1.5 cursor-nwse-resize",
+                        corner === "ne" && "-top-1.5 -right-1.5 cursor-nesw-resize",
+                        corner === "sw" && "-bottom-1.5 -left-1.5 cursor-nesw-resize",
+                        corner === "se" && "-bottom-1.5 -right-1.5 cursor-nwse-resize",
+                      )}
+                      style={{
+                        // Inverse-scale so the handle stays a constant
+                        // px size while the wrapper scales the video.
+                        // transform-origin anchors the handle to the
+                        // matching corner so the -1.5px offset still
+                        // sits on the actual video edge after the
+                        // 1/vs scale.
+                        transform: `scale(${1 / Math.max(vs, MIN_INVERSE_SCALE)})`,
+                        transformOrigin:
+                          corner === "nw"
+                            ? "top left"
+                            : corner === "ne"
+                              ? "top right"
+                              : corner === "sw"
+                                ? "bottom left"
+                                : "bottom right",
+                      }}
+                      onPointerDown={handleVideoResizePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                    />
+                  ))}
+                  {onUpdateVideoRotation && (
+                    <div
+                      aria-label="비디오 회전"
+                      className="absolute -top-7 left-1/2 z-10 h-3 w-3 cursor-grab rounded-full border-2 border-white bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.15)]"
+                      style={{
+                        // Bottom-center origin pins the handle to the
+                        // video's top edge after inverse-scale, mirroring
+                        // OverlayRenderer's rotation-handle anchoring.
+                        transform: `translateX(-50%) scale(${1 / Math.max(vs, MIN_INVERSE_SCALE)})`,
+                        transformOrigin: "bottom center",
+                      }}
+                      onPointerDown={handleVideoRotatePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Subtitle overlay */}
-        {activeSubtitles.map((sub) => {
+        {(() => {
+          const subtitleZIndex = layerOrder
+            ? layerOrder.findIndex((l) => l.kind === "subtitles")
+            : undefined;
+          return activeSubtitles.map((sub) => {
           const idx = getSubtitleIndex(sub.id);
           const isSelected = idx >= 0 && idx === selectedSubtitleIndex;
           const isDraggingThis = dragRef.current?.subtitleIndex === idx && dragRef.current?.mode === "move";
@@ -503,20 +970,33 @@ export function PreviewPanel({
               data-subtitle-box
               className={cn(
                 "absolute",
-                isSelected ? "cursor-grab z-10" : "cursor-grab",
+                isSelected ? "cursor-grab" : "cursor-grab",
               )}
               style={{
                 left: `${sub.style.positionX * 100}%`,
                 top: `${sub.style.positionY * 100}%`,
                 transform: "translate(-50%, -50%)",
                 pointerEvents: "auto",
-                // 2026-05-19 — see OverlayRenderer for the rationale on
-                // `width: max-content`. The lockedWidth branch below
-                // still wins during an active drag because it lands
-                // later in the spread.
+                // max-content prevents edge-wrapping during drag;
+                // maxWidth 85% matches FullscreenOverlay so text wraps
+                // identically on both surfaces.
                 width: "max-content",
+                maxWidth: "85%",
+                ...(subtitleZIndex != null ? { zIndex: isSelected ? subtitleZIndex + 100 : subtitleZIndex } : { zIndex: isSelected ? 110 : 10 }),
+                // During a drag, lock BOTH the explicit width AND
+                // remove the percent-based maxWidth so the box can't
+                // re-wrap to multi-line if the canvas dimensions change
+                // (container query, ResizeObserver, transform clamp,
+                // etc.) mid-drag. Without max-width:'none', a small
+                // canvas re-measure can re-evaluate `maxWidth: 85%`
+                // below the locked px width, forcing wrap and stretching
+                // the box vertically — that was the '드래그 시 세로로
+                // 길어짐' regression.
                 ...(isDraggingThis && dragRef.current?.lockedWidth
-                  ? { width: `${dragRef.current.lockedWidth}px` }
+                  ? {
+                      width: `${dragRef.current.lockedWidth}px`,
+                      maxWidth: "none",
+                    }
                   : {}),
               }}
               onPointerDown={(e) => handleMovePointerDown(e, sub)}
@@ -597,32 +1077,45 @@ export function PreviewPanel({
               )}
             </div>
           );
-        })}
+        });
+        })()}
 
         {/* V2 overlays — rendered above subtitles. The active-window check
             mirrors getActiveSubtitles: only show overlays whose [start, end)
-            includes the current playhead. */}
+            includes the current playhead. When layerOrder is present each
+            overlay's zIndex is its position in the unified stack. */}
         {overlays
           .filter((o) => o.startMs <= playheadMs && playheadMs < o.endMs)
-          .map((o) => (
-            <OverlayRenderer
-              key={o.id}
-              overlay={o}
-              isSelected={selectedOverlayId === o.id}
-              onClick={() => onSelectOverlay?.(o.id)}
-              onMovePointerDown={(e) =>
-                handleOverlayMovePointerDown(e, o)
-              }
-              onResizePointerDown={(_corner, e) =>
-                handleOverlayResizePointerDown(e, o)
-              }
-              onRotatePointerDown={(_corner, e) =>
-                handleOverlayRotatePointerDown(e, o)
-              }
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-            />
-          ))}
+          .map((o) => {
+            const overlayZIndex = layerOrder
+              ? layerOrder.findIndex((l) => l.kind === "overlay" && l.id === o.id)
+              : undefined;
+            return (
+              <OverlayRenderer
+                key={o.id}
+                overlay={o}
+                isSelected={selectedOverlayId === o.id}
+                zIndex={overlayZIndex != null && overlayZIndex >= 0 ? overlayZIndex : undefined}
+                onClick={() => onSelectOverlay?.(o.id)}
+                onMovePointerDown={(e) =>
+                  handleOverlayMovePointerDown(e, o)
+                }
+                onResizePointerDown={(_corner, e) =>
+                  handleOverlayResizePointerDown(e, o)
+                }
+                onRotatePointerDown={(_corner, e) =>
+                  handleOverlayRotatePointerDown(e, o)
+                }
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onUpdateText={
+                  o.kind === "text" && onUpdateOverlay
+                    ? (next) => onUpdateOverlay(o.id, { text: next })
+                    : undefined
+                }
+              />
+            );
+          })}
 
         {/* figma 1669:49437 — element selection action bar (선택 + content + trash) */}
         {(() => {
@@ -669,6 +1162,118 @@ export function PreviewPanel({
           <div className="absolute inset-0 flex items-center justify-center text-grayscale-500">
             <span className="text-xs">장면을 추가하세요</span>
           </div>
+        )}
+
+        {/* Letterbox bars. z-index derived from layerOrder when available;
+            falls back to hard-coded z-[15] for surfaces without layerOrder. */}
+        {letterbox && (
+          <>
+            {(() => {
+              const lbZIndex = layerOrder
+                ? layerOrder.findIndex((l) => l.kind === "letterbox")
+                : 15;
+              const lbZ = lbZIndex >= 0 ? lbZIndex : 15;
+              return (
+                <>
+            {letterbox.topHeightPct > 0 && (
+              <div
+                // 2026-05-24 — letterbox bars are now clickable so the
+                // operator can select them (selection-based routing).
+                // ``pointer-events`` is auto only when onSelectLetterbox
+                // is wired; embedded preview tiles without selection
+                // keep the bar inert.
+                className={cn(
+                  "absolute left-0 right-0 top-0",
+                  onSelectLetterbox ? "cursor-pointer" : "pointer-events-none",
+                  selectedLetterbox && "ring-2 ring-heimdex-navy-500 ring-inset",
+                )}
+                style={{
+                  height: `${letterbox.topHeightPct}%`,
+                  backgroundColor: letterbox.fillColor,
+                  zIndex: lbZ,
+                  // Q4 — outline (윤곽선) on the inner edge of the
+                  // top bar (i.e. the edge that touches the video).
+                  // The outer edges are pinned to the canvas border
+                  // so a border there would never be visible.
+                  borderBottom:
+                    letterbox.borderColor && letterbox.borderWidthPx > 0
+                      ? `${letterbox.borderWidthPx}px solid ${letterbox.borderColor}`
+                      : undefined,
+                }}
+                onClick={
+                  onSelectLetterbox
+                    ? (e) => {
+                        e.stopPropagation();
+                        onSelectLetterbox(true);
+                      }
+                    : undefined
+                }
+              />
+            )}
+            {letterbox.bottomHeightPct > 0 && (
+              <div
+                className={cn(
+                  "absolute bottom-0 left-0 right-0",
+                  onSelectLetterbox ? "cursor-pointer" : "pointer-events-none",
+                  selectedLetterbox && "ring-2 ring-heimdex-navy-500 ring-inset",
+                )}
+                style={{
+                  height: `${letterbox.bottomHeightPct}%`,
+                  backgroundColor: letterbox.fillColor,
+                  zIndex: lbZ,
+                  borderTop:
+                    letterbox.borderColor && letterbox.borderWidthPx > 0
+                      ? `${letterbox.borderWidthPx}px solid ${letterbox.borderColor}`
+                      : undefined,
+                }}
+                onClick={
+                  onSelectLetterbox
+                    ? (e) => {
+                        e.stopPropagation();
+                        onSelectLetterbox(true);
+                      }
+                    : undefined
+                }
+              />
+            )}
+            {onUpdateLetterbox && (
+              <>
+                {/* Top bar handle — sits centred on the bar's INNER
+                    edge (y = topHeightPct%). When the bar is 0 the
+                    operator can still drag from y=0 to introduce a
+                    bar (no chrome would otherwise be reachable). */}
+                <div
+                  role="slider"
+                  aria-label="레터박스 상단 높이 조정"
+                  // 2026-05-22 operator review — drop the white pill +
+                  // larger chevron so the affordance reads as a
+                  // draggable grip, not a separate button. drop-shadow
+                  // keeps the icon legible against any letterbox fill.
+                  className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]"
+                  style={{ top: `${letterbox.topHeightPct}%`, zIndex: lbZ + 5 }}
+                  onPointerDown={handleLetterboxHandlePointerDown("top")}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                >
+                  <ChevronsUpDown className="h-6 w-6" strokeWidth={2.25} />
+                </div>
+                <div
+                  role="slider"
+                  aria-label="레터박스 하단 높이 조정"
+                  className="absolute left-1/2 -translate-x-1/2 translate-y-1/2 cursor-ns-resize text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]"
+                  style={{ bottom: `${letterbox.bottomHeightPct}%`, zIndex: lbZ + 5 }}
+                  onPointerDown={handleLetterboxHandlePointerDown("bottom")}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                >
+                  <ChevronsUpDown className="h-6 w-6" strokeWidth={2.25} />
+                </div>
+              </>
+            )}
+                </>
+              );
+            })()}
+          </>
         )}
 
         {/* Preload hidden video for next clip */}

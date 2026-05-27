@@ -28,31 +28,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center bg-grayscale-10">
-      {/* Left navy panel — visible on lg and above */}
-      <div
-        className="hidden lg:flex flex-col items-center justify-center bg-heimdex-navy-500 shadow-left-pane shrink-0"
-        style={{
-          display: "flex",
-          width: "856px",
-          height: "1024px",
-          minWidth: "564px",
-          maxWidth: "856px",
-          padding: "372px 259px",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          gap: "10px",
-          flexShrink: 0,
-          borderTopRightRadius: "40px",
-          borderBottomRightRadius: "40px",
-        }}
-      >
+    <div className="min-h-screen flex bg-grayscale-10">
+      {/* Left navy panel — visible on 1280px and above. Stretches to fill viewport height (no white gap) and grows to fill remaining width up to 1976px (covers 1280–2560 viewports with the 584px-wide right pane). */}
+      <div className="hidden min-[1280px]:flex flex-1 min-w-[696px] max-w-[1976px] flex-col items-center justify-center bg-heimdex-navy-500 shadow-left-pane rounded-r-[40px]">
         <LoginLogoWhite />
       </div>
 
-      {/* Right form panel */}
-      <div className="flex-1 flex h-full items-center justify-center overflow-clip px-8 py-12 lg:px-[97px] lg:py-[220px]">
+      {/* Right form panel — fixed 584px on 1280+ (390px form + 97px gutters); fluid below. Vertical padding scales with viewport height down to 96px so the form never gets clipped on short screens. */}
+      <div className="flex-1 min-[1280px]:flex-none min-[1280px]:w-[584px] flex items-center justify-center overflow-clip px-8 py-12 min-[1280px]:px-[97px] min-[1280px]:py-[clamp(96px,29.7vh,304.5px)]">
         {isAuth0Enabled ? <Auth0LoginPrompt /> : <LoginForm />}
       </div>
     </div>

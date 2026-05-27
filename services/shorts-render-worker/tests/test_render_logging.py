@@ -26,7 +26,7 @@ def render_job() -> RenderJobMessage:
         job_id="job-001",
         org_id="org-001",
         input_spec={
-            "output": {"width": 405, "height": 720, "fps": 30, "format": "mp4", "background_color": "#000000"},
+            "output": {"width": 406, "height": 720, "fps": 30, "format": "mp4", "background_color": "#000000"},
             "scene_clips": [
                 {"scene_id": "s001", "video_id": "gd_vid1", "source_type": "gdrive",
                  "start_ms": 0, "end_ms": 10000, "timeline_start_ms": 0},
@@ -43,10 +43,26 @@ def mock_api_client():
     client = MagicMock()
     client.base_url = "http://api:8000"
     client._session = MagicMock()
-    resp = MagicMock()
-    resp.raise_for_status = MagicMock()
-    client._session.put.return_value = resp
-    client._session.get.return_value = resp
+    put_resp = MagicMock()
+    put_resp.raise_for_status = MagicMock()
+    client._session.put.return_value = put_resp
+    # Route GETs: /exists -> 200 (alive), anything else -> media mock
+    exists_resp = MagicMock()
+    exists_resp.status_code = 200
+    media_resp = MagicMock()
+    media_resp.raise_for_status = MagicMock()
+    media_resp.json.return_value = {
+        "video_id": "gd_vid1",
+        "source_type": "gdrive",
+        "proxy_s3_key": "org-001/gd_vid1/proxy.mp4",
+    }
+
+    def _routed_get(url, **kwargs):
+        if "/exists" in url:
+            return exists_resp
+        return media_resp
+
+    client._session.get.side_effect = _routed_get
     return client
 
 

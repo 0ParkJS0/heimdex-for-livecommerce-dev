@@ -45,6 +45,12 @@ def _settings_stub(*, publish_enabled: bool = True):
     s.auto_shorts_product_v2_enumeration_prompt_version = "v1.0"
     s.auto_shorts_product_v2_callback_base_url = "https://api.example.com"
     s.auto_shorts_product_v2_publish_scan_order_enabled = publish_enabled
+    # Boolean flags the scan path reads via ``settings.<flag>`` — pin False
+    # so the MagicMock truthy-default doesn't route into the tangibility gate
+    # (which awaits a real repo) or force overlay enumeration mode.
+    # See feedback_magicmock_settings_stub_truthy_flag.md.
+    s.tangibility_gate_enabled = False
+    s.auto_shorts_product_v2_overlay_track_enabled = False
     return s
 
 

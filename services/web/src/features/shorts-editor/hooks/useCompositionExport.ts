@@ -28,10 +28,24 @@ interface UseCompositionExportOptions {
   getToken: () => Promise<string | null>;
 }
 
+/**
+ * Two ways the operator can submit a render. They share the same
+ * pipeline (submitRender → poll → completed) but differ in what the
+ * UI does once the render lands:
+ *
+ *   * "save"   → just navigate to /export/shorts (the saved list).
+ *   * "export" → trigger an MP4 download first, then navigate.
+ *
+ * The hook tracks the most recent submit mode so a consumer effect
+ * can branch on it when ``renderStatus === "completed"``.
+ */
+export type SubmitMode = "save" | "export";
+
 export function useCompositionExport({ state, title, getToken }: UseCompositionExportOptions) {
   const [renderStatus, setRenderStatus] = useState<RenderStatus>("idle");
   const [renderJob, setRenderJob] = useState<RenderJobResponse | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [submitMode, setSubmitMode] = useState<SubmitMode>("save");
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   // Clean up polling on unmount
@@ -73,9 +87,10 @@ export function useCompositionExport({ state, title, getToken }: UseCompositionE
     };
   }, [renderStatus, renderJob?.id, getToken]);
 
-  const submitComposition = useCallback(async () => {
+  const submitComposition = useCallback(async (mode: SubmitMode = "save") => {
     if (state.clips.length === 0) return;
 
+    setSubmitMode(mode);
     setRenderStatus("submitting");
     setRenderError(null);
     setRenderJob(null);
@@ -112,6 +127,7 @@ export function useCompositionExport({ state, title, getToken }: UseCompositionE
     renderStatus,
     renderJob,
     renderError,
+    submitMode,
     submitComposition,
     reset,
   };

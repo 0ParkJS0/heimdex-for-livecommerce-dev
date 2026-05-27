@@ -7,20 +7,22 @@
 import { useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { CanvasAlignPopover } from "../primitives/CanvasAlignPopover";
 import { ColorPalettePopover } from "../primitives/ColorPalettePopover";
 import { ColorPalettePortal } from "../primitives/ColorPalettePortal";
+import { TextAlignPopover } from "../primitives/TextAlignPopover";
 import {
-  AlignCenterIcon,
-  AlignLeftIcon,
-  AlignRightIcon,
   BoldIcon,
-  CanvasAlignCenterIcon,
-  ChevronDownIcon,
   ItalicIcon,
   PaintBucketIcon,
   UnderlineIcon,
 } from "../primitives/icons";
 import { ToolbarButton } from "../primitives/ToolbarButton";
+import {
+  computeCanvasAlignTarget,
+  type CanvasAlignAxis,
+  type CanvasAlignPosition,
+} from "../../lib/canvas-align";
 import { t } from "../../lib/i18n/strings";
 import type { EditorTextOverlay } from "../../lib/overlay-types";
 
@@ -42,37 +44,14 @@ interface TextToolbarProps {
 export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
   const isBold = overlay.fontWeight >= 600;
 
-  const alignIcon =
-    overlay.textAlign === "left" ? (
-      <AlignLeftIcon />
-    ) : overlay.textAlign === "right" ? (
-      <AlignRightIcon />
-    ) : (
-      <AlignCenterIcon />
-    );
-
-  // Canvas alignment trigger — applies center on the active axis. The
-  // chevron flips the local axis state without touching transform.x/y so
-  // the user can pick which axis to center next. Mirrors the text-align
-  // cycle pattern (icon + chevron) the user explicitly referenced.
-  //
-  // 2026-05-20 (revised) — axis semantics restored to the original
-  // lucide ``align-center-horizontal`` reading: the unrotated icon
-  // (horizontal center bar with stacked bars above/below) represents
-  // centering ON the horizontal axis, i.e. ``transform.y = 0.5``. The
-  // 90deg-rotated form then represents ``transform.x = 0.5``. State
-  // defaults to "vertical" so the first press lands on y-center,
-  // matching what operator review on 2026-05-20 expected.
-  const [canvasAxis, setCanvasAxis] = useState<"vertical" | "horizontal">(
-    "vertical",
-  );
-
-  const handleCanvasAlign = () => {
-    if (canvasAxis === "vertical") {
-      onChange({ transform: { ...overlay.transform, y: 0.5 } });
-    } else {
-      onChange({ transform: { ...overlay.transform, x: 0.5 } });
-    }
+  const handleCanvasAlign = (
+    axis: CanvasAlignAxis,
+    position: CanvasAlignPosition,
+  ) => {
+    const next = computeCanvasAlignTarget(overlay.id, axis, position);
+    onChange({
+      transform: { ...overlay.transform, [axis]: next },
+    });
   };
 
   return (
@@ -106,59 +85,22 @@ export function TextToolbar({ overlay, onChange }: TextToolbarProps) {
 
       <span className="mx-1 h-5 w-px bg-grayscale-200" />
 
-      {/* Alignment cycle: hidden details — clicking advances left → center → right */}
-      <ToolbarButton
-        ariaLabel={t.text.align}
-        onClick={() => {
-          const next: EditorTextOverlay["textAlign"] =
-            overlay.textAlign === "left"
-              ? "center"
-              : overlay.textAlign === "center"
-              ? "right"
-              : "left";
-          onChange({ textAlign: next });
-        }}
-      >
-        {alignIcon}
-      </ToolbarButton>
-      <button
-        type="button"
-        onClick={() => {
-          const next: EditorTextOverlay["textAlign"] =
-            overlay.textAlign === "left"
-              ? "center"
-              : overlay.textAlign === "center"
-              ? "right"
-              : "left";
-          onChange({ textAlign: next });
-        }}
-        aria-label={`${t.text.align} expand`}
-        className="text-grayscale-400 hover:text-grayscale-800"
-      >
-        <ChevronDownIcon className="h-3 w-3" />
-      </button>
+      {/* Text alignment dropdown (Figma 2031:329014) — trigger shows
+          the selected glyph + chevron-down; clicking opens a 3-icon
+          popover (left / center / right). Replaces the legacy
+          'cycle on click' affordance the operator found unclear. */}
+      <TextAlignPopover
+        value={overlay.textAlign}
+        onChange={(next) => onChange({ textAlign: next })}
+      />
 
-      {/* Canvas-level alignment: center the overlay on the preview canvas.
-          Vertical mode → transform.y = 0.5 (unrotated icon — the
-          lucide bar centered on the horizontal axis).
-          Horizontal mode → transform.x = 0.5 (90deg-rotated icon).
-          The chevron flips which axis the icon represents. */}
-      <ToolbarButton
-        ariaLabel={canvasAxis === "vertical" ? "캔버스 세로 중앙 정렬" : "캔버스 가로 중앙 정렬"}
-        onClick={handleCanvasAlign}
-      >
-        <CanvasAlignCenterIcon rotated={canvasAxis === "horizontal"} />
-      </ToolbarButton>
-      <button
-        type="button"
-        onClick={() =>
-          setCanvasAxis((axis) => (axis === "vertical" ? "horizontal" : "vertical"))
-        }
-        aria-label="캔버스 정렬 축 전환"
-        className="text-grayscale-400 hover:text-grayscale-800"
-      >
-        <ChevronDownIcon className="h-3 w-3" />
-      </button>
+      {/* Canvas-level alignment popover — six lucide direction icons
+          arranged as two rows (x-axis / y-axis). The popover's onAlign
+          callback measures the overlay's rendered box so start/end land
+          flush against the canvas edge (anchor-corrected, per the
+          operator's 2026-05-20 "99% rule"). Trigger now matches the
+          text-align trigger: icon + chevron-down. */}
+      <CanvasAlignPopover onAlign={handleCanvasAlign} />
 
       <span className="mx-1 h-5 w-px bg-grayscale-200" />
 

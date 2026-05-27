@@ -24,6 +24,13 @@ describe("msToPixels", () => {
   it("handles fractional ms", () => {
     expect(msToPixels(500, 100)).toBe(50);
   });
+
+  it("rounds to integer pixels so playhead and blocks stay aligned", () => {
+    // 333ms × 100 px/s = 33.3px → rounds to 33. Two elements at the
+    // same ms must land on the same physical pixel (PR 8).
+    expect(msToPixels(333, 100)).toBe(33);
+    expect(msToPixels(667, 100)).toBe(67);
+  });
 });
 
 describe("pixelsToMs", () => {

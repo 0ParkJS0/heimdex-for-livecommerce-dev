@@ -103,7 +103,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(),
                 video_id=uuid4(),
@@ -111,17 +111,25 @@ class TestFetchKeyframes:
                 s3_client=s3,
             )
 
-        assert len(result) == 3
-        assert [kf.scene_id for kf in result] == [
+        assert len(keyframes) == 3
+        assert [kf.scene_id for kf in keyframes] == [
             "gd_abc_scene_001", "gd_abc_scene_002", "gd_abc_scene_003",
         ]
         # frame_idx carries keyframe_timestamp_ms; null becomes 0.
-        assert result[0].frame_idx == 10000
-        assert result[1].frame_idx == 30000
-        assert result[2].frame_idx == 0
+        assert keyframes[0].frame_idx == 10000
+        assert keyframes[1].frame_idx == 30000
+        assert keyframes[2].frame_idx == 0
         # All three keyframes decoded into PIL images.
-        for kf in result:
+        for kf in keyframes:
             assert kf.image.size == (100, 100)
+        # ocr_by_scene_id has one entry per surfaced scene; the
+        # happy-path fixture doesn't set ``ocr_text_raw`` so each value
+        # is the empty-string default. The overlay path's detector gate
+        # then falls back to the ``rect >= 0.5`` arm.
+        assert set(ocr_by_scene_id.keys()) == {
+            "gd_abc_scene_001", "gd_abc_scene_002", "gd_abc_scene_003",
+        }
+        assert all(v == "" for v in ocr_by_scene_id.values())
 
     def test_404_returns_empty_list(self):
         """API 404 (video not registered) → empty list. Caller
@@ -130,13 +138,14 @@ class TestFetchKeyframes:
         with patch("src.tasks.enumerate.httpx.Client") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_client.get.return_value = MagicMock(status_code=404)
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
                 s3_client=s3,
             )
-        assert result == []
+        assert keyframes == []
+        assert ocr_by_scene_id == {}
         s3.get_object_bytes.assert_not_called()
 
     def test_http_error_returns_empty_list(self):
@@ -147,13 +156,14 @@ class TestFetchKeyframes:
         with patch("src.tasks.enumerate.httpx.Client") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_client.get.side_effect = httpx.ConnectError("api down")
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
                 s3_client=s3,
             )
-        assert result == []
+        assert keyframes == []
+        assert ocr_by_scene_id == {}
 
     def test_missing_s3_object_skipped_others_kept(self):
         """One bad S3 object out of N must NOT abort the whole job;
@@ -189,13 +199,16 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
                 s3_client=s3,
             )
-        assert [kf.scene_id for kf in result] == ["s1", "s3"]
+        assert [kf.scene_id for kf in keyframes] == ["s1", "s3"]
+        # The dropped (missing-S3) scene must also drop out of the OCR
+        # map — both data structures stay in lockstep.
+        assert set(ocr_by_scene_id.keys()) == {"s1", "s3"}
 
     def test_subsamples_when_scene_count_exceeds_max(self):
         """30 scenes with ``max_keyframes=5`` — only 5 S3 fetches
@@ -218,16 +231,18 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=5,
                 s3_client=s3,
             )
-        assert len(result) == 5
+        assert len(keyframes) == 5
         # Subsampling is even-stride; first scene + last scene must
         # bracket the result (gives the LLM coverage of intro + outro).
-        assert result[0].scene_id == "s0"
+        assert keyframes[0].scene_id == "s0"
+        # OCR map size mirrors the subsampled keyframe set.
+        assert len(ocr_by_scene_id) == 5
 
     def test_empty_scene_list_returns_empty(self):
         s3 = MagicMock()
@@ -238,13 +253,14 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
                 s3_client=s3,
             )
-        assert result == []
+        assert keyframes == []
+        assert ocr_by_scene_id == {}
         s3.get_object_bytes.assert_not_called()
 
     def test_decode_failure_skipped(self):
@@ -275,13 +291,91 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            result = _fetch_keyframes(
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
                 s3_client=s3,
             )
-        assert [kf.scene_id for kf in result] == ["s_good"]
+        assert [kf.scene_id for kf in keyframes] == ["s_good"]
+        # Decode failure drops the bad scene from BOTH structures.
+        assert set(ocr_by_scene_id.keys()) == {"s_good"}
+
+    def test_ocr_text_raw_threaded_per_scene(self):
+        """Regression for the 2026-05-26 silent-fail-open bug.
+
+        Before the fix, the worker built ``OverlayKeyframe`` without
+        passing ``ocr_text`` (which defaulted to ``""``), silently
+        killing the Tier 1 detector's ``ocr_price`` signal + half of
+        its structural gate. ``_fetch_keyframes`` now returns a parallel
+        ``scene_id -> ocr_text`` map so the overlay pass can populate
+        :class:`OverlayKeyframe.ocr_text` from real OCR data.
+
+        This test pins three things at once:
+
+        * the API response's per-scene ``ocr_text_raw`` flows verbatim
+          into the ``ocr_by_scene_id`` map;
+        * missing/null ``ocr_text_raw`` becomes ``""`` (legitimate when
+          OCR enrichment hasn't completed for that scene yet);
+        * the dict's keys stay locked-step with ``keyframes`` — scenes
+          that drop out of the keyframe list (missing S3 / decode fail)
+          also drop out of the OCR map.
+        """
+        scene_response = {
+            "scenes": [
+                {
+                    "scene_id": "s_with_price",
+                    "start_ms": 0, "end_ms": 5000,
+                    "keyframe_timestamp_ms": 2500,
+                    "keyframe_s3_key": "with_price.jpg",
+                    "ocr_text_raw": "29,900 원 특가 한정수량",
+                },
+                {
+                    "scene_id": "s_no_ocr_yet",
+                    "start_ms": 5000, "end_ms": 10000,
+                    "keyframe_timestamp_ms": 7500,
+                    "keyframe_s3_key": "no_ocr.jpg",
+                    # OCR enrichment not yet complete -> field absent.
+                },
+                {
+                    "scene_id": "s_explicit_null",
+                    "start_ms": 10000, "end_ms": 15000,
+                    "keyframe_timestamp_ms": 12500,
+                    "keyframe_s3_key": "explicit_null.jpg",
+                    "ocr_text_raw": None,
+                },
+            ],
+        }
+        s3 = MagicMock()
+        s3.get_object_bytes.return_value = _make_jpeg_bytes()
+
+        with patch("src.tasks.enumerate.httpx.Client") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__enter__.return_value
+            mock_resp = MagicMock(status_code=200)
+            mock_resp.json.return_value = scene_response
+            mock_resp.raise_for_status = MagicMock()
+            mock_client.get.return_value = mock_resp
+
+            keyframes, ocr_by_scene_id = _fetch_keyframes(
+                settings=_settings(),
+                org_id=uuid4(), video_id=uuid4(),
+                max_keyframes=60,
+                s3_client=s3,
+            )
+
+        # All three scenes' keyframes were available, so they all
+        # surface in the keyframe list.
+        assert [kf.scene_id for kf in keyframes] == [
+            "s_with_price", "s_no_ocr_yet", "s_explicit_null",
+        ]
+        # ocr_by_scene_id mirrors the keyframe list, and each scene's
+        # ocr_text_raw is passed through verbatim with ``None`` /
+        # missing collapsed to ``""``.
+        assert ocr_by_scene_id == {
+            "s_with_price": "29,900 원 특가 한정수량",
+            "s_no_ocr_yet": "",
+            "s_explicit_null": "",
+        }
 
     def test_url_built_from_settings_only(self):
         """SECURITY (F3): the keyframes-fetch URL must be derived from

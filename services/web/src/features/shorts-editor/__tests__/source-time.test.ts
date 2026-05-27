@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getSourceTime, getClipIndexAtTime, getActiveSubtitles } from "../lib/source-time";
+import { getSourceTime, getClipIndexAtTime, getActiveSubtitles, isSubtitleVisibleInClips, getVisibleSubtitles } from "../lib/source-time";
 import { recomputeTimeline } from "../lib/timeline-math";
 import type { EditorClip } from "../lib/types";
 
@@ -88,5 +88,134 @@ describe("getActiveSubtitles", () => {
 
   it("returns empty for empty array", () => {
     expect(getActiveSubtitles([], 0)).toHaveLength(0);
+  });
+});
+
+describe("isSubtitleVisibleInClips", () => {
+  // 2026-05-26 — operator-reported gap: auto-STT routinely produces
+  // utterances longer than a clip's visible window and the strict
+  // fully-contained check used to hide every subtitle whose range
+  // straddled an adjacent-clip boundary (e.g. 14980→17720 across
+  // clip0 ending at 15000 + clip1 starting at 15000). The predicate
+  // now uses an OVERLAP test, so a subtitle visible in any part of
+  // any clip window is kept.
+  it("returns true when subtitle falls fully within a clip", () => {
+    const clips = recomputeTimeline([makeClip(0, 10000, "v1", "c1")]);
+    expect(isSubtitleVisibleInClips({ startMs: 1000, endMs: 3000 }, clips)).toBe(true);
+  });
+
+  it("returns true when subtitle extends past clip end but starts inside (overlap)", () => {
+    const clips = recomputeTimeline([makeClip(0, 5000, "v1", "c1")]);
+    // Subtitle starts at 4000 (inside clip) and ends at 7000 (past clip
+    // end at 5000). The visible portion 4000-5000 is real screen time
+    // and used to be erased by the fully-contained predicate.
+    expect(isSubtitleVisibleInClips({ startMs: 4000, endMs: 7000 }, clips)).toBe(true);
+  });
+
+  it("returns true when subtitle starts before clip start but ends inside (overlap)", () => {
+    const clips = [{ ...makeClip(0, 5000, "v1", "c1"), timelineStartMs: 2000 }];
+    // Clip window in timeline coords = [2000, 7000). Subtitle 1000-3000
+    // overlaps the [2000, 3000) slice and must be visible.
+    expect(isSubtitleVisibleInClips({ startMs: 1000, endMs: 3000 }, clips)).toBe(true);
+  });
+
+  it("returns true for a subtitle that straddles two adjacent clips' boundary", () => {
+    // Reproduces the operator's environment: clip0 [0,15000), clip1
+    // [15000,30000). Subtitle 14980-17720 straddles the 15000 boundary
+    // and was previously hidden because no single clip fully contained
+    // it. The overlap predicate must keep it visible.
+    const clips = recomputeTimeline([
+      makeClip(0, 15000, "v1", "c1"),
+      makeClip(0, 15000, "v1", "c2"),
+    ]);
+    expect(
+      isSubtitleVisibleInClips({ startMs: 14980, endMs: 17720 }, clips),
+    ).toBe(true);
+  });
+
+  it("returns true when subtitle fits in any of multiple clips", () => {
+    const clips = recomputeTimeline([
+      makeClip(0, 3000, "v1", "c1"),
+      makeClip(0, 5000, "v1", "c2"),
+    ]);
+    // Subtitle at 4000-6000 falls within clip 2 (timeline 3000-8000)
+    expect(isSubtitleVisibleInClips({ startMs: 4000, endMs: 6000 }, clips)).toBe(true);
+  });
+
+  it("returns false when the subtitle window is entirely outside every clip", () => {
+    // Trim semantics still work: a subtitle whose entire [start, end)
+    // range falls outside every clip window stays hidden.
+    const clips = [{ ...makeClip(0, 5000, "v1", "c1"), timelineStartMs: 0 }];
+    expect(
+      isSubtitleVisibleInClips({ startMs: 6000, endMs: 8000 }, clips),
+    ).toBe(false);
+  });
+
+  it("returns false for empty clips", () => {
+    expect(isSubtitleVisibleInClips({ startMs: 0, endMs: 1000 }, [])).toBe(false);
+  });
+});
+
+describe("getVisibleSubtitles", () => {
+  it("trim shrink hides out-of-range subtitles, grow-back restores them", () => {
+    // Setup: clip [0, 10000] with three subtitles. 2026-05-26 — the
+    // visibility predicate is now overlap-based, so subtitle "b" at
+    // 4000-6000 stays visible after trimming to [0, 5000] because the
+    // [4000,5000) slice still falls inside the clip window. Subtitle
+    // "c" at 7000-9000 sits entirely past the trimmed end and stays
+    // hidden, which is the trim semantic we still care about.
+    const clips = recomputeTimeline([makeClip(0, 10000, "v1", "c1")]);
+    const subs = [
+      { startMs: 1000, endMs: 3000, text: "a" },
+      { startMs: 4000, endMs: 6000, text: "b" },
+      { startMs: 7000, endMs: 9000, text: "c" },
+    ];
+
+    // All visible initially
+    expect(getVisibleSubtitles(subs, clips)).toHaveLength(3);
+
+    // Trim right handle to [0, 5000] — "a" entirely inside, "b"
+    // overlaps the trimmed window, "c" entirely outside.
+    const trimmedClips = [{ ...clips[0], trimEndMs: 5000 }];
+    const visible = getVisibleSubtitles(subs, trimmedClips);
+    expect(visible.map((s) => s.text).sort()).toEqual(["a", "b"]);
+
+    // Grow back to [0, 10000] — all three restored
+    const restoredClips = [{ ...clips[0], trimEndMs: 10000 }];
+    expect(getVisibleSubtitles(subs, restoredClips)).toHaveLength(3);
+  });
+
+  it("subtitle timestamps are unchanged after trim", () => {
+    const clips = recomputeTimeline([makeClip(0, 10000, "v1", "c1")]);
+    const subs = [
+      // Use a subtitle entirely outside the trimmed window so the
+      // overlap predicate still hides it — the assertion here is about
+      // preserving original timestamps, not which subtitles render.
+      { startMs: 7000, endMs: 9000, text: "c" },
+    ];
+    const trimmedClips = [{ ...clips[0], trimEndMs: 5000 }];
+    const visible = getVisibleSubtitles(subs, trimmedClips);
+    expect(visible).toHaveLength(0);
+    // Original still has its timestamps
+    expect(subs[0].startMs).toBe(7000);
+    expect(subs[0].endMs).toBe(9000);
+  });
+});
+
+describe("MOVE_CLIP behavior (via getVisibleSubtitles)", () => {
+  it("moved clip changes which subtitles are visible", () => {
+    // Clip at [0, 5000]
+    const clips = [{ ...makeClip(0, 5000, "v1", "c1"), timelineStartMs: 0 }];
+    const subs = [
+      { startMs: 1000, endMs: 3000, text: "in-range" },
+      { startMs: 6000, endMs: 8000, text: "out-of-range" },
+    ];
+    expect(getVisibleSubtitles(subs, clips)).toHaveLength(1);
+
+    // Move clip to start at 5000 → window is [5000, 10000]
+    const movedClips = [{ ...clips[0], timelineStartMs: 5000 }];
+    const visible = getVisibleSubtitles(subs, movedClips);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].text).toBe("out-of-range");
   });
 });

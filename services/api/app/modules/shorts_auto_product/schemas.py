@@ -133,12 +133,12 @@ class ScanRequest(BaseModel):
 
 class ScanResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-    job_id: UUID
+    job_id: UUID | None  # None if skipped
     # If the request hit the 60s idempotency window, ``deduped`` is
     # true and ``job_id`` is the existing job's id. Lets the UI know
     # not to double-toast.
     deduped: bool = False
+    skipped_reason: Literal["intangible_product"] | None = None
 
 
 # ---------- POST /products/{video_id}/{catalog_entry_id}/clip ----------
@@ -319,8 +319,9 @@ class ScanOrderResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    parent_job_id: UUID
+    parent_job_id: UUID | None
     deduped: bool = False
+    skipped_reason: Literal["intangible_product"] | None = None
 
 
 class CriteriaSummary(BaseModel):

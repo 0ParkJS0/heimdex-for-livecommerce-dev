@@ -53,7 +53,7 @@ export function ResultCardMenu({
             aria-label="옵션 열기"
             data-testid="result-card-menu-trigger"
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex h-[24px] w-[24px] items-center justify-center rounded-[6px] text-grayscale-500 hover:bg-neutral-h-50"
+            className="inline-flex h-[24px] w-[24px] items-center justify-center rounded-[6px] text-grayscale-500 transition-colors hover:bg-neutral-h-200"
           >
             <EllipsisVertical className="h-[16px] w-[16px]" />
           </button>

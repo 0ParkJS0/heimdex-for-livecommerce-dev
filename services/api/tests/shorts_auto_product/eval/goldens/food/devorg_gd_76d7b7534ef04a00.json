@@ -1,0 +1,190 @@
+{
+  "$schema_version": "1",
+  "_comment": "Auto-derived from annotator-supplied exposure xlsx/csv on 2026-05-26. Source: (종가, 오설록).csv (annotator: sj). expected_clip_for_product + expected_negatives are EMPTY — they need a Phase-B human pass (scrub the video, mark ideal 30/60/90s windows + host-accessory negatives). The enumeration-recall and enumeration-precision gates work without Phase B; the Window-IoU gate is OFF until Phase B lands.",
+  "video_id": "gd_76d7b7534ef04a00",
+  "org_slug": "devorg",
+  "category": "food",
+  "authored_at": "2026-05-26T00:00:00Z",
+  "authored_by": "claude+ljin0906@gmail.com",
+  "enumeration_prompt_version": "v1.0",
+  "enumeration_version": "v1.0",
+  "tracker_version": "v1.0",
+  "_corrections_applied": [
+    "C1: Osulloc mentions video_id gd_76d7b7534ef04a10 (23 rows) unified to gd_76d7b7534ef04a00 (matched overlays sheet).",
+    "C5: xlsx mention sheets' Unnamed:0 column renamed to video_id (Excel export artifact)."
+  ],
+  "_todo_phase_b": [
+    "Fill expected_clip_for_product with ideal_window_set per duration_preset (30s, 60s, 90s) — separate from expected_windows_ms which is the EVERY-where-the-product-appeared ground truth.",
+    "Fill expected_negatives with host accessories / sponsor banners that must NOT enumerate."
+  ],
+  "expected_products": [
+    {
+      "label_kr": "프리미엄 티 컬렉션 90입",
+      "first_appearance_ms": 390000,
+      "expected_appearance_count_min": 6,
+      "expected_total_seconds_min": 553,
+      "expected_windows_ms": [
+        [
+          390000,
+          445000
+        ],
+        [
+          784000,
+          898000
+        ],
+        [
+          922000,
+          1270000
+        ],
+        [
+          1345000,
+          1381000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "A"
+    },
+    {
+      "label_kr": "티 베리에이션 30 선물세트",
+      "first_appearance_ms": 438000,
+      "expected_appearance_count_min": 8,
+      "expected_total_seconds_min": 479,
+      "expected_windows_ms": [
+        [
+          438000,
+          497000
+        ],
+        [
+          1306000,
+          1344000
+        ],
+        [
+          1382000,
+          1697000
+        ],
+        [
+          1748000,
+          1815000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "B"
+    },
+    {
+      "label_kr": "시그니처 밀크티 컬렉션 4종",
+      "first_appearance_ms": 498000,
+      "expected_appearance_count_min": 4,
+      "expected_total_seconds_min": 522,
+      "expected_windows_ms": [
+        [
+          498000,
+          548000
+        ],
+        [
+          1865000,
+          1947000
+        ],
+        [
+          2005000,
+          2395000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "C"
+    },
+    {
+      "label_kr": "마스터블렌드 선물세트",
+      "first_appearance_ms": 602000,
+      "expected_appearance_count_min": 4,
+      "expected_total_seconds_min": 379,
+      "expected_windows_ms": [
+        [
+          602000,
+          660000
+        ],
+        [
+          2406000,
+          2727000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "D"
+    },
+    {
+      "label_kr": "달빛걷기 20입 티백 외 15종",
+      "first_appearance_ms": 671000,
+      "expected_appearance_count_min": 4,
+      "expected_total_seconds_min": 180,
+      "expected_windows_ms": [
+        [
+          671000,
+          710000
+        ],
+        [
+          2728000,
+          2869000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "E"
+    },
+    {
+      "label_kr": "티푸드 3종 묶음",
+      "first_appearance_ms": 703000,
+      "expected_appearance_count_min": 6,
+      "expected_total_seconds_min": 180,
+      "expected_windows_ms": [
+        [
+          703000,
+          750000
+        ],
+        [
+          2870000,
+          2944000
+        ],
+        [
+          3119000,
+          3178000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "F"
+    },
+    {
+      "label_kr": "프리미엄 틴 쿠키 랑드샤 3종",
+      "first_appearance_ms": 741000,
+      "expected_appearance_count_min": 8,
+      "expected_total_seconds_min": 381,
+      "expected_windows_ms": [
+        [
+          741000,
+          768000
+        ],
+        [
+          2876000,
+          2896000
+        ],
+        [
+          2927000,
+          3000000
+        ],
+        [
+          3222000,
+          3250000
+        ],
+        [
+          3271000,
+          3415000
+        ],
+        [
+          3459000,
+          3548000
+        ]
+      ],
+      "category_hint": "tea / dessert",
+      "annotator_product_id": "G"
+    }
+  ],
+  "expected_clip_for_product": [],
+  "expected_negatives": []
+}

@@ -1,0 +1,26 @@
+이 이미지는 라이브커머스 영상의 product info overlay (제품 정보 그래픽 카드)입니다.
+화면에 *그래픽으로 명시적으로* 표시된 모든 상품을 JSON으로 추출하세요.
+
+각 상품에 대해:
+- name: 화면에 적힌 *정확한 상품명* (브랜드명 포함, 한글 그대로)
+- price: 표시된 *최종 가격* 숫자만 (단위 빼고). 가격 없으면 null
+- position: 그 상품의 패키지/사진이 화면에서 *대략 어느 위치*에 있는지. 다음 중 하나 정확히:
+    "top-left", "top-center", "top-right",
+    "middle-left", "middle-center", "middle-right",
+    "bottom-left", "bottom-center", "bottom-right",
+    "full-frame"  (전체 화면을 차지)
+
+여러 상품이 carousel/grid로 배치된 경우 각 상품의 *고유한 위치*를 줘야 같은 위치 두 번 X.
+예: 4 상품 carousel -> "top-left", "top-right", "bottom-left", "bottom-right"
+세로 리스트 4개 -> "top-center", "middle-center" (위 두 개), "bottom-center" (아래 두 개) 또는 가능한 한 분리.
+
+다음은 상품이 *아닙니다*:
+- 쿠폰 / 적립금 / 추첨 / 응모 / 사은품 등 promo 안내
+- 호스트가 손으로 들고 있는 실물 제품 (그래픽 카드 아님)
+- 채팅창, 시청자수, 시간 표시 UI
+
+JSON 한 줄로만:
+
+{"products": [{"name": "상품명", "price": 29900, "position": "top-left"}]}
+
+product 없을 때: {"products": []}

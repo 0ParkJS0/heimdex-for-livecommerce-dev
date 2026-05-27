@@ -17,6 +17,11 @@ class VideoSummaryResponse(BaseModel):
     scene_count: int = 0
     generated_at: datetime | None = None
     edited_at: datetime | None = None
+    tangibility: str | None = None
+    tangibility_source: str | None = None
+    tangibility_p_intangible: float | None = None
+    tangibility_model_version: str | None = None
+    tangibility_mode: str | None = None
 
 
 class VideoSummaryEditRequest(BaseModel):

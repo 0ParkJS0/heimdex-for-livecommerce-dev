@@ -179,3 +179,29 @@ class DriveSecretResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# --- Agent high-quality export (GET /api/drive/source-facts) ---
+
+class SourceFact(BaseModel):
+    """Everything the agent needs to locate ONE original on the local mount.
+
+    The agent prepends its detected Google Drive mount root to
+    ``mount_relative_path`` and verifies the resolved file by ``file_size_bytes``
+    (and optionally ``md5_checksum``) before rendering.
+    """
+
+    video_id: str
+    google_file_id: str
+    file_name: str
+    file_size_bytes: Optional[int] = None
+    md5_checksum: Optional[str] = None
+    mount_relative_path: str
+
+
+class SourceFactsResponse(BaseModel):
+    items: list[SourceFact]
+    missing: list[str] = Field(
+        default_factory=list,
+        description="Requested video_ids with no matching DriveFile in this org.",
+    )

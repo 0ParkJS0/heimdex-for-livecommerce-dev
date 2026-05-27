@@ -12,12 +12,15 @@ import {
 } from "@/lib/api/shorts-auto";
 import type { AutoSelectResponse, ScoringModeRequest } from "@/lib/types";
 
+import { useAgent } from "@/features/search/hooks/useAgent";
+
 import { useAutoSelect } from "../hooks/useAutoSelect";
 import { useVideoMeta } from "../hooks/useVideoMeta";
 import {
   clipKeyOf,
   useCandidateRenderJobs,
 } from "../hooks/useCandidateRenderJobs";
+import { useHqExport } from "../hooks/useHqExport";
 import { AutoShortsLayout } from "./AutoShortsLayout";
 import { CandidateList } from "./CandidateList";
 import { CenterPlayer } from "./CenterPlayer";
@@ -79,6 +82,8 @@ export function AutoShortsPage() {
   const videoMeta = useVideoMeta(videoId, getAccessToken);
   const autoSelect = useAutoSelect(getAccessToken);
   const renderJobs = useCandidateRenderJobs(getAccessToken);
+  const agent = useAgent();
+  const hqExport = useHqExport(getAccessToken);
 
   const videoTitle = videoMeta.meta?.video_title ?? videoId;
   const scenes = videoMeta.meta?.scenes ?? [];
@@ -252,6 +257,22 @@ export function AutoShortsPage() {
     [renderJobs, selectedClipKey],
   );
 
+  // HQ export is only possible once a (proxy) render exists to source the
+  // composition from. Map the selected clip → its completed render job id.
+  const selectedRenderJobId = useMemo(() => {
+    if (!selectedClipKey) return null;
+    const state = renderJobs.getState(selectedClipKey);
+    return state.kind === "completed" ? state.job.id : null;
+  }, [renderJobs, selectedClipKey]);
+
+  const hqState = selectedRenderJobId
+    ? hqExport.getState(selectedRenderJobId)
+    : ({ kind: "idle" } as const);
+
+  const handleExportHq = useCallback(() => {
+    if (selectedRenderJobId) void hqExport.start(selectedRenderJobId);
+  }, [hqExport, selectedRenderJobId]);
+
   const selectErrorMessage = describeError(
     autoSelect.error,
     "자동 생성에 실패했습니다.",
@@ -365,6 +386,11 @@ export function AutoShortsPage() {
           isDownloading={inspectorIsDownloading}
           renderJobTitle={inspectorTitleState.title}
           onTitleSave={inspectorTitleState.hasJob ? handleTitleSave : undefined}
+          showHqExport={agent.isAvailable && selectedRenderJobId != null}
+          hqStatus={hqState.kind}
+          hqOutputUrl={hqState.kind === "done" ? hqState.outputUrl : undefined}
+          hqError={hqState.kind === "failed" ? hqState.error : null}
+          onExportHq={handleExportHq}
         />
       }
     />

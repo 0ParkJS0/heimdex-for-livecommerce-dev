@@ -94,6 +94,12 @@ def get_basket_repository(db: AsyncSession = Depends(get_db_session)):
     return SceneBasketRepository(db)
 
 
+def get_editor_project_repository(db: AsyncSession = Depends(get_db_session)):
+    """Editor project (autosave snapshot) repository factory."""
+    from app.modules.editor_projects.repository import EditorProjectRepository
+    return EditorProjectRepository(db)
+
+
 def get_youtube_channel_repository(db: AsyncSession = Depends(get_db_session)):
     from app.modules.youtube.repository import YouTubeChannelRepository
     return YouTubeChannelRepository(db)

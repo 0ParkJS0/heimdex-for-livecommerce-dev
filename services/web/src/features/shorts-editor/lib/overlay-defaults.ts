@@ -53,16 +53,27 @@ export function createDefaultTextOverlay(args: {
     startMs: args.startMs,
     endMs: args.endMs ?? args.startMs + DEFAULT_OVERLAY_DURATION_MS,
     layerIndex: args.layerIndex ?? 0,
-    transform: { ...DEFAULT_TRANSFORM, y: 0.85 }, // legacy subtitle baseline
+    // 2026-05-22 — '텍스트 추가' default (Figma 2031:328972 / user
+    // spec): centered horizontally at 0.5, 10 % down from the top so a
+    // freshly added overlay sits in the upper third of the canvas
+    // (close to the title position the operator sees in the Figma
+    // mock). Previously y=0.85 mimicked the legacy lower-third
+    // subtitle baseline, which collided with the host-STT subtitle
+    // row on the canvas.
+    transform: { ...DEFAULT_TRANSFORM, x: 0.5, y: 0.1 },
     effects: { ...DEFAULT_EFFECTS },
-    text: "",
+    // Default text body lets the operator see the overlay
+    // immediately; they can double-click on the canvas to replace
+    // it (no right-panel textarea anymore per Figma 2031:328975).
+    text: "Default Text",
     fontFamily: "Pretendard",
-    fontSizePx: 36,
+    // Stored in 720-tall output reference coords; the editor preview
+    // scales via 100cqh/720 → ~25 px displayed in the 352×626 canvas
+    // (29 × 626/720 ≈ 25.2). Matches the host-subtitle 25 px target.
+    fontSizePx: 29,
     fontWeight: 400,
     italic: false,
     underline: false,
-    // Black default reads better against bright livecommerce frames
-    // (2026-05-18 review).
     fontColor: "#000000",
     textAlign: "center",
     lineHeight: 1.3,
@@ -109,8 +120,12 @@ export function createDefaultBackgroundOverlay(args: {
     },
     effects: { ...DEFAULT_EFFECTS },
     // Images render on top of a transparent fill by default so the
-    // picture isn't tinted by an accidental black backing.
-    fillColor: args.fillColor ?? (isImage ? "transparent" : "#000000"),
+    // picture isn't tinted by an accidental black backing. Stored as
+    // ``#00000000`` (RRGGBBAA, alpha 0) — the renderer's contracts
+    // validator only accepts hex, so the older ``"transparent"``
+    // keyword now bounces with a 422. UI surfaces that read the value
+    // still treat alpha-0 hex as visually transparent.
+    fillColor: args.fillColor ?? (isImage ? "#00000000" : "#000000"),
     imageUrl: args.imageUrl ?? null,
   };
 }

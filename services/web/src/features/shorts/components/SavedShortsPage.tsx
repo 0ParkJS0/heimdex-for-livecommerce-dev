@@ -32,7 +32,16 @@ import { SceneThumbnail } from "@/components/SceneThumbnail";
 import { ExportModal } from "@/features/basket/ExportModal";
 import type { BasketItem } from "@/features/basket/useSceneBasket";
 import { getRenderJobStatus, type RenderJobResponse } from "@/lib/api/highlight-reel";
-import { generateRenderJobSummary } from "@/lib/api/shorts-render";
+import {
+  downloadRenderJob,
+  generateRenderJobSummary,
+} from "@/lib/api/shorts-render";
+import {
+  isCompletedRender,
+  isFailedRender,
+  isRenderingRender,
+} from "../lib/render-status";
+import { runDownloadWithSnack } from "../lib/render-download";
 import { Pagination } from "@/components/ui/Pagination";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button, Snackbar } from "@/components/ui/figma-index";
@@ -122,6 +131,12 @@ export function SavedShortsPage() {
   >(null);
   // figma 1602:35774 — single open menu at a time (per-card dot-3 popover).
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  // Failure surface for the dot-3 menu's 다운로드 action. ``handleDownload``
+  // dispatches into this via ``runDownloadWithSnack`` (replaces the old
+  // silent-catch). Cleared by the Snackbar's own onClose.
+  const [downloadSnack, setDownloadSnack] = useState<
+    { title: string; body: string } | null
+  >(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const sortRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
@@ -495,9 +510,28 @@ export function SavedShortsPage() {
     } catch {}
   };
 
-  const isRendering = (item: DisplayItem) => item.type === "render" && (item.status === "queued" || item.status === "rendering");
-  const isCompleted = (item: DisplayItem) => item.type === "render" && item.status === "completed";
-  const isFailed = (item: DisplayItem) => item.type === "render" && item.status === "failed";
+  // Drives the render-job download path with a visible failure
+  // surface. The earlier inline ``try { … } catch {}`` swallowed every
+  // failure (expired signed URL, removed job, network blip) and left
+  // the menu item as a no-op — the operator clicked 다운로드 and saw
+  // nothing happen. The helper now dispatches a Korean error message
+  // into ``downloadSnack`` which renders as a warning Snackbar; the
+  // pure helper itself is covered by ``features/shorts/lib/render-
+  // download.ts`` so the failure path no longer needs a page mount to
+  // regression-test.
+  const handleDownload = async (item: DisplayItem) => {
+    await runDownloadWithSnack(item, getAccessToken, downloadRenderJob, (msg) =>
+      setDownloadSnack({ title: "다운로드 실패", body: msg }),
+    );
+  };
+
+  // Render-status branches moved to features/shorts/lib/render-status.ts
+  // so the dot-3 menu's gating logic (Download item visibility) can be
+  // unit-tested without mounting the page. Local aliases keep the JSX
+  // below readable.
+  const isRendering = isRenderingRender;
+  const isCompleted = isCompletedRender;
+  const isFailed = isFailedRender;
 
   const exportDisabled = selectedIds.size === 0 || exportProgress !== null;
 
@@ -882,6 +916,22 @@ export function SavedShortsPage() {
                               편집
                             </Link>
                           )}
+                          {isCompleted(item) && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setOpenMenuId(null);
+                                void handleDownload(item);
+                              }}
+                              className="block w-full px-[12px] py-[8px] text-left text-[12px] text-grayscale-800 hover:bg-neutral-h-50"
+                              data-testid="saved-shorts-render-download"
+                            >
+                              다운로드
+                            </button>
+                          )}
                           <button
                             type="button"
                             role="menuitem"
@@ -1005,6 +1055,20 @@ export function SavedShortsPage() {
           body={`${exportPercent}% · ${exportRemaining} 남음`}
           position="top-right"
           onClose={() => setExportProgress(null)}
+        />
+      )}
+
+      {/* Download failure Snackbar — surfaces ``downloadRenderJob``
+          rejections (expired signed URL, removed job, network blip).
+          ``bottom-center`` position so it can't visually collide with
+          the top-right export-progress snack when both fire. */}
+      {downloadSnack && (
+        <Snackbar
+          tone="warning"
+          title={downloadSnack.title}
+          body={downloadSnack.body}
+          position="bottom-center"
+          onClose={() => setDownloadSnack(null)}
         />
       )}
 

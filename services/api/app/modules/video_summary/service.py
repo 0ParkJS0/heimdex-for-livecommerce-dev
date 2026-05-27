@@ -24,11 +24,13 @@ class VideoSummaryService:
         repo: VideoSummaryRepository,
         scene_client,  # SceneSearchClient — injected, not imported
         openai_client: AsyncOpenAI,
+        settings,
         model: str = "gpt-4o-mini",
     ) -> None:
         self._repo = repo
         self._scene_client = scene_client
         self._openai = openai_client
+        self._settings = settings
         self._model = model
 
     async def get_summary(self, org_id: UUID, video_id: str) -> VideoSummaryResponse | None:
@@ -67,6 +69,22 @@ class VideoSummaryService:
                 video_id=video_id,
                 caption_count=len(captions),
             )
+            if self._settings.tangibility_gate_enabled:
+                input_hash = compute_input_hash([])
+                await self._repo.upsert(
+                    org_id=org_id,
+                    video_id=video_id,
+                    summary="",
+                    model=self._model,
+                    prompt_version=CURRENT_VERSION,
+                    scene_count=len(captions),
+                    input_hash=input_hash,
+                    tangibility="no_summary",
+                    tangibility_source="skip",
+                    tangibility_p_intangible=None,
+                    tangibility_model_version=self._settings.tangibility_classifier_version,
+                    tangibility_mode=self._settings.tangibility_mode,
+                )
             return VideoSummaryResponse(
                 video_id=video_id,
                 summary="",
@@ -111,6 +129,20 @@ class VideoSummaryService:
             max_tokens=300,
         )
 
+        tangibility_result: dict | None = None
+        if self._settings.tangibility_gate_enabled:
+            try:
+                from app.modules.tangibility import classify_tangibility
+                tangibility_result = await classify_tangibility(
+                    summary_text, self._settings,
+                )
+            except Exception:
+                logger.exception(
+                    "video_summary_tangibility_classify_failed",
+                    video_id=video_id,
+                )
+                tangibility_result = None  # fail-open: NULL
+
         record = await self._repo.upsert(
             org_id=org_id,
             video_id=video_id,
@@ -119,6 +151,11 @@ class VideoSummaryService:
             prompt_version=CURRENT_VERSION,
             scene_count=len(truncated),
             input_hash=input_hash,
+            tangibility=(tangibility_result or {}).get("label"),
+            tangibility_source=(tangibility_result or {}).get("source"),
+            tangibility_p_intangible=(tangibility_result or {}).get("p_intangible"),
+            tangibility_model_version=(tangibility_result or {}).get("model_version"),
+            tangibility_mode=(tangibility_result or {}).get("mode"),
         )
 
         await self._denormalize_to_opensearch(str(org_id), video_id, record.effective_summary)
@@ -139,6 +176,11 @@ class VideoSummaryService:
             scene_count=record.scene_count,
             generated_at=record.created_at,
             edited_at=record.edited_at,
+            tangibility=record.tangibility,
+            tangibility_source=record.tangibility_source,
+            tangibility_p_intangible=record.tangibility_p_intangible,
+            tangibility_model_version=record.tangibility_model_version,
+            tangibility_mode=record.tangibility_mode,
         )
 
     async def edit_summary(

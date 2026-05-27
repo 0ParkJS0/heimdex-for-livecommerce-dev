@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  computeTrackLaneWidth,
   msToPixels,
   pixelsToMs,
   snapToGrid,
@@ -111,5 +112,34 @@ describe("formatTimelineTimestamp", () => {
 
   it("formats with hours when needed", () => {
     expect(formatTimelineTimestamp(3661000)).toBe("1:01:01");
+  });
+});
+
+// B12 (2026-05-26) — lane background widens to at least containerWidthPx
+// so short clips don't leave SubtitleTrack/ClipTrack/TextOverlay lanes
+// blank past totalDurationMs while the ruler keeps extending tick
+// labels out across the viewport.
+describe("computeTrackLaneWidth", () => {
+  it("returns the content extent when no container width is supplied", () => {
+    // 10s at 100 px/s = 1000 px
+    expect(computeTrackLaneWidth(10_000, 100, null)).toBe(1000);
+    expect(computeTrackLaneWidth(10_000, 100, undefined)).toBe(1000);
+    expect(computeTrackLaneWidth(10_000, 100, 0)).toBe(1000);
+  });
+
+  it("clamps lane width to containerWidthPx when content is shorter", () => {
+    // 5s at 100 px/s = 500 px, viewport says 1300 → clamp to 1300
+    expect(computeTrackLaneWidth(5_000, 100, 1300)).toBe(1300);
+  });
+
+  it("returns the content extent when content is wider than the viewport", () => {
+    // 60s at 100 px/s = 6000 px, viewport says 1300 → 6000 wins
+    expect(computeTrackLaneWidth(60_000, 100, 1300)).toBe(6000);
+  });
+
+  it("zero-duration falls back to containerWidthPx (lane still paints)", () => {
+    expect(computeTrackLaneWidth(0, 100, 800)).toBe(800);
+    // No container either → genuinely empty lane.
+    expect(computeTrackLaneWidth(0, 100, null)).toBe(0);
   });
 });

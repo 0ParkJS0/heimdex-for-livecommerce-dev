@@ -28,6 +28,7 @@ const config: Config = {
         },
         "heimdex-navy": {
           50: "#e0e8f5",
+          100: "#BECFE6",
           300: "#6985a6",
           400: "#496a94",
           500: "#234c77",

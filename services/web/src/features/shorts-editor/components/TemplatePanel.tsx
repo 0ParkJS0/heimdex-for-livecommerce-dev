@@ -9,7 +9,7 @@
 
 import { useId, useState } from "react";
 
-import { Check, Plus, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 
 import { resolveFontFamily } from "@/lib/fonts";
 import { cn } from "@/lib/utils";
@@ -50,67 +50,70 @@ export function TemplatePanel({
   return (
     <div className="flex h-full flex-col gap-4 rounded-dialog bg-white p-5">
       <ActionRow
+        selected={selected}
         selectedName={selected?.name ?? null}
         disabled={!selected}
         onApply={() => {
           if (selected) onApply(selected);
         }}
+        onDelete={
+          onDelete
+            ? () => {
+                if (selected) onDelete(selected);
+              }
+            : undefined
+        }
+        presets={presets}
+        onPickPreset={(id) => onSelect(id)}
+        starterTemplates={starterTemplates}
+        onPickStarter={onApplyStarter}
       />
 
+      {/* Q9 — '저장된 템플릿' subsection + '현재 스타일 저장' empty
+          state CTA are removed; saving lives exclusively in the GNB
+          템플릿 저장 popup. Saved presets prepend the hardcoded starter
+          cards in a single unified grid, recent-added first per the
+          Q9 spec. */}
       <div className="flex-1 space-y-4 overflow-y-auto">
-        {starterTemplates.length > 0 && onApplyStarter && (
-          <section aria-labelledby="starter-templates-heading">
-            <h3
-              id="starter-templates-heading"
-              className="mb-2 text-[12px] font-semibold text-grayscale-500"
-            >
-              기본 자막
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              {starterTemplates.map((template) => (
-                <StarterTemplateCard
-                  key={template.id}
-                  template={template}
-                  onApply={() => onApplyStarter(template)}
-                />
-              ))}
-            </div>
-          </section>
+        {isLoading && (
+          <p className="text-xs text-grayscale-400">템플릿 불러오는 중…</p>
         )}
-
-        <section aria-labelledby="saved-templates-heading">
-          {starterTemplates.length > 0 && (
-            <h3
-              id="saved-templates-heading"
-              className="mb-2 text-[12px] font-semibold text-grayscale-500"
-            >
-              저장된 템플릿
-            </h3>
-          )}
-          {isLoading ? (
-            <p className="text-xs text-grayscale-400">템플릿 불러오는 중…</p>
-          ) : presets.length === 0 ? (
-            <EmptyState onOpenSaveDialog={onOpenSaveDialog} />
-          ) : (
-            <div className="grid grid-cols-2 gap-4">
-              {presets.map((preset) => (
-                <TemplateCard
-                  key={preset.id}
-                  preset={preset}
-                  selected={preset.id === selectedId}
-                  onSelect={() => onSelect(preset.id)}
-                  onDelete={onDelete ? () => onDelete(preset) : undefined}
-                />
-              ))}
-            </div>
-          )}
-          {error && (
-            <p className="mt-2 text-[11px] text-red-h-500">{error}</p>
-          )}
-        </section>
+        <div className="grid grid-cols-2 gap-4">
+          {sortPresetsRecentFirst(presets).map((preset) => (
+            <TemplateCard
+              key={preset.id}
+              preset={preset}
+              selected={preset.id === selectedId}
+              onSelect={() => onSelect(preset.id)}
+              onDelete={onDelete ? () => onDelete(preset) : undefined}
+            />
+          ))}
+          {starterTemplates.length > 0 &&
+            onApplyStarter &&
+            starterTemplates.map((template) => (
+              <StarterTemplateCard
+                key={template.id}
+                template={template}
+                onApply={() => onApplyStarter(template)}
+              />
+            ))}
+        </div>
+        {error && <p className="mt-2 text-[11px] text-red-h-500">{error}</p>}
       </div>
     </div>
   );
+}
+
+// Q9 — saved templates render newest-first so a just-saved preset
+// pops to the top of the grid above the hardcoded starter cards.
+// Falls back to original list order when ``created_at`` parses to NaN.
+function sortPresetsRecentFirst(presets: WirePreset[]): WirePreset[] {
+  return [...presets].sort((a, b) => {
+    const ta = Date.parse(a.created_at);
+    const tb = Date.parse(b.created_at);
+    if (Number.isNaN(ta) || Number.isNaN(tb)) return 0;
+    return tb - ta;
+  });
 }
 
 /**
@@ -176,6 +179,15 @@ function StarterTemplateCard({
             {template.previewLabel}
           </span>
         </div>
+        {/* Figma 2015:246819 — starter cards show an unfilled check
+            badge in the top-right so they share the selection chrome
+            with saved presets. Clicking the card applies immediately
+            (single-click flow) so we don't have a "selected starter"
+            state — the badge stays in its default look. */}
+        <span
+          aria-hidden
+          className="absolute right-2 top-2 inline-flex h-5.5 w-5.5 items-center justify-center rounded-checkbox border border-grayscale-300 bg-white group-hover:border-heimdex-navy-400"
+        />
       </button>
       <span className="truncate text-sm font-medium text-grayscale-800">
         {template.name}
@@ -185,30 +197,105 @@ function StarterTemplateCard({
 }
 
 function ActionRow({
+  selected,
   selectedName,
   disabled,
   onApply,
+  onDelete,
+  presets,
+  onPickPreset,
+  starterTemplates = [],
+  onPickStarter,
 }: {
+  selected: WirePreset | null;
   selectedName: string | null;
   disabled: boolean;
   onApply: () => void;
+  onDelete?: () => void;
+  presets: WirePreset[];
+  onPickPreset: (id: string) => void;
+  starterTemplates?: readonly StarterTemplate[];
+  onPickStarter?: (template: StarterTemplate) => void;
 }) {
   const [open, setOpen] = useState(false);
 
-  // figma: 1602:41198 — dropdown + primary "적용하기" 만 노출.
+  // Clicking 템플릿 선택 opens a list of saved presets (recent-first)
+  // followed by the built-in Livenow 1/2/3 starters. Picking a saved
+  // preset selects it for the 적용하기 button; picking a starter
+  // applies it immediately (the starter card grid below behaves the
+  // same way — single-click apply).
+  const sortedPresets = sortPresetsRecentFirst(presets);
+
   return (
-    <div className="flex items-center gap-2.5">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-10 flex-1 items-center justify-between gap-2.5 rounded-card border border-grayscale-300 bg-white px-3 py-2.5 text-sm font-medium text-grayscale-800 transition-colors hover:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
-        aria-expanded={open}
-      >
-        <span className={cn("truncate", !selectedName && "text-grayscale-400")}>
-          {selectedName ?? "템플릿 선택"}
-        </span>
-        <Chevron open={open} />
-      </button>
+    <div className="relative flex items-center gap-2.5">
+      <div className="relative flex-1">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex h-10 w-full items-center justify-between gap-2.5 rounded-card border border-grayscale-300 bg-white px-3 py-2.5 text-sm font-medium text-grayscale-800 transition-colors hover:border-heimdex-navy-500 focus:outline-none focus:ring-1 focus:ring-heimdex-navy-500"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+        >
+          <span className={cn("truncate", !selectedName && "text-grayscale-400")}>
+            {selectedName ?? "템플릿 선택"}
+          </span>
+          <Chevron open={open} />
+        </button>
+        {open && (
+          <ul
+            role="listbox"
+            className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-card border border-grayscale-200 bg-white py-1 shadow-dialog"
+          >
+            {sortedPresets.length === 0 && starterTemplates.length === 0 && (
+              <li className="px-3 py-2 text-xs text-grayscale-400">
+                저장된 템플릿 없음
+              </li>
+            )}
+            {sortedPresets.map((p) => (
+              <li key={p.id} role="option" aria-selected={p.name === selectedName}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPickPreset(p.id);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "block w-full truncate px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-grayscale-50",
+                    p.name === selectedName
+                      ? "text-heimdex-navy-600"
+                      : "text-grayscale-800",
+                  )}
+                >
+                  {p.name}
+                </button>
+              </li>
+            ))}
+            {/* Built-in starter list (Livenow 1/2/3 by default — see
+                starter-templates.ts). Picking one applies it
+                immediately, matching the starter card grid below. */}
+            {starterTemplates.length > 0 && sortedPresets.length > 0 && (
+              <li
+                aria-hidden
+                className="my-1 border-t border-grayscale-100"
+              />
+            )}
+            {starterTemplates.map((t) => (
+              <li key={t.id} role="option" aria-selected={false}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPickStarter?.(t);
+                    setOpen(false);
+                  }}
+                  className="block w-full truncate px-3 py-2 text-left text-sm font-medium text-grayscale-800 transition-colors hover:bg-grayscale-50"
+                >
+                  {t.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <button
         type="button"
@@ -218,6 +305,27 @@ function ActionRow({
       >
         적용하기
       </button>
+
+      {/* figma 2107:410711 / 2015:246806 — 선택된 템플릿을 ActionRow
+          에서 바로 삭제. 카드-hover trash 와 같은 onDelete 를 공유한다.
+          선택이 없으면 disabled 로 회색 처리. Ctrl+Z 미지원 (operator
+          confirmed). */}
+      {onDelete && (
+        <button
+          type="button"
+          onClick={() => {
+            if (selected) onDelete();
+          }}
+          disabled={!selected}
+          aria-label={
+            selected ? `${selected.name} 템플릿 삭제` : "템플릿 삭제"
+          }
+          data-testid="template-action-delete"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-card border border-red-h-500 text-red-h-500 transition-colors hover:bg-red-h-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-h-500 disabled:cursor-not-allowed disabled:border-grayscale-200 disabled:text-grayscale-300 disabled:hover:bg-transparent"
+        >
+          <Trash2 className="h-5 w-5" strokeWidth={2} />
+        </button>
+      )}
     </div>
   );
 }
@@ -252,10 +360,15 @@ function TemplateCard({
       >
         <CheckerPattern />
 
-        {/* 가운데 placeholder — figma 의 "확실한 두께 자신감!" */}
+        {/* 가운데 placeholder — figma 의 "확실한 두께 자신감!"
+            Composition presets carry the whole canvas (subtitle style,
+            overlay set, letterbox, video transform), so the card shows
+            a "전체 구성" label instead of the per-overlay placeholder
+            to distinguish them from text/background presets in the
+            same grid. */}
         <div className="absolute inset-0 flex items-center justify-center px-2">
           <span className="text-center text-sm font-semibold leading-snug text-heimdex-navy-500">
-            확실한 두께 자신감!
+            {preset.kind === "composition" ? "전체 구성" : "확실한 두께 자신감!"}
           </span>
         </div>
 
@@ -330,22 +443,6 @@ function CheckerPattern() {
       </defs>
       <rect width="100%" height="100%" fill={`url(#${patternId})`} />
     </svg>
-  );
-}
-
-function EmptyState({ onOpenSaveDialog }: { onOpenSaveDialog: () => void }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 py-12 text-center">
-      <p className="text-xs text-grayscale-500">저장된 템플릿이 없습니다.</p>
-      <button
-        type="button"
-        onClick={onOpenSaveDialog}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-grayscale-200 bg-white px-3 py-2 text-xs font-medium text-grayscale-800 transition-colors hover:border-heimdex-navy-500 hover:text-heimdex-navy-500"
-      >
-        <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-        현재 스타일 저장
-      </button>
-    </div>
   );
 }
 

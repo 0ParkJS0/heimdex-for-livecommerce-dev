@@ -62,8 +62,12 @@ const COMMON_TEXT_FIELDS = {
 
 export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
   {
+    // Renamed 2026-05-22 — operator picked product-neutral names so the
+    // starter list works for any vertical (분리수납/반달/손잡이 were
+    // copy that came from the original 라이브 커머스 mock). Underlying
+    // style payload unchanged.
     id: "starter-clean-organizer",
-    name: "분리수납",
+    name: "Livenow 1",
     previewLabel: "한눈에 보이는\n분리수납!",
     style: {
       ...COMMON_TEXT_FIELDS,
@@ -92,7 +96,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
   },
   {
     id: "starter-apsong-crossbag",
-    name: "앱송 반달",
+    name: "Livenow 2",
     previewLabel: "앱송 반달\n크로스백",
     style: {
       ...COMMON_TEXT_FIELDS,
@@ -113,7 +117,7 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
   },
   {
     id: "starter-comfortable-handle",
-    name: "손잡이",
+    name: "Livenow 3",
     previewLabel: "손잡이가 있어\n편한~",
     style: {
       ...COMMON_TEXT_FIELDS,
