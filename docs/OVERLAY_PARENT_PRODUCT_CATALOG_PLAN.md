@@ -992,6 +992,133 @@ Operational next step after deploy:
 5. Retry failed OCR rows only after queued pending rows drain without API
    saturation.
 
+## Investigation Update: `gd_fbd7b057d84d12ab` No-Products Warning
+
+Timestamp: 2026-05-27 UTC.
+
+Observed state:
+
+```text
+video_id: gd_fbd7b057d84d12ab
+drive_file_id: fc15fa43-04ba-4270-9523-440853bb0768
+file_name: 260313_bnx.mp4
+drive_files.ocr_status: done
+drive_files.enrichment_state: done
+drive_files.enrichment_updated_at: 2026-05-27 07:27:41 UTC
+OpenSearch/internal scene payload: 329 scenes, 109 scenes with OCR,
+  52 scenes with price-like OCR
+worker max-keyframe sample: 60 scenes, 17 scenes with OCR,
+  11 scenes with price-like OCR
+```
+
+Why the UI warning appeared:
+
+- The latest pre-investigation product enum job
+  `c8cf7290-1a4c-4c8a-95e6-9da02ecbb7ef` ran at
+  `2026-05-27 06:28 UTC`, almost one hour before OCR backfill landed.
+- That job ended with `error_code=no_products_detected` and
+  `progress_label="Overlay pass: no overlay-bearing frames"`.
+- The catalog had six active `stt` rows and zero active `overlay` rows.
+- With `AUTO_SHORTS_PRODUCT_V2_OVERLAY_PARENT_ENABLED=true`,
+  `list_visible_for_product_selection()` intentionally returns only active
+  overlay rows. Because there were no overlay rows, the public catalog response
+  is effectively ready-but-empty, so the frontend renders:
+  `이 영상에서 자동으로 인식할 수 있는 제품이 없습니다...`
+
+Manual rescan attempt:
+
+```text
+job_id: 3c3e6f4f-54b9-4c24-ad2a-f635a610a4a1
+invalidated_count: 6 stale STT-only rows
+```
+
+New operational bug found:
+
+- `ProductScanService.rescan()` publishes the SQS product-enumerate message
+  before the DB transaction commits.
+- Aircloud consumed the message immediately and called `/internal/products/{id}/claim`.
+- The API returned 409 because the worker could not see/claim the uncommitted
+  job row yet.
+- The worker correctly acked the message as a no-op, leaving the job stuck in
+  `queued` with no SQS message.
+- Manual republish of the same already-committed job allowed the worker to
+  claim and run it.
+
+Post-OCR rescan result:
+
+```text
+job_id: 3c3e6f4f-54b9-4c24-ad2a-f635a610a4a1
+stage: enumeration_done
+error_code: no_products_detected
+progress_label: Overlay pass: 0 detections survived filtering
+```
+
+This is a different failure mode from the stale pre-OCR run. OCR is now flowing
+into the overlay detector, and the worker reached `Reading overlay 5/7`. The
+remaining failure is downstream of overlay-frame detection:
+
+1. `OverlayProductExtractor` reads overlay frames with `gpt-4o-mini`.
+2. `overlay_pipeline` filters extracted labels with `is_promo_or_noise()`.
+3. It then requires OWLv2 to provide a usable physical-product crop for each
+   extracted overlay product.
+4. If no extracted product can be matched to an OWLv2 crop, the pipeline returns
+   zero overlay rows and overlay-parent mode still shows no products.
+
+Likely product-quality mismatch:
+
+- The overlay source is text/card-driven and returns the strongest product
+  names.
+- The current overlay catalog row still depends on OWLv2 visual localization for
+  `canonical_crop_s3_key`.
+- For livecommerce frames where the card lists products but OWLv2 cannot crop
+  the exact physical item reliably, the best overlay text result is discarded.
+
+Next implementation direction:
+
+1. Fix the publish-before-commit race for product enumeration, tracking, and
+   render fan-out paths that create user-visible rows and immediately publish
+   SQS work.
+2. Add diagnostics to the overlay worker completion path: per-job counts for
+   overlay frames, extracted products, name-filter drops, OWLv2 no-crop drops,
+   detections, clusters, and accepted rows.
+3. Decouple overlay product acceptance from OWLv2 physical-product crop
+   availability. For overlay-parent mode, allow an overlay row when the overlay
+   extractor returns a high-confidence product name, and use a deterministic
+   overlay/card/full-frame crop as `canonical_crop_s3_key` when OWLv2 does not
+   localize a product object.
+4. Preserve source boundaries: the fallback crop is an overlay-source artifact,
+   not a vision-source product. It should remain `enumeration_source='overlay'`
+   and should not re-enable STT/vision rows in overlay-parent product selection.
+
+Implementation update:
+
+```text
+API:
+  ProductScanService.enqueue_scan(), rescan(), and enqueue_clip() now commit the
+  user-visible job row before publishing the required SQS message. This prevents
+  Aircloud from consuming a message before the worker can see the row.
+
+  Added ProductScanJobRepository.fail_unclaimed_api_job() for required-publish
+  failures after that commit boundary. The existing worker fail() method remains
+  lease-guarded and is still used for worker-owned failures.
+
+Overlay pipeline:
+  OVERLAY_ENUMERATION_VERSION bumped to overlay-v0.2.
+
+  Overlay-extracted product names now prefer OWLv2 physical-product crops but
+  no longer require them. If OWLv2 cannot assign a usable crop, the pipeline
+  uses the overlay-bearing frame as the canonical crop. The row remains
+  source-tagged as overlay.
+
+  Overlay single-frame products are accepted. The single-keyframe rejection rule
+  remains useful for visual noise, but an explicit overlay product card is
+  strong enough to become a selectable product.
+
+  Added overlay_enumeration_summary logs with counts for overlay frames,
+  extracted labels, name-filter drops, OWLv2 no-crop fallbacks, detections,
+  clusters, accepted products, and returned products.
+```
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when

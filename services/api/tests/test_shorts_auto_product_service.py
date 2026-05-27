@@ -266,6 +266,32 @@ async def test_cost_under_cap_proceeds(monkeypatch):
     assert response.job_id == fake_job.id
 
 
+@pytest.mark.asyncio
+async def test_enqueue_scan_commits_before_publish(monkeypatch):
+    """Aircloud can consume SQS immediately; the job row must be committed
+    before publish or the worker can claim 409 and ack a lost message."""
+    svc = _build_service(_settings())
+    fake_job = MagicMock(id=uuid4())
+    svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
+
+    import app.sqs_producer as sqs_producer
+
+    def publish(**_kwargs):
+        assert svc.session.commit.await_count >= 1
+
+    monkeypatch.setattr(sqs_producer, "publish_product_enumerate_job", publish)
+
+    response = await svc.enqueue_scan(
+        org_id=uuid4(),
+        video_id=uuid4(),
+        user_id=uuid4(),
+        duration_preset_sec=60,
+    )
+
+    assert response.job_id == fake_job.id
+    assert svc.session.commit.await_count >= 1
+
+
 # ---------- concurrency cap ----------
 
 @pytest.mark.asyncio
@@ -369,6 +395,30 @@ async def test_rescan_bypasses_completion_guard(monkeypatch):
     svc.job_repo.create_enumeration_job.assert_called_once()
     assert resp.invalidated_count == 7
     assert resp.job_id == fake_job.id
+
+
+@pytest.mark.asyncio
+async def test_rescan_commits_before_publish(monkeypatch):
+    svc = _build_service(_settings())
+    svc.catalog_repo.invalidate_video_catalog = AsyncMock(return_value=3)
+    fake_job = MagicMock(id=uuid4())
+    svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
+
+    import app.sqs_producer as sqs_producer
+
+    def publish(**_kwargs):
+        assert svc.session.commit.await_count >= 1
+
+    monkeypatch.setattr(sqs_producer, "publish_product_enumerate_job", publish)
+
+    resp = await svc.rescan(
+        org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
+        duration_preset_sec=60,
+    )
+
+    assert resp.job_id == fake_job.id
+    assert resp.invalidated_count == 3
+    assert svc.session.commit.await_count >= 1
 
 
 # ---------- STT-enum NOT scheduled from scan endpoints ----------

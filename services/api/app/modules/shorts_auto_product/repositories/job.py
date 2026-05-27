@@ -703,6 +703,39 @@ class ProductScanJobRepository:
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
+    async def fail_unclaimed_api_job(
+        self,
+        *,
+        job_id: UUID,
+        error_code: str,
+        error_message: str,
+    ) -> ProductScanJob | None:
+        """Mark an API-created job failed before any worker claim.
+
+        Used when required SQS publish fails after the API has committed the
+        user-visible row. Worker-owned failures must continue to use
+        :meth:`fail`, which guards on ``claimed_by``.
+        """
+        now = datetime.now(timezone.utc)
+        stmt = (
+            update(ProductScanJob)
+            .where(
+                ProductScanJob.id == job_id,
+                ProductScanJob.claimed_by.is_(None),
+                ProductScanJob.stage.in_(list(ACTIVE_SCAN_STAGES)),
+            )
+            .values(
+                stage=SCAN_STAGE_FAILED,
+                failed_at=now,
+                last_heartbeat_at=now,
+                lease_expires_at=None,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            .returning(ProductScanJob)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def cancel(
         self,
         *,

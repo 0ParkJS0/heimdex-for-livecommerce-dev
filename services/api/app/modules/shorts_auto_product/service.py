@@ -446,6 +446,10 @@ class ProductScanService:
             overlay_policy=self._overlay_policy(),
         )
         await self.session.flush()
+        # Commit before publishing. Aircloud workers can consume SQS in
+        # milliseconds; if the job row is still uncommitted, the worker's
+        # claim sees no queued row, returns 409, and acks the message.
+        await self.session.commit()
 
         try:
             sqs_producer.publish_product_enumerate_job(
@@ -465,12 +469,10 @@ class ProductScanService:
                 job_id=str(job.id),
                 org_id=str(org_id),
             )
-            await self.job_repo.fail(
+            await self.job_repo.fail_unclaimed_api_job(
                 job_id=job.id,
-                claimed_by="api",
                 error_code="internal_error",
                 error_message="failed to enqueue scan; please retry",
-                cost_delta_usd=Decimal("0"),
             )
             await self.catalog_run_repo.mark_failed(
                 org_id=org_id,
@@ -478,6 +480,7 @@ class ProductScanService:
                 error_code="internal_error",
                 error_message="failed to enqueue scan; please retry",
             )
+            await self.session.commit()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="failed to enqueue scan; please retry",
@@ -552,6 +555,7 @@ class ProductScanService:
             duration_preset_sec=duration_preset_sec,
         )
         await self.session.flush()
+        await self.session.commit()
 
         try:
             sqs_producer.publish_product_track_job(
@@ -571,13 +575,12 @@ class ProductScanService:
                 job_id=str(job.id),
                 catalog_entry_id=str(catalog_entry_id),
             )
-            await self.job_repo.fail(
+            await self.job_repo.fail_unclaimed_api_job(
                 job_id=job.id,
-                claimed_by="api",
                 error_code="internal_error",
                 error_message="failed to enqueue clip; please retry",
-                cost_delta_usd=Decimal("0"),
             )
+            await self.session.commit()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="failed to enqueue clip; please retry",
@@ -692,6 +695,8 @@ class ProductScanService:
             overlay_policy=self._overlay_policy(),
         )
         await self.session.flush()
+        # See enqueue_scan: the job must be visible before SQS publish.
+        await self.session.commit()
 
         try:
             sqs_producer.publish_product_enumerate_job(
@@ -711,11 +716,10 @@ class ProductScanService:
                 job_id=str(job.id),
                 org_id=str(org_id),
             )
-            await self.job_repo.fail(
-                job_id=job.id, claimed_by="api",
+            await self.job_repo.fail_unclaimed_api_job(
+                job_id=job.id,
                 error_code="internal_error",
                 error_message="failed to enqueue rescan; please retry",
-                cost_delta_usd=Decimal("0"),
             )
             await self.catalog_run_repo.mark_failed(
                 org_id=org_id,
@@ -723,6 +727,7 @@ class ProductScanService:
                 error_code="internal_error",
                 error_message="failed to enqueue rescan; please retry",
             )
+            await self.session.commit()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="failed to enqueue rescan; please retry",
