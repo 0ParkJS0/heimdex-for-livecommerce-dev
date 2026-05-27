@@ -470,8 +470,16 @@ def schedule_consolidation_task(
                         prompt_version=prompt_version,
                         stt_grounding_enabled=stt_grounding_enabled,
                     )
-                    if any(counts):
-                        await session.commit()
+                    from app.modules.shorts_auto_product.repositories.catalog_run import (
+                        ProductCatalogRunRepository,
+                    )
+                    await ProductCatalogRunRepository(
+                        session
+                    ).mark_consolidation_complete(
+                        org_id=org_id,
+                        video_id=video_db_id,
+                    )
+                    await session.commit()
             finally:
                 # Best-effort cleanup — the OpenAI client holds a
                 # connection pool we should release even on failure.

@@ -239,6 +239,7 @@ def _build_complete_app(monkeypatch, *, job, persisted_appearance_count=0,
     no fan-out happens. The default keeps every pre-existing test
     passing without modification.
     """
+    from app.config import Settings, get_settings
     from app.dependencies import get_db_session, verify_internal_token
     from app.modules.shorts_auto_product.internal_router import (
         router as internal_router,
@@ -306,6 +307,11 @@ def _build_complete_app(monkeypatch, *, job, persisted_appearance_count=0,
     fake_db.commit = AsyncMock()
     app.dependency_overrides[get_db_session] = lambda: fake_db
     app.dependency_overrides[verify_internal_token] = lambda: "test-token"
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auto_shorts_product_v2_stt_enum_enabled=True,
+        openai_api_key="test-key",
+        auto_shorts_product_v2_consolidate_enabled=False,
+    )
     # Stash the fakes on the app so individual tests can assert
     # interactions without reaching back into closure scope.
     app.state.fake_job_repo = fake_job_repo
@@ -946,6 +952,7 @@ def test_fail_enumeration_schedules_stt_recover(monkeypatch):
     promote_latest_enumeration_done_stt — the repo method's tightened
     WHERE ``stage = SCAN_STAGE_FAILED`` only matches in this state, so
     a stale recover call from any other state safely no-ops."""
+    from app.config import Settings, get_settings
     from app.dependencies import get_db_session, verify_internal_token
     from app.modules.shorts_auto_product.internal_router import (
         router as internal_router,
@@ -989,6 +996,11 @@ def test_fail_enumeration_schedules_stt_recover(monkeypatch):
     fake_db.commit = AsyncMock()
     app.dependency_overrides[get_db_session] = lambda: fake_db
     app.dependency_overrides[verify_internal_token] = lambda: "test-token"
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        auto_shorts_product_v2_stt_enum_enabled=True,
+        openai_api_key="test-key",
+        auto_shorts_product_v2_consolidate_enabled=False,
+    )
 
     client = TestClient(app)
     resp = client.post(

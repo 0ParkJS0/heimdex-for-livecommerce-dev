@@ -34,21 +34,30 @@ from app.config import Settings
 from app.logging_config import get_logger
 from app.modules.shorts_auto_product.models import (
     ACTIVE_SCAN_STAGES,
+    CATALOG_STATUS_AUGMENTING_STT,
+    CATALOG_STATUS_CONSOLIDATING,
+    CATALOG_STATUS_ENUMERATING,
+    CATALOG_STATUS_FAILED,
+    CATALOG_STATUS_QUEUED,
+    CATALOG_STATUS_READY,
     SCAN_STAGE_ENUMERATION_DONE,
     SCAN_STAGE_FAILED,
     SCAN_STAGE_FANNED_OUT,
     TERMINAL_SCAN_STAGES,
     ProductCatalogEntry,
+    ProductCatalogRun,
     ProductScanJob,
 )
 from app.modules.shorts_auto_product.repositories import (
     ProductAppearanceRepository,
     ProductCatalogRepository,
+    ProductCatalogRunRepository,
     ProductScanDailyCostRepository,
     ProductScanJobRepository,
 )
 from app.modules.shorts_auto_product.schemas import (
     CatalogProductSummary,
+    CatalogStatus,
     ClipResponse,
     DurationPresetSec,
     JobKind,
@@ -93,6 +102,7 @@ class ProductScanService:
         self.session: AsyncSession = session
         self.settings: Settings = settings
         self.catalog_repo = ProductCatalogRepository(session)
+        self.catalog_run_repo = ProductCatalogRunRepository(session)
         self.appearance_repo = ProductAppearanceRepository(session)
         self.job_repo = ProductScanJobRepository(session)
         self.cost_repo = ProductScanDailyCostRepository(session)
@@ -123,8 +133,22 @@ class ProductScanService:
         flag is on (``vision+overlay``); off (default) preserves the
         legacy single-pass ``vision`` behavior byte-identically."""
         if self.settings.auto_shorts_product_v2_overlay_track_enabled:
+            if self.settings.auto_shorts_product_v2_overlay_parent_enabled:
+                return "overlay"
             return "vision+overlay"
+        if self.settings.auto_shorts_product_v2_overlay_parent_enabled:
+            logger.warning(
+                "product_v2_overlay_parent_without_overlay_track",
+            )
         return "vision"
+
+    def _overlay_policy(self) -> str:
+        if (
+            self.settings.auto_shorts_product_v2_overlay_track_enabled
+            and self.settings.auto_shorts_product_v2_overlay_parent_enabled
+        ):
+            return "overlay_parent"
+        return "mixed"
 
     async def _require_budget(self, org_id: UUID) -> Decimal:
         """402 if today's cost exceeds the cap. Returns the running
@@ -179,12 +203,23 @@ class ProductScanService:
         self._require_enabled_for_org(org_id)
         from app.storage.s3 import S3Client
 
-        entries = await self.catalog_repo.list_active_by_video(
+        all_entries = await self.catalog_repo.list_active_by_video(
             org_id=org_id, video_id=video_id,
         )
-        scan_status, scan_job_id = await self._resolve_scan_status(
-            org_id=org_id, video_id=video_id, entries=entries,
+        catalog_status, scan_status, scan_job_id, run = (
+            await self._resolve_catalog_status(
+                org_id=org_id, video_id=video_id, entries=all_entries,
+            )
         )
+        entries: list[ProductCatalogEntry] = []
+        if catalog_status == "ready":
+            entries = await self.catalog_repo.list_visible_for_product_selection(
+                org_id=org_id,
+                video_id=video_id,
+                overlay_parent_enabled=(
+                    self.settings.auto_shorts_product_v2_overlay_parent_enabled
+                ),
+            )
 
         s3 = S3Client(bucket=self.settings.drive_s3_bucket)
         products: list[CatalogProductSummary] = []
@@ -231,6 +266,9 @@ class ProductScanService:
             video_id=video_id,
             scan_status=scan_status,
             scan_job_id=scan_job_id,
+            catalog_status=catalog_status,
+            catalog_finalized_at=run.finalized_at if run is not None else None,
+            catalog_revision_id=run.id if run is not None else None,
             enumeration_version=(
                 entries[0].enumeration_version if entries else None
             ),
@@ -239,6 +277,42 @@ class ProductScanService:
             ),
             products=products,
         )
+
+    async def _resolve_catalog_status(
+        self,
+        *,
+        org_id: UUID,
+        video_id: UUID,
+        entries: list[ProductCatalogEntry],
+    ) -> tuple[CatalogStatus, ScanStatus, UUID | None, ProductCatalogRun | None]:
+        run = await self.catalog_run_repo.latest_for_video(
+            org_id=org_id, video_id=video_id,
+        )
+        if run is not None:
+            status_map: dict[str, tuple[CatalogStatus, ScanStatus]] = {
+                CATALOG_STATUS_QUEUED: ("enumerating", "in_progress"),
+                CATALOG_STATUS_ENUMERATING: ("enumerating", "in_progress"),
+                CATALOG_STATUS_AUGMENTING_STT: ("augmenting_stt", "in_progress"),
+                CATALOG_STATUS_CONSOLIDATING: ("consolidating", "in_progress"),
+                CATALOG_STATUS_READY: ("ready", "complete"),
+                CATALOG_STATUS_FAILED: ("failed", "failed"),
+            }
+            catalog_status, scan_status = status_map.get(
+                run.status, ("failed", "failed"),
+            )
+            return catalog_status, scan_status, run.scan_job_id, run
+
+        # Back-compat for catalogs created before product_catalog_runs.
+        scan_status, scan_job_id = await self._resolve_scan_status(
+            org_id=org_id, video_id=video_id, entries=entries,
+        )
+        catalog_status_by_scan: dict[ScanStatus, CatalogStatus] = {
+            "never": "never",
+            "in_progress": "enumerating",
+            "complete": "ready",
+            "failed": "failed",
+        }
+        return catalog_status_by_scan[scan_status], scan_status, scan_job_id, None
 
     async def _resolve_scan_status(
         self,
@@ -364,6 +438,13 @@ class ProductScanService:
             user_id=user_id,
             duration_preset_sec=duration_preset_sec,
         )
+        await self.catalog_run_repo.create_for_scan(
+            org_id=org_id,
+            video_id=video_id,
+            scan_job_id=job.id,
+            source_mode=self._enumeration_mode(),
+            overlay_policy=self._overlay_policy(),
+        )
         await self.session.flush()
 
         try:
@@ -390,6 +471,12 @@ class ProductScanService:
                 error_code="internal_error",
                 error_message="failed to enqueue scan; please retry",
                 cost_delta_usd=Decimal("0"),
+            )
+            await self.catalog_run_repo.mark_failed(
+                org_id=org_id,
+                video_id=video_id,
+                error_code="internal_error",
+                error_message="failed to enqueue scan; please retry",
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -597,6 +684,13 @@ class ProductScanService:
             user_id=user_id,
             duration_preset_sec=duration_preset_sec,
         )
+        await self.catalog_run_repo.create_for_scan(
+            org_id=org_id,
+            video_id=video_id,
+            scan_job_id=job.id,
+            source_mode=self._enumeration_mode(),
+            overlay_policy=self._overlay_policy(),
+        )
         await self.session.flush()
 
         try:
@@ -622,6 +716,12 @@ class ProductScanService:
                 error_code="internal_error",
                 error_message="failed to enqueue rescan; please retry",
                 cost_delta_usd=Decimal("0"),
+            )
+            await self.catalog_run_repo.mark_failed(
+                org_id=org_id,
+                video_id=video_id,
+                error_code="internal_error",
+                error_message="failed to enqueue rescan; please retry",
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

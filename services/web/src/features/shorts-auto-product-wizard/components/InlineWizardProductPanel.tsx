@@ -40,10 +40,7 @@ import { formatVideoTimestampHMS } from "@/lib/timeline";
 import type { CatalogProductSummary } from "@/lib/types/shorts-auto-product-wizard";
 import { cn } from "@/lib/utils";
 
-import {
-  IndexingProgressPanel,
-  type IndexingStage,
-} from "./IndexingProgressPanel";
+import { IndexingProgressPanel, type IndexingStage } from "./IndexingProgressPanel";
 import { InlineWizardBreadcrumb } from "./InlineWizardBreadcrumb";
 import type { WizardCriteriaDraft } from "./InlineWizardCriteriaPanel";
 import { normalizeTimeRangeForSubmit } from "./VideoSegmentRangeSlider";
@@ -81,10 +78,7 @@ function rangeLabel(criteria: WizardCriteriaDraft, durationMs: number): string {
   return `${formatVideoTimestampHMS(start)} - ${formatVideoTimestampHMS(end)}`;
 }
 
-function summaryChip(
-  criteria: WizardCriteriaDraft,
-  durationMs: number,
-): string {
+function summaryChip(criteria: WizardCriteriaDraft, durationMs: number): string {
   return [
     distributionLabel(criteria.product_distribution),
     rangeLabel(criteria, durationMs),
@@ -118,9 +112,7 @@ export function InlineWizardProductPanel({
   // PR 3: multi-select state. Set membership = card selected. Clicking
   // an unselected card when ``size === requested_count`` is silently
   // ignored (the K/N counter is the visible affordance).
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [submitting, setSubmitting] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   // multi-mode cap toast — fired when an at-cap user tries to add another
@@ -135,9 +127,7 @@ export function InlineWizardProductPanel({
   // falls through to legacy "first non-empty wins" so first-mount races
   // and older backends keep working.
   const expectedJobIdRef = useRef<string | null>(null);
-  const capSnackbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const capSnackbarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Effect duplicates legacy polling logic verbatim. Once the legacy
   // page is deleted (Phase D3), the polling loop has only one home.
@@ -159,10 +149,19 @@ export function InlineWizardProductPanel({
         const expectedJobId = expectedJobIdRef.current;
         const catalogJobId = resp.scan_job_id;
         const staleJob =
-          expectedJobId != null &&
-          catalogJobId != null &&
-          catalogJobId !== expectedJobId;
-        if (resp.products.length > 0 && !staleJob) {
+          expectedJobId != null && catalogJobId != null && catalogJobId !== expectedJobId;
+        const catalogStatus =
+          resp.catalog_status ??
+          (resp.products.length > 0
+            ? "ready"
+            : resp.scan_status === "complete"
+              ? "ready"
+              : resp.scan_status === "failed"
+                ? "failed"
+                : resp.scan_status === "in_progress"
+                  ? "enumerating"
+                  : "never");
+        if (catalogStatus === "ready" && resp.products.length > 0 && !staleJob) {
           // Cache the products + mark the completion moment. The grid
           // doesn't render yet — the post-completion timer below holds
           // pollState at "enumerating" for ~3s so the progress card
@@ -174,32 +173,26 @@ export function InlineWizardProductPanel({
         // scan_status terminals are only authoritative when the catalog
         // we're reading actually corresponds to the job we triggered —
         // otherwise we may be inspecting the prior batch mid-rescan.
-        if (!staleJob && resp.scan_status === "failed") {
+        if (!staleJob && catalogStatus === "failed") {
           setErrorMessage("이전 스캔이 실패했어요. 다시 시도해 주세요.");
           setPollState("error");
           return;
         }
-        if (!staleJob && resp.scan_status === "complete") {
+        if (!staleJob && catalogStatus === "ready") {
           setPollState("no_products");
           return;
         }
         timer = setTimeout(poll, POLL_INTERVAL_MS);
       } catch (err) {
         if (cancelled) return;
-        setErrorMessage(
-          err instanceof Error ? err.message : "카탈로그 로드 실패",
-        );
+        setErrorMessage(err instanceof Error ? err.message : "카탈로그 로드 실패");
         setPollState("error");
       }
     };
 
     const start = async () => {
       try {
-        const resp = await triggerEnumeration(
-          videoId,
-          { duration_preset_sec: 60 },
-          getAccessToken,
-        );
+        const resp = await triggerEnumeration(videoId, { duration_preset_sec: 60 }, getAccessToken);
         // Snapshot the job id so poll() can verify the catalog it reads
         // back belongs to this enumeration. When the trigger is a dedup
         // hit (in-flight rescan + this remount), the backend returns
@@ -208,10 +201,7 @@ export function InlineWizardProductPanel({
       } catch (err) {
         if (cancelled) return;
         // eslint-disable-next-line no-console
-        console.warn(
-          "[inline-wizard] triggerEnumeration failed; will still poll",
-          err,
-        );
+        console.warn("[inline-wizard] triggerEnumeration failed; will still poll", err);
       }
       void poll();
     };
@@ -268,16 +258,13 @@ export function InlineWizardProductPanel({
     stageIdx = STAGE_ORDER.length;
     progressPct = 100;
   } else {
-    stageIdx = Math.min(
-      STAGE_ORDER.length - 1,
-      Math.floor(elapsedMs / STAGE_DURATION_MS),
-    );
+    stageIdx = Math.min(STAGE_ORDER.length - 1, Math.floor(elapsedMs / STAGE_DURATION_MS));
     // Cap at 95% so the bar visibly jumps to 100 when the catalog
     // actually finishes — otherwise the simulation can hit 100 before
     // the backend confirms and the "completion" moment loses impact.
     progressPct = Math.min(
       95,
-      Math.round((elapsedMs / (STAGE_DURATION_MS * STAGE_ORDER.length)) * 100),
+      Math.round((elapsedMs / (STAGE_DURATION_MS * STAGE_ORDER.length)) * 100)
     );
   }
   const simulatedCurrentStage: IndexingStage | null =
@@ -300,7 +287,7 @@ export function InlineWizardProductPanel({
       const range = normalizeTimeRangeForSubmit(
         criteria.time_range_start_ms,
         criteria.time_range_end_ms,
-        videoDurationMs,
+        videoDurationMs
       );
       const response = await createScanOrder(
         videoId,
@@ -314,7 +301,7 @@ export function InlineWizardProductPanel({
           intent: "commit",
           catalog_entry_ids: Array.from(selectedIds).sort(),
         },
-        getAccessToken,
+        getAccessToken
       );
       onSubmitOrder(response.parent_job_id);
     } catch (err) {
@@ -369,11 +356,7 @@ export function InlineWizardProductPanel({
       // Body matches the initial triggerEnumeration call above
       // (duration_preset_sec: 60). Backend reuses the same ScanRequest
       // Pydantic model on /rescan, so the field is mandatory.
-      const resp = await triggerRescan(
-        videoId,
-        { duration_preset_sec: 60 },
-        getAccessToken,
-      );
+      const resp = await triggerRescan(videoId, { duration_preset_sec: 60 }, getAccessToken);
       expectedJobIdRef.current = resp.job_id;
     } catch (err) {
       if (err instanceof WizardBudgetExceededError) {
@@ -381,9 +364,7 @@ export function InlineWizardProductPanel({
       } else if (err instanceof WizardRateLimitError) {
         setErrorMessage(`동시 실행 한도 초과: ${err.message}`);
       } else {
-        setErrorMessage(
-          err instanceof Error ? err.message : "상품 재인식에 실패했어요",
-        );
+        setErrorMessage(err instanceof Error ? err.message : "상품 재인식에 실패했어요");
       }
       setPollState("error");
       return;
@@ -412,10 +393,7 @@ export function InlineWizardProductPanel({
             clearTimeout(capSnackbarTimerRef.current);
           }
           setShowCapSnackbar(true);
-          capSnackbarTimerRef.current = setTimeout(
-            () => setShowCapSnackbar(false),
-            2500,
-          );
+          capSnackbarTimerRef.current = setTimeout(() => setShowCapSnackbar(false), 2500);
         }
         return prev;
       }
@@ -429,7 +407,7 @@ export function InlineWizardProductPanel({
     () => () => {
       if (capSnackbarTimerRef.current) clearTimeout(capSnackbarTimerRef.current);
     },
-    [],
+    []
   );
 
   // Entry toast (figma 1713:288207) — fires once per panel mount in
@@ -444,10 +422,7 @@ export function InlineWizardProductPanel({
     introShownRef.current = true;
     setShowCapSnackbar(true);
     if (capSnackbarTimerRef.current) clearTimeout(capSnackbarTimerRef.current);
-    capSnackbarTimerRef.current = setTimeout(
-      () => setShowCapSnackbar(false),
-      4000,
-    );
+    capSnackbarTimerRef.current = setTimeout(() => setShowCapSnackbar(false), 4000);
   }, [criteria.product_distribution, pollState]);
 
   const isMulti = criteria.product_distribution === "multi";
@@ -456,10 +431,7 @@ export function InlineWizardProductPanel({
     : `선택한 상품을 모두 포함한 쇼츠 ${criteria.requested_count}개를 생성합니다.`;
 
   // Step indicator lives in the global TopHeader (GNB) per Figma 1602:36766.
-  const headerSlot = useMemo(
-    () => <InlineWizardBreadcrumb currentStep={2} />,
-    [],
-  );
+  const headerSlot = useMemo(() => <InlineWizardBreadcrumb currentStep={2} />, []);
   useTopHeaderLeftActions(headerSlot);
 
   return (
@@ -536,11 +508,7 @@ export function InlineWizardProductPanel({
               variant="primary"
               size="sm"
               onClick={handleSubmit}
-              disabled={
-                selectedIds.size === 0 ||
-                submitting ||
-                pollState !== "ready"
-              }
+              disabled={selectedIds.size === 0 || submitting || pollState !== "ready"}
               data-testid="inline-product-next"
             >
               {submitting ? "생성 중..." : "다음"}
@@ -565,10 +533,7 @@ export function InlineWizardProductPanel({
           // time; once the catalog poll succeeds we hold at 100% with
           // every stage checked for 3s before pollState flips to
           // "ready" (handled by the completedAt timer above).
-          <div
-            className="flex w-full flex-1"
-            data-testid="inline-product-loading"
-          >
+          <div className="flex w-full flex-1" data-testid="inline-product-loading">
             <IndexingProgressPanel
               progress={progressPct / 100}
               currentStage={simulatedCurrentStage}
@@ -584,13 +549,10 @@ export function InlineWizardProductPanel({
             className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-6"
             data-testid="inline-product-no-products"
           >
-            <h3 className="text-sm font-semibold text-amber-900">
-              제품을 찾을 수 없어요
-            </h3>
+            <h3 className="text-sm font-semibold text-amber-900">제품을 찾을 수 없어요</h3>
             <p className="text-xs text-amber-800">
-              이 영상에서 자동으로 인식할 수 있는 제품이 없습니다. 다른
-              영상을 선택하거나, 영상에 제품이 잘 보이는 시간 구간을
-              지정해 보세요.
+              이 영상에서 자동으로 인식할 수 있는 제품이 없습니다. 다른 영상을 선택하거나, 영상에
+              제품이 잘 보이는 시간 구간을 지정해 보세요.
             </p>
           </div>
         ) : null}
@@ -600,12 +562,8 @@ export function InlineWizardProductPanel({
             className="space-y-3 rounded-md border border-red-200 bg-red-50 p-6"
             data-testid="inline-product-error"
           >
-            <h3 className="text-sm font-semibold text-red-900">
-              제품 스캔에 실패했어요
-            </h3>
-            <p className="text-xs text-red-800">
-              {errorMessage ?? "잠시 후 다시 시도해 주세요."}
-            </p>
+            <h3 className="text-sm font-semibold text-red-900">제품 스캔에 실패했어요</h3>
+            <p className="text-xs text-red-800">{errorMessage ?? "잠시 후 다시 시도해 주세요."}</p>
             <button
               type="button"
               onClick={handleRetry}
@@ -638,7 +596,7 @@ export function InlineWizardProductPanel({
                     // Cap-blocked cards stay clickable in multi-mode so the
                     // Snackbar can fire; single-mode swallows the click via
                     // toggleSelect's no-op return path.
-                    blockedByCap && !isMulti && "opacity-60",
+                    blockedByCap && !isMulti && "opacity-60"
                   )}
                   data-testid="inline-product-card"
                   data-selected={isSelected}
@@ -663,14 +621,12 @@ export function InlineWizardProductPanel({
                         "absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md transition",
                         isSelected
                           ? "bg-heimdex-navy-500 text-white"
-                          : "border-2 border-grayscale-100 bg-white/80",
+                          : "border-2 border-grayscale-100 bg-white/80"
                       )}
                       aria-hidden="true"
                       data-testid="inline-product-checkmark"
                     >
-                      {isSelected ? (
-                        <Check className="h-4 w-4" strokeWidth={3} />
-                      ) : null}
+                      {isSelected ? <Check className="h-4 w-4" strokeWidth={3} /> : null}
                     </span>
                   </div>
                   <div className="px-[12px] py-[10px]">

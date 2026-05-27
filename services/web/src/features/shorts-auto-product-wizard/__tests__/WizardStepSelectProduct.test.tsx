@@ -27,13 +27,12 @@ const getProductCatalogMock = vi.fn();
 const createScanOrderMock = vi.fn();
 
 vi.mock("@/lib/api/shorts-auto-product-wizard", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/api/shorts-auto-product-wizard")
-  >("@/lib/api/shorts-auto-product-wizard");
+  const actual = await vi.importActual<typeof import("@/lib/api/shorts-auto-product-wizard")>(
+    "@/lib/api/shorts-auto-product-wizard"
+  );
   return {
     ...actual,
-    triggerEnumeration: (...args: unknown[]) =>
-      triggerEnumerationMock(...args),
+    triggerEnumeration: (...args: unknown[]) => triggerEnumerationMock(...args),
     getProductCatalog: (...args: unknown[]) => getProductCatalogMock(...args),
     createScanOrder: (...args: unknown[]) => createScanOrderMock(...args),
   };
@@ -84,9 +83,7 @@ describe("WizardStepSelectProduct", () => {
     render(<WizardStepSelectProduct videoId="gd_test" />);
 
     expect(screen.getByTestId("enumeration-loading")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(triggerEnumerationMock).toHaveBeenCalledTimes(1),
-    );
+    await waitFor(() => expect(triggerEnumerationMock).toHaveBeenCalledTimes(1));
     expect(triggerEnumerationMock.mock.calls[0][0]).toBe("gd_test");
     expect(triggerEnumerationMock.mock.calls[0][1]).toEqual({
       duration_preset_sec: 60,
@@ -110,6 +107,24 @@ describe("WizardStepSelectProduct", () => {
     expect(card.textContent).toContain("테스트 가방");
   });
 
+  it("waits when catalog_status is not ready even if products are present", async () => {
+    triggerEnumerationMock.mockResolvedValue({
+      job_id: "j1",
+      deduped: true,
+    });
+    getProductCatalogMock.mockResolvedValue({
+      video_id: "gd_test",
+      catalog_status: "consolidating",
+      products: [SAMPLE_ENTRY],
+    });
+
+    render(<WizardStepSelectProduct videoId="gd_test" />);
+
+    await waitFor(() => expect(getProductCatalogMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("enumeration-loading")).toBeInTheDocument();
+    expect(screen.queryByTestId("product-card")).not.toBeInTheDocument();
+  });
+
   it("submits createScanOrder with catalog_entry_ids when Next clicked", async () => {
     triggerEnumerationMock.mockResolvedValue({
       job_id: "j1",
@@ -128,15 +143,11 @@ describe("WizardStepSelectProduct", () => {
 
     const card = await screen.findByTestId("product-card");
     // Next is disabled until a card is selected.
-    const nextBefore = screen.getByTestId(
-      "wizard-next",
-    ) as HTMLButtonElement;
+    const nextBefore = screen.getByTestId("wizard-next") as HTMLButtonElement;
     expect(nextBefore.disabled).toBe(true);
 
     fireEvent.click(card);
-    const nextAfter = screen.getByTestId(
-      "wizard-next",
-    ) as HTMLButtonElement;
+    const nextAfter = screen.getByTestId("wizard-next") as HTMLButtonElement;
     expect(nextAfter.disabled).toBe(false);
 
     fireEvent.click(nextAfter);
@@ -154,17 +165,15 @@ describe("WizardStepSelectProduct", () => {
     });
     await waitFor(() =>
       expect(pushMock).toHaveBeenCalledWith(
-        "/export/shorts/auto/wizard/gd_test/result/00000000-0000-0000-0000-000000000123",
-      ),
+        "/export/shorts/auto/wizard/gd_test/result/00000000-0000-0000-0000-000000000123"
+      )
     );
   });
 
   it("redirects to /criteria when URL params are missing", () => {
     mockSearchParams = new URLSearchParams(); // no length / count / etc.
     render(<WizardStepSelectProduct videoId="gd_test" />);
-    expect(replaceMock).toHaveBeenCalledWith(
-      "/export/shorts/auto/wizard/gd_test/criteria",
-    );
+    expect(replaceMock).toHaveBeenCalledWith("/export/shorts/auto/wizard/gd_test/criteria");
     // Critically: no API calls fire on the bad-params path.
     expect(triggerEnumerationMock).not.toHaveBeenCalled();
     expect(getProductCatalogMock).not.toHaveBeenCalled();
@@ -184,9 +193,7 @@ describe("WizardStepSelectProduct", () => {
       start: "60000", // start set, end missing → XOR mismatch
     });
     render(<WizardStepSelectProduct videoId="gd_test" />);
-    expect(replaceMock).toHaveBeenCalledWith(
-      "/export/shorts/auto/wizard/gd_test/criteria",
-    );
+    expect(replaceMock).toHaveBeenCalledWith("/export/shorts/auto/wizard/gd_test/criteria");
     expect(triggerEnumerationMock).not.toHaveBeenCalled();
     expect(getProductCatalogMock).not.toHaveBeenCalled();
   });
@@ -207,9 +214,7 @@ describe("WizardStepSelectProduct", () => {
       products: [],
     });
     render(<WizardStepSelectProduct videoId="gd_test" />);
-    await waitFor(() =>
-      expect(triggerEnumerationMock).toHaveBeenCalledTimes(1),
-    );
+    await waitFor(() => expect(triggerEnumerationMock).toHaveBeenCalledTimes(1));
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
@@ -276,8 +281,6 @@ describe("WizardStepSelectProduct", () => {
 
     const card = await screen.findByTestId("product-card");
     expect(card).toBeInTheDocument();
-    expect(getProductCatalogMock.mock.calls.length).toBeGreaterThan(
-      callsBefore,
-    );
+    expect(getProductCatalogMock.mock.calls.length).toBeGreaterThan(callsBefore);
   });
 });

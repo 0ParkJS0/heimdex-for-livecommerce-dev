@@ -57,6 +57,7 @@ def _build_service(settings: Settings) -> ProductScanService:
     session = AsyncMock()
     svc = ProductScanService(session=session, settings=settings)
     svc.catalog_repo = MagicMock()
+    svc.catalog_run_repo = MagicMock()
     svc.appearance_repo = MagicMock()
     svc.job_repo = MagicMock()
     svc.cost_repo = MagicMock()
@@ -65,6 +66,8 @@ def _build_service(settings: Settings) -> ProductScanService:
     svc.job_repo.find_latest_enumeration_for_video = AsyncMock(return_value=None)
     svc.job_repo.count_active_for_org = AsyncMock(return_value=0)
     svc.catalog_repo.get = AsyncMock(return_value=None)
+    svc.catalog_run_repo.create_for_scan = AsyncMock()
+    svc.catalog_run_repo.latest_for_video = AsyncMock(return_value=None)
     return svc
 
 
@@ -99,6 +102,16 @@ def test_enumeration_mode_is_vision_plus_overlay_when_flag_on():
         _settings(auto_shorts_product_v2_overlay_track_enabled=True)
     )
     assert svc._enumeration_mode() == "vision+overlay"
+
+
+def test_enumeration_mode_is_overlay_when_parent_enabled():
+    svc = _build_service(
+        _settings(
+            auto_shorts_product_v2_overlay_track_enabled=True,
+            auto_shorts_product_v2_overlay_parent_enabled=True,
+        )
+    )
+    assert svc._enumeration_mode() == "overlay"
 
 
 # =========================================================================

@@ -466,6 +466,21 @@ def schedule_stt_enumeration_task(
                         )),
                         enumerator=enumerator,
                     )
+                    from app.modules.shorts_auto_product.repositories.catalog_run import (
+                        ProductCatalogRunRepository,
+                    )
+                    if mode == "recover" and not inserted:
+                        await ProductCatalogRunRepository(session).mark_failed(
+                            org_id=org_id,
+                            video_id=video_db_id,
+                            error_code="no_products_detected",
+                            error_message=(
+                                "vision enumeration failed and STT recovery "
+                                "found no catalog rows"
+                            ),
+                        )
+                        await session.commit()
+                        return
                     if inserted:
                         if mode == "recover":
                             # Vision failed → STT is the only source
@@ -499,19 +514,32 @@ def schedule_stt_enumeration_task(
                             video_db_id=video_db_id,
                             settings=settings,
                         )
-                # Mirror the vision-path trigger:
-                # consolidate also runs after STT enumeration so STT-only flows
-                # get dedup too. run_consolidation() is idempotent via
-                # has_consolidation_markers — when both vision and STT complete,
-                # the second scheduled task short-circuits.
-                from app.modules.shorts_auto_product.consolidate.service import (
-                    schedule_consolidation_task,
-                )
-                schedule_consolidation_task(
-                    settings=settings,
-                    org_id=org_id,
-                    video_db_id=video_db_id,
-                )
+                    consolidate_enabled = bool(
+                        getattr(
+                            settings,
+                            "auto_shorts_product_v2_consolidate_enabled",
+                            False,
+                        )
+                        and (getattr(settings, "openai_api_key", "") or "")
+                    )
+                    next_status = "consolidating" if consolidate_enabled else "ready"
+                    await ProductCatalogRunRepository(session).mark_stt_complete(
+                        org_id=org_id,
+                        video_id=video_db_id,
+                        next_status=next_status,
+                    )
+                    await session.commit()
+                    if consolidate_enabled:
+                        # Consolidate after STT so the final visible catalog
+                        # sees the full source union exactly once.
+                        from app.modules.shorts_auto_product.consolidate.service import (
+                            schedule_consolidation_task,
+                        )
+                        schedule_consolidation_task(
+                            settings=settings,
+                            org_id=org_id,
+                            video_db_id=video_db_id,
+                        )
             finally:
                 # Best-effort cleanup — the OS / OpenAI clients hold
                 # connection pools we should release even on failure.

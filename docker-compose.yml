@@ -173,7 +173,7 @@ services:
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_MODEL=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_MODEL:-gpt-4o}
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_TIMEOUT_S=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_TIMEOUT_S:-120}
       - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_GRACE_S=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_GRACE_S:-105}
-      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION:-v2.1-stt-cross-reference}
+      - AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION=${AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION:-v2.2-overlay-source-parent}
       # Auto-shorts post-render Whisper subtitle refinement
       # (.claude/plans/auto-shorts-whisper-subtitles-2026-05-06.md).
       # Master flag default false; set to true on staging to enable
@@ -200,6 +200,10 @@ services:
       # off => legacy single-pass vision. compose env: is an allowlist
       # so this needs an explicit line to propagate from .env.
       - AUTO_SHORTS_PRODUCT_V2_OVERLAY_TRACK_ENABLED=${AUTO_SHORTS_PRODUCT_V2_OVERLAY_TRACK_ENABLED:-false}
+      # Overlay-parent product catalog. ON with overlay track => enumerate
+      # worker receives mode="overlay" and the product-select API exposes
+      # overlay rows as the visible parent catalog.
+      - AUTO_SHORTS_PRODUCT_V2_OVERLAY_PARENT_ENABLED=${AUTO_SHORTS_PRODUCT_V2_OVERLAY_PARENT_ENABLED:-false}
       # Auto-shorts storyboard composition (Tier B / Tier C). Plan
       # in ``track_stt/storyboard/__init__.py``. Default-off; flip
       # on staging via .env. Same allowlist rule as the whisper

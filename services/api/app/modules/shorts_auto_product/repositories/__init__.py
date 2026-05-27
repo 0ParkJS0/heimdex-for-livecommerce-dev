@@ -12,6 +12,9 @@ from app.modules.shorts_auto_product.repositories.appearance import (
 from app.modules.shorts_auto_product.repositories.catalog import (
     ProductCatalogRepository,
 )
+from app.modules.shorts_auto_product.repositories.catalog_run import (
+    ProductCatalogRunRepository,
+)
 from app.modules.shorts_auto_product.repositories.cost import (
     ProductScanDailyCostRepository,
 )
@@ -22,6 +25,7 @@ from app.modules.shorts_auto_product.repositories.job import (
 __all__ = [
     "ProductAppearanceRepository",
     "ProductCatalogRepository",
+    "ProductCatalogRunRepository",
     "ProductScanDailyCostRepository",
     "ProductScanJobRepository",
 ]

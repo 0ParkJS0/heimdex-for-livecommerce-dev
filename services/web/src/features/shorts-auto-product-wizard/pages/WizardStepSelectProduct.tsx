@@ -61,9 +61,7 @@ interface ParsedCriteria {
  * the criteria step. Values are clamped to the same bounds the backend
  * validates so a malformed URL doesn't 422 us silently mid-submit.
  */
-function parseCriteriaFromUrl(
-  params: URLSearchParams,
-): ParsedCriteria | null {
+function parseCriteriaFromUrl(params: URLSearchParams): ParsedCriteria | null {
   const length = Number(params.get("length"));
   const count = Number(params.get("count"));
   const dist = params.get("distribution");
@@ -103,21 +101,17 @@ export function WizardStepSelectProduct({ videoId }: Props) {
   // Criteria from URL — if missing/malformed, kick back to step 2.
   // Convert Next's ReadonlyURLSearchParams → standard URLSearchParams
   // so the pure helper has no Next.js coupling (and stays unit-testable).
-  const criteria = parseCriteriaFromUrl(
-    new URLSearchParams(searchParams?.toString() ?? ""),
-  );
+  const criteria = parseCriteriaFromUrl(new URLSearchParams(searchParams?.toString() ?? ""));
 
   const [entries, setEntries] = useState<CatalogProductSummary[]>([]);
-  const [pollState, setPollState] = useState<
-    "enumerating" | "ready" | "no_products" | "error"
-  >("enumerating");
+  const [pollState, setPollState] = useState<"enumerating" | "ready" | "no_products" | "error">(
+    "enumerating"
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // PR 3 of multi-product wizard: multi-select state. See
   // .claude/plans/wizard-multi-product-select.md and the parallel
   // implementation in InlineWizardProductPanel.tsx.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [submitting, setSubmitting] = useState(false);
   // Bumped by the "다시 시도" button to re-enter the effect — without
   // this, retry would only reset local state and the polling closure
@@ -132,9 +126,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
   // 200s with empty entries before enumeration even fires.
   useEffect(() => {
     if (!criteria) {
-      router.replace(
-        `/export/shorts/auto/wizard/${encodeURIComponent(videoId)}/criteria`,
-      );
+      router.replace(`/export/shorts/auto/wizard/${encodeURIComponent(videoId)}/criteria`);
       return;
     }
 
@@ -146,7 +138,18 @@ export function WizardStepSelectProduct({ videoId }: Props) {
       try {
         const resp = await getProductCatalog(videoId, getAccessToken);
         if (cancelled) return;
-        if (resp.products.length > 0) {
+        const catalogStatus =
+          resp.catalog_status ??
+          (resp.products.length > 0
+            ? "ready"
+            : resp.scan_status === "complete"
+              ? "ready"
+              : resp.scan_status === "failed"
+                ? "failed"
+                : resp.scan_status === "in_progress"
+                  ? "enumerating"
+                  : "never");
+        if (catalogStatus === "ready" && resp.products.length > 0) {
           setEntries(resp.products);
           setPollState("ready");
           return; // stop polling
@@ -155,23 +158,19 @@ export function WizardStepSelectProduct({ videoId }: Props) {
         //   * failed   → terminal error
         //   * complete → enumeration ran and found nothing — terminal
         //   * never / in_progress → keep polling until backend resolves
-        if (resp.scan_status === "failed") {
-          setErrorMessage(
-            "이전 스캔이 실패했어요. 다시 시도해 주세요.",
-          );
+        if (catalogStatus === "failed") {
+          setErrorMessage("이전 스캔이 실패했어요. 다시 시도해 주세요.");
           setPollState("error");
           return;
         }
-        if (resp.scan_status === "complete") {
+        if (catalogStatus === "ready") {
           setPollState("no_products");
           return;
         }
         timer = setTimeout(poll, POLL_INTERVAL_MS);
       } catch (err) {
         if (cancelled) return;
-        setErrorMessage(
-          err instanceof Error ? err.message : "카탈로그 로드 실패",
-        );
+        setErrorMessage(err instanceof Error ? err.message : "카탈로그 로드 실패");
         setPollState("error");
       }
     };
@@ -184,18 +183,11 @@ export function WizardStepSelectProduct({ videoId }: Props) {
       // poll be the source of truth. The poll's own error / timeout
       // paths handle the "no cached catalog AND trigger failed" case.
       try {
-        await triggerEnumeration(
-          videoId,
-          { duration_preset_sec: 60 },
-          getAccessToken,
-        );
+        await triggerEnumeration(videoId, { duration_preset_sec: 60 }, getAccessToken);
       } catch (err) {
         if (cancelled) return;
         // eslint-disable-next-line no-console
-        console.warn(
-          "[wizard] triggerEnumeration failed; will still poll catalog",
-          err,
-        );
+        console.warn("[wizard] triggerEnumeration failed; will still poll catalog", err);
       }
       // Fire the first poll immediately — covers the common case where
       // the catalog was already populated from a prior wizard run on
@@ -231,10 +223,10 @@ export function WizardStepSelectProduct({ videoId }: Props) {
           ...criteria,
           catalog_entry_ids: Array.from(selectedIds).sort(),
         },
-        getAccessToken,
+        getAccessToken
       );
       router.push(
-        `/export/shorts/auto/wizard/${encodeURIComponent(videoId)}/result/${encodeURIComponent(response.parent_job_id)}`,
+        `/export/shorts/auto/wizard/${encodeURIComponent(videoId)}/result/${encodeURIComponent(response.parent_job_id)}`
       );
     } catch (err) {
       if (err instanceof WizardValidationError) {
@@ -265,10 +257,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
       next={{
         label: submitting ? "생성 중..." : "다음 >",
         onClick: handleSubmit,
-        disabled:
-          selectedIds.size === 0 ||
-          submitting ||
-          pollState !== "ready",
+        disabled: selectedIds.size === 0 || submitting || pollState !== "ready",
       }}
       backHref={backHref}
     >
@@ -297,13 +286,10 @@ export function WizardStepSelectProduct({ videoId }: Props) {
           className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-6"
           data-testid="no-products"
         >
-          <h2 className="text-lg font-semibold text-amber-900">
-            제품을 찾을 수 없어요
-          </h2>
+          <h2 className="text-lg font-semibold text-amber-900">제품을 찾을 수 없어요</h2>
           <p className="text-sm text-amber-800">
-            이 영상에서 자동으로 인식할 수 있는 제품이 없습니다. 다른
-            영상을 선택하거나, 영상에 제품이 잘 보이는 시간 구간을
-            지정해 보세요.
+            이 영상에서 자동으로 인식할 수 있는 제품이 없습니다. 다른 영상을 선택하거나, 영상에
+            제품이 잘 보이는 시간 구간을 지정해 보세요.
           </p>
         </div>
       ) : null}
@@ -313,12 +299,8 @@ export function WizardStepSelectProduct({ videoId }: Props) {
           className="space-y-3 rounded-lg border border-red-200 bg-red-50 p-6"
           data-testid="poll-error"
         >
-          <h2 className="text-lg font-semibold text-red-900">
-            제품 스캔에 실패했어요
-          </h2>
-          <p className="text-sm text-red-800">
-            {errorMessage ?? "잠시 후 다시 시도해 주세요."}
-          </p>
+          <h2 className="text-lg font-semibold text-red-900">제품 스캔에 실패했어요</h2>
+          <p className="text-sm text-red-800">{errorMessage ?? "잠시 후 다시 시도해 주세요."}</p>
           <button
             type="button"
             onClick={() => {
@@ -343,8 +325,8 @@ export function WizardStepSelectProduct({ videoId }: Props) {
       {pollState === "ready" ? (
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            아래 제품을 최대 {criteria?.requested_count}개까지 선택할 수 있어요.
-            ({selectedIds.size}/{criteria?.requested_count} 선택)
+            아래 제품을 최대 {criteria?.requested_count}개까지 선택할 수 있어요. ({selectedIds.size}
+            /{criteria?.requested_count} 선택)
           </p>
           <div
             className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4"
@@ -397,10 +379,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
                       </div>
                     )}
                   </div>
-                  <p
-                    className="line-clamp-2 text-sm font-medium text-gray-900"
-                    title={entry.label}
-                  >
+                  <p className="line-clamp-2 text-sm font-medium text-gray-900" title={entry.label}>
                     {entry.label}
                   </p>
                   <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -419,10 +398,7 @@ export function WizardStepSelectProduct({ videoId }: Props) {
             })}
           </div>
           {errorMessage ? (
-            <p
-              className="rounded-md bg-red-50 p-3 text-sm text-red-700"
-              data-testid="submit-error"
-            >
+            <p className="rounded-md bg-red-50 p-3 text-sm text-red-700" data-testid="submit-error">
               {errorMessage}
             </p>
           ) : null}

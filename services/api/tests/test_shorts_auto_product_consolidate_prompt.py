@@ -22,9 +22,12 @@ from __future__ import annotations
 import pytest
 
 from app.modules.shorts_auto_product.consolidate.llm_consolidator import (
+    CatalogConsolidatorInput,
+    ConsolidationGroup,
     _DEFAULT_PROMPT_VERSION,
     _REJECTION_CATEGORIES,
     _SYSTEM_PROMPT,
+    _prefer_product_card_source_canonical,
 )
 from app.config import Settings
 
@@ -57,11 +60,12 @@ class TestPromptVersionLockstep:
             "not the code default)."
         )
 
-    def test_version_string_signals_the_stt_cross_reference_revision(self):
+    def test_version_string_signals_the_overlay_parent_revision(self):
         """The version string is part of the rollback / audit story; pin
         it so a renumbering forces a deliberate edit."""
-        assert "v2.1" in _DEFAULT_PROMPT_VERSION
-        assert "cross-reference" in _DEFAULT_PROMPT_VERSION.lower()
+        assert "v2.2" in _DEFAULT_PROMPT_VERSION
+        assert "overlay" in _DEFAULT_PROMPT_VERSION.lower()
+        assert "parent" in _DEFAULT_PROMPT_VERSION.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +155,94 @@ class TestUnspokenVisualNegativeGuards:
         # The new wording explicitly names 'Bottle' as the canonical
         # generic_noun example to disambiguate from unspoken_visual.
         assert "'Bottle'" in _SYSTEM_PROMPT
+
+
+class TestOverlayParentPromptWording:
+    """Overlay rows are intentional commerce graphics. The prompt must
+    not let the older ``on_screen_graphic`` rejection language erase
+    overlay product cards."""
+
+    def test_prompt_names_overlay_as_first_class_source(self):
+        assert "overlay" in _SYSTEM_PROMPT
+        assert "operator-placed commerce graphics" in _SYSTEM_PROMPT
+        assert "product cards" in _SYSTEM_PROMPT
+
+    def test_on_screen_graphic_clause_does_not_reject_overlay_cards(self):
+        assert "Do NOT reject a source='overlay' row" in _SYSTEM_PROMPT
+        assert "product name" in _SYSTEM_PROMPT
+        assert "brand, SKU, bundle, option" in _SYSTEM_PROMPT
+
+    def test_canonical_id_source_preference_is_explicit(self):
+        assert "Product-card source preference is load-bearing" in _SYSTEM_PROMPT
+        assert "choose an overlay row as canonical_entry_id" in _SYSTEM_PROMPT
+        assert "ID/source choice and label choice are separate" in _SYSTEM_PROMPT
+
+
+class TestProductCardSourceCanonicalGuard:
+    """The prompt tells the LLM to prefer overlay/vision IDs, but this
+    deterministic guard makes the DB parent invariant hold even when
+    the LLM chooses an STT row as canonical."""
+
+    def test_overlay_member_replaces_stt_canonical_but_keeps_label(self):
+        from uuid import uuid4
+
+        overlay_id = uuid4()
+        stt_id = uuid4()
+        group = ConsolidationGroup(
+            canonical_entry_id=stt_id,
+            canonical_label="일상행복 포기김치 10kg",
+            canonical_aliases=["포기김치"],
+            member_entry_ids=[overlay_id],
+        )
+        result = _prefer_product_card_source_canonical(
+            groups=[group],
+            entries=[
+                CatalogConsolidatorInput(
+                    entry_id=stt_id,
+                    llm_label="일상행복 포기김치 10kg",
+                    source="stt",
+                ),
+                CatalogConsolidatorInput(
+                    entry_id=overlay_id,
+                    llm_label="포기김치 특가",
+                    source="overlay",
+                ),
+            ],
+        )
+
+        assert result[0].canonical_entry_id == overlay_id
+        assert result[0].canonical_label == "일상행복 포기김치 10kg"
+        assert result[0].member_entry_ids == [stt_id]
+
+    def test_vision_member_replaces_stt_canonical_when_no_overlay(self):
+        from uuid import uuid4
+
+        vision_id = uuid4()
+        stt_id = uuid4()
+        group = ConsolidationGroup(
+            canonical_entry_id=stt_id,
+            canonical_label="달심 콜라겐 부스터",
+            canonical_aliases=[],
+            member_entry_ids=[vision_id],
+        )
+        result = _prefer_product_card_source_canonical(
+            groups=[group],
+            entries=[
+                CatalogConsolidatorInput(
+                    entry_id=stt_id,
+                    llm_label="달심 콜라겐 부스터",
+                    source="stt",
+                ),
+                CatalogConsolidatorInput(
+                    entry_id=vision_id,
+                    llm_label="DALSIM collagen",
+                    source="vision",
+                ),
+            ],
+        )
+
+        assert result[0].canonical_entry_id == vision_id
+        assert result[0].member_entry_ids == [stt_id]
 
 
 # ---------------------------------------------------------------------------

@@ -147,6 +147,27 @@ LANGUAGE_EN = "en"
 
 ALL_LANGUAGES: tuple[str, ...] = (LANGUAGE_KO, LANGUAGE_EN)
 
+
+# ---------- product_catalog_runs.status ----------
+#
+# Separate from ProductScanJob.stage: scan jobs describe worker lifecycle,
+# while catalog runs describe when the user-selectable product list is stable.
+CATALOG_STATUS_QUEUED = "queued"
+CATALOG_STATUS_ENUMERATING = "enumerating"
+CATALOG_STATUS_AUGMENTING_STT = "augmenting_stt"
+CATALOG_STATUS_CONSOLIDATING = "consolidating"
+CATALOG_STATUS_READY = "ready"
+CATALOG_STATUS_FAILED = "failed"
+
+ALL_CATALOG_STATUSES: tuple[str, ...] = (
+    CATALOG_STATUS_QUEUED,
+    CATALOG_STATUS_ENUMERATING,
+    CATALOG_STATUS_AUGMENTING_STT,
+    CATALOG_STATUS_CONSOLIDATING,
+    CATALOG_STATUS_READY,
+    CATALOG_STATUS_FAILED,
+)
+
 # SQLAlchemy enum type bound to the existing Postgres ENUM. All ORM
 # reads / writes go through this so type-safety is preserved.
 PRODUCT_SCAN_STAGE_ENUM = SAEnum(
@@ -285,6 +306,78 @@ class ProductCatalogEntry(Base, UUIDMixin, TimestampMixin):
             postgresql_using="ivfflat",
             postgresql_with={"lists": 100},
             postgresql_ops={"siglip2_embedding": "vector_cosine_ops"},
+        ),
+        )
+
+
+# ---------- ProductCatalogRun ----------
+
+@final
+class ProductCatalogRun(Base, UUIDMixin, TimestampMixin):
+    """Finalization state for the per-video product catalog.
+
+    ProductScanJob reaches ``enumeration_done`` when the enumerate worker
+    persists rows, but the catalog may still be mutating through STT
+    augmentation and consolidation. This row is the API-owned readiness
+    contract consumed by the wizard.
+    """
+
+    __tablename__ = "product_catalog_runs"
+
+    org_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("orgs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    video_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("drive_files.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scan_job_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("product_scan_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    source_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    overlay_policy: Mapped[str] = mapped_column(Text, nullable=False)
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    vision_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    overlay_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    stt_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    consolidation_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__: tuple[Any, ...] = (
+        CheckConstraint(
+            f"status IN {ALL_CATALOG_STATUSES!r}",
+            name="ck_product_catalog_runs_status",
+        ),
+        Index(
+            "ix_product_catalog_runs_org_video_created",
+            "org_id", "video_id", "created_at",
+        ),
+        Index(
+            "ix_product_catalog_runs_scan_job",
+            "scan_job_id",
         ),
     )
 

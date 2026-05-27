@@ -38,10 +38,14 @@ from app.db.base import get_db_session
 from app.dependencies import verify_internal_token
 from app.modules.shorts_auto_product.models import (
     ACTIVE_SCAN_STAGES,
+    CATALOG_STATUS_AUGMENTING_STT,
+    CATALOG_STATUS_CONSOLIDATING,
+    CATALOG_STATUS_READY,
 )
 from app.modules.shorts_auto_product.repositories import (
     ProductAppearanceRepository,
     ProductCatalogRepository,
+    ProductCatalogRunRepository,
     ProductScanDailyCostRepository,
     ProductScanJobRepository,
 )
@@ -49,6 +53,29 @@ from app.modules.shorts_auto_product.repositories import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/internal/products", tags=["internal-shorts-auto-product"])
+
+
+def _stt_enum_configured(settings: Settings) -> bool:
+    return bool(
+        settings.auto_shorts_product_v2_stt_enum_enabled
+        and (settings.openai_api_key or "")
+    )
+
+
+def _consolidation_configured(settings: Settings) -> bool:
+    return bool(
+        settings.auto_shorts_product_v2_consolidate_enabled
+        and (settings.openai_api_key or "")
+    )
+
+
+def _source_mode_from_entries(entries: list["_CatalogEntryPayload"]) -> str:
+    sources = {entry.enumeration_source for entry in entries}
+    if "vision" in sources and "overlay" in sources:
+        return "vision+overlay"
+    if "overlay" in sources:
+        return "overlay"
+    return "vision"
 
 
 # ---------- claim ----------
@@ -94,6 +121,7 @@ async def claim_job(
             status_code=status.HTTP_409_CONFLICT,
             detail="job is not in queued state",
         )
+    await ProductCatalogRunRepository(db).mark_enumerating(scan_job_id=job.id)
     await db.commit()
     return _ClaimResponse(
         job_id=job.id,
@@ -278,6 +306,7 @@ async def complete(
 ) -> _CompleteResponse:
     job_repo = ProductScanJobRepository(db)
     catalog_repo = ProductCatalogRepository(db)
+    catalog_run_repo = ProductCatalogRunRepository(db)
     appearance_repo = ProductAppearanceRepository(db)
     cost_repo = ProductScanDailyCostRepository(db)
 
@@ -381,20 +410,19 @@ async def complete(
             claimed_by=body.claimed_by,
             cost_delta_usd=body.cost_delta_usd,
         )
-        # v0.17.0 — post-enumeration consolidation. Fire-and-forget so
-        # the worker callback returns immediately; the task sleeps
-        # ``consolidate_grace_s`` (default 105s) to let the parallel STT
-        # path land its rows before running one gpt-4o call that
-        # consolidates duplicates and filters non-sellable rows. Failure
-        # is silent (raw catalog stays visible). No-op when the feature
-        # flag is off or there's no OpenAI key.
-        from app.modules.shorts_auto_product.consolidate.service import (
-            schedule_consolidation_task,
+        stt_enabled = _stt_enum_configured(_settings)
+        consolidate_enabled = _consolidation_configured(_settings)
+        next_status = (
+            CATALOG_STATUS_AUGMENTING_STT
+            if stt_enabled
+            else CATALOG_STATUS_CONSOLIDATING
+            if consolidate_enabled
+            else CATALOG_STATUS_READY
         )
-        schedule_consolidation_task(
-            settings=_settings,
-            org_id=job.org_id,
-            video_db_id=job.video_id,
+        await catalog_run_repo.mark_after_worker_complete(
+            scan_job_id=job_id,
+            source_mode=_source_mode_from_entries(body.catalog_entries),
+            next_status=next_status,
         )
         # STT enumeration (augment mode). The scan endpoints used to
         # schedule this in parallel with the vision SQS publish, but
@@ -407,16 +435,26 @@ async def complete(
         # ``mode="augment"`` makes the runner skip the promote call;
         # vision already promoted via ``complete_enumeration`` above.
         # No-op when the flag is off / no OpenAI key.
-        from app.modules.shorts_auto_product.enumerate_stt.service import (
-            schedule_stt_enumeration_task,
-        )
-        schedule_stt_enumeration_task(
-            settings=_settings,
-            org_id=job.org_id,
-            video_db_id=job.video_id,
-            video_drive_id=None,
-            mode="augment",
-        )
+        if stt_enabled:
+            from app.modules.shorts_auto_product.enumerate_stt.service import (
+                schedule_stt_enumeration_task,
+            )
+            schedule_stt_enumeration_task(
+                settings=_settings,
+                org_id=job.org_id,
+                video_db_id=job.video_id,
+                video_drive_id=None,
+                mode="augment",
+            )
+        elif consolidate_enabled:
+            from app.modules.shorts_auto_product.consolidate.service import (
+                schedule_consolidation_task,
+            )
+            schedule_consolidation_task(
+                settings=_settings,
+                org_id=job.org_id,
+                video_db_id=job.video_id,
+            )
     else:
         # ``legacy_tracking`` derives catalog_entry_id from the job row;
         # ``scan_order`` reads it from each appearance's payload.
@@ -648,16 +686,30 @@ async def fail(
     # job (mode-flag could be wrong; the WHERE catches it).
     from app.modules.shorts_auto_product.models import SCAN_MODE_ENUMERATE
     if failed.mode == SCAN_MODE_ENUMERATE and failed.catalog_entry_id is None:
-        from app.modules.shorts_auto_product.enumerate_stt.service import (
-            schedule_stt_enumeration_task,
-        )
-        schedule_stt_enumeration_task(
-            settings=_settings,
-            org_id=failed.org_id,
-            video_db_id=failed.video_id,
-            video_drive_id=None,
-            mode="recover",
-        )
+        if _stt_enum_configured(_settings):
+            await ProductCatalogRunRepository(db).mark_augmenting_stt(
+                org_id=failed.org_id,
+                video_id=failed.video_id,
+            )
+            await db.commit()
+            from app.modules.shorts_auto_product.enumerate_stt.service import (
+                schedule_stt_enumeration_task,
+            )
+            schedule_stt_enumeration_task(
+                settings=_settings,
+                org_id=failed.org_id,
+                video_db_id=failed.video_id,
+                video_drive_id=None,
+                mode="recover",
+            )
+        else:
+            await ProductCatalogRunRepository(db).mark_failed(
+                org_id=failed.org_id,
+                video_id=failed.video_id,
+                error_code=body.error_code,
+                error_message=body.error_message,
+            )
+            await db.commit()
 
 
 # ---------- catalog entry resource (Phase 3c-B) ----------

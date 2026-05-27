@@ -585,6 +585,10 @@ class Settings(BaseSettings):
     # ``enumeration_mode="vision+overlay"``. Default off = legacy
     # single-pass ``vision``.
     auto_shorts_product_v2_overlay_track_enabled: bool = False
+    # When enabled with overlay_track, product enumeration uses worker
+    # mode ``overlay`` (not ``vision+overlay``) and the public catalog
+    # treats overlay rows as the parent source for user-selectable cards.
+    auto_shorts_product_v2_overlay_parent_enabled: bool = False
 
     # ---------- overlay-driven shorts assembly (phase 4 of the track) ----------
     #
@@ -633,7 +637,7 @@ class Settings(BaseSettings):
     # Goldens-eval gate, same shape as the STT enum prompt version.
     # Must stay in lockstep with
     # ``llm_consolidator._DEFAULT_PROMPT_VERSION``.
-    auto_shorts_product_v2_consolidate_prompt_version: str = "v2.1-stt-cross-reference"
+    auto_shorts_product_v2_consolidate_prompt_version: str = "v2.2-overlay-source-parent"
     # STT-grounded consolidation. When ON, the orchestrator builds a
     # ``host_spoken_terms`` anchor (the union of ``llm_label`` and
     # ``spoken_aliases`` from active ``enumeration_source='stt'``

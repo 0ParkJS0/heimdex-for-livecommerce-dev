@@ -18,6 +18,8 @@ from fastapi import HTTPException
 from app.config import Settings
 from app.modules.shorts_auto_product.models import (
     ACTIVE_SCAN_STAGES,
+    CATALOG_STATUS_CONSOLIDATING,
+    CATALOG_STATUS_READY,
     SCAN_STAGE_ENUMERATING,
     SCAN_STAGE_ENUMERATION_DONE,
     SCAN_STAGE_FAILED,
@@ -56,6 +58,7 @@ def _build_service(settings: Settings) -> ProductScanService:
     # Replace the lazily-instantiated repos with mocks so we can
     # assert against them without a real DB.
     svc.catalog_repo = MagicMock()
+    svc.catalog_run_repo = MagicMock()
     svc.appearance_repo = MagicMock()
     svc.job_repo = MagicMock()
     svc.cost_repo = MagicMock()
@@ -65,6 +68,8 @@ def _build_service(settings: Settings) -> ProductScanService:
     svc.job_repo.find_latest_enumeration_for_video = AsyncMock(return_value=None)
     svc.job_repo.count_active_for_org = AsyncMock(return_value=0)
     svc.catalog_repo.get = AsyncMock(return_value=None)
+    svc.catalog_run_repo.create_for_scan = AsyncMock()
+    svc.catalog_run_repo.latest_for_video = AsyncMock(return_value=None)
     return svc
 
 
@@ -127,6 +132,83 @@ async def test_full_rollout_admits_all_orgs():
     assert response.scan_status == "never"
 
 
+@pytest.mark.asyncio
+async def test_list_products_hides_entries_until_catalog_ready():
+    svc = _build_service(_settings())
+    org_id = uuid4()
+    video_id = uuid4()
+    scan_job_id = uuid4()
+    svc.catalog_repo.list_active_by_video = AsyncMock(return_value=[MagicMock()])
+    svc.catalog_repo.list_visible_for_product_selection = AsyncMock()
+    svc.catalog_run_repo.latest_for_video = AsyncMock(
+        return_value=MagicMock(
+            id=uuid4(),
+            scan_job_id=scan_job_id,
+            status=CATALOG_STATUS_CONSOLIDATING,
+            finalized_at=None,
+        ),
+    )
+    import app.storage.s3 as s3_mod
+    s3_mod.S3Client = MagicMock()
+
+    response = await svc.list_products(org_id=org_id, video_id=video_id)
+
+    assert response.catalog_status == "consolidating"
+    assert response.scan_status == "in_progress"
+    assert response.scan_job_id == scan_job_id
+    assert response.products == []
+    svc.catalog_repo.list_visible_for_product_selection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_products_uses_overlay_parent_visibility_when_ready():
+    svc = _build_service(_settings(
+        auto_shorts_product_v2_overlay_track_enabled=True,
+        auto_shorts_product_v2_overlay_parent_enabled=True,
+    ))
+    org_id = uuid4()
+    video_id = uuid4()
+    scan_job_id = uuid4()
+    entry_id = uuid4()
+    entry = MagicMock(
+        id=entry_id,
+        user_label=None,
+        llm_label="Overlay Product",
+        canonical_crop_s3_key=None,
+        enumeration_confidence=0.92,
+        prominence_score=0.87,
+        enumeration_source="overlay",
+        first_mention_ms=1500,
+        example_quote=None,
+        enumeration_version="v1.0",
+        enumeration_prompt_version="v1.0",
+    )
+    svc.catalog_repo.list_active_by_video = AsyncMock(return_value=[entry])
+    svc.catalog_repo.list_visible_for_product_selection = AsyncMock(return_value=[entry])
+    svc.catalog_run_repo.latest_for_video = AsyncMock(
+        return_value=MagicMock(
+            id=uuid4(),
+            scan_job_id=scan_job_id,
+            status=CATALOG_STATUS_READY,
+            finalized_at=None,
+        ),
+    )
+    svc.appearance_repo.count_active = AsyncMock(return_value=0)
+    import app.storage.s3 as s3_mod
+    s3_mod.S3Client = MagicMock()
+
+    response = await svc.list_products(org_id=org_id, video_id=video_id)
+
+    svc.catalog_repo.list_visible_for_product_selection.assert_awaited_once_with(
+        org_id=org_id,
+        video_id=video_id,
+        overlay_parent_enabled=True,
+    )
+    assert response.catalog_status == "ready"
+    assert [product.catalog_entry_id for product in response.products] == [entry_id]
+    assert response.products[0].enumeration_source == "overlay"
+
+
 def test_partial_rollout_is_org_stable():
     # An org that the bucket places at 99 must NOT be admitted at
     # rollout_pct=50 — same org, same answer across calls. Test the
@@ -162,14 +244,18 @@ async def test_cost_cap_blocks_scan():
 
 
 @pytest.mark.asyncio
-async def test_cost_under_cap_proceeds():
+async def test_cost_under_cap_proceeds(monkeypatch):
     svc = _build_service(_settings(auto_shorts_product_v2_daily_budget_usd=10.0))
     svc.cost_repo.get_today_cost = AsyncMock(return_value=Decimal("9.99"))
     fake_job = MagicMock(id=uuid4())
     svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
     # Stub publish so we don't hit boto3.
     import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock()
+    monkeypatch.setattr(
+        sqs_producer,
+        "publish_product_enumerate_job",
+        MagicMock(),
+    )
     response = await svc.enqueue_scan(
         org_id=uuid4(),
         video_id=uuid4(),
@@ -221,13 +307,14 @@ async def test_idempotency_short_circuits():
 # ---------- completion signal  ----------
 
 @pytest.mark.asyncio
-async def test_completed_enumeration_short_circuits():
+async def test_completed_enumeration_short_circuits(monkeypatch):
     svc = _build_service(_settings())
     done = MagicMock(id=uuid4(), stage=SCAN_STAGE_ENUMERATION_DONE)
     svc.job_repo.find_latest_enumeration_for_video = AsyncMock(return_value=done)
     svc.job_repo.create_enumeration_job = AsyncMock()
     import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock()
+    publish = MagicMock()
+    monkeypatch.setattr(sqs_producer, "publish_product_enumerate_job", publish)
     resp = await svc.enqueue_scan(
         org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
         duration_preset_sec=60,
@@ -235,18 +322,22 @@ async def test_completed_enumeration_short_circuits():
     assert resp.deduped is True
     assert resp.job_id == done.id
     svc.job_repo.create_enumeration_job.assert_not_called()
-    sqs_producer.publish_product_enumerate_job.assert_not_called()
+    publish.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_failed_enumeration_still_rescans():
+async def test_failed_enumeration_still_rescans(monkeypatch):
     svc = _build_service(_settings())
     failed = MagicMock(id=uuid4(), stage=SCAN_STAGE_FAILED)
     svc.job_repo.find_latest_enumeration_for_video = AsyncMock(return_value=failed)
     fake_job = MagicMock(id=uuid4())
     svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
     import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock()
+    monkeypatch.setattr(
+        sqs_producer,
+        "publish_product_enumerate_job",
+        MagicMock(),
+    )
     resp = await svc.enqueue_scan(
         org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
         duration_preset_sec=60,
@@ -257,7 +348,7 @@ async def test_failed_enumeration_still_rescans():
 
 
 @pytest.mark.asyncio
-async def test_rescan_bypasses_completion_guard():
+async def test_rescan_bypasses_completion_guard(monkeypatch):
     svc = _build_service(_settings())
     svc.catalog_repo.invalidate_video_catalog = AsyncMock(return_value=7)
     fake_job = MagicMock(id=uuid4())
@@ -266,7 +357,11 @@ async def test_rescan_bypasses_completion_guard():
         return_value=MagicMock(id=uuid4(), stage=SCAN_STAGE_ENUMERATION_DONE),
     )
     import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock()
+    monkeypatch.setattr(
+        sqs_producer,
+        "publish_product_enumerate_job",
+        MagicMock(),
+    )
     resp = await svc.rescan(
         org_id=uuid4(), video_id=uuid4(), user_id=uuid4(),
         duration_preset_sec=60,
@@ -304,7 +399,11 @@ async def test_rescan_does_not_schedule_stt_enumeration(monkeypatch):
     fake_job = MagicMock(id=uuid4())
     svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
     import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock()
+    monkeypatch.setattr(
+        sqs_producer,
+        "publish_product_enumerate_job",
+        MagicMock(),
+    )
 
     # The function is imported function-locally in service.py via
     # ``from app.modules.shorts_auto_product.enumerate_stt.service
@@ -334,7 +433,11 @@ async def test_enqueue_scan_does_not_schedule_stt_enumeration(monkeypatch):
     fake_job = MagicMock(id=uuid4())
     svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
     import app.sqs_producer as sqs_producer
-    sqs_producer.publish_product_enumerate_job = MagicMock()
+    monkeypatch.setattr(
+        sqs_producer,
+        "publish_product_enumerate_job",
+        MagicMock(),
+    )
 
     stt_mock = MagicMock()
     monkeypatch.setattr(

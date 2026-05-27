@@ -8,7 +8,7 @@ catalog for one video:
    Korean / branded labels win over English / generic forms.
 
 2. **Filter non-sellable.** Rows whose label describes a host's tool
-   (microphone, cup, hanger), an ambient prop, an on-screen graphic,
+   (microphone, cup, hanger), an ambient prop, a non-product graphic,
    or a bare generic English noun ("Bottle", "Box") get rejected.
 
 Output is re-validated by an in-module checker: every input
@@ -72,6 +72,12 @@ _DEFAULT_RELABEL_JACCARD = 0.4
 # ``auto_shorts_product_v2_consolidate_prompt_version`` setting when
 # the org needs to pin an older version.
 #
+# v2.2-overlay-source-parent (2026-05-27): recognizes overlay rows as
+# intentional commerce graphics, not generic on-screen graphics, and
+# adds a deterministic post-LLM source-preference guard so merged
+# groups keep an overlay/vision product-card row as the canonical DB
+# parent while STT can still supply the canonical label.
+#
 # v2.1-stt-cross-reference (2026-05-27): tightened the
 # ``unspoken_visual`` instruction to require an EXPLICIT cross-source
 # substring check (strip container suffixes from the vision label →
@@ -82,7 +88,7 @@ _DEFAULT_RELABEL_JACCARD = 0.4
 # product, causing the wizard to lose vision's crop for that SKU. The
 # previous instruction left the cross-reference to the LLM's loose
 # "category" judgment.
-_DEFAULT_PROMPT_VERSION = "v2.1-stt-cross-reference"
+_DEFAULT_PROMPT_VERSION = "v2.2-overlay-source-parent"
 
 # Cost-per-million tokens (USD) for gpt-4o, 2026-04 pricing.
 _GPT_4O_INPUT_USD_PER_M = 2.50
@@ -94,7 +100,7 @@ _GPT_4O_MINI_OUTPUT_USD_PER_M = 0.60
 _REJECTION_CATEGORIES: frozenset[str] = frozenset({
     "host_equipment",     # microphone, camera, hanger, scissors host holds
     "ambient_object",     # background prop, studio furniture, decoration
-    "on_screen_graphic",  # caption / banner / overlay text the VLM read
+    "on_screen_graphic",  # non-product graphic/caption, not sellable overlay card
     "generic_noun",       # bare "Bottle", "Box", "Cup" with no brand
     "placeholder",        # "Product 1", "Cosmetic A", numbered/disjunctive
     "unspoken_visual",    # vision row in a category the host never mentioned
@@ -167,9 +173,11 @@ _RESPONSE_JSON_SCHEMA: dict[str, Any] = {
 
 _SYSTEM_PROMPT = (
     "You consolidate a per-video product catalog extracted from a "
-    "Korean live commerce broadcast. Input is the union of two "
-    "enumeration sources: vision (labels read off on-screen packaging) "
-    "and STT (labels heard from the host's speech). Your output must "
+    "Korean live commerce broadcast. Input is the union of three "
+    "enumeration sources: overlay (operator-placed commerce graphics "
+    "such as product cards, lower-thirds, price/benefit panels, and "
+    "order banners), vision (labels read off real packaging or visible "
+    "products), and STT (labels heard from the host's speech). Your output must "
     "make TWO decisions for every input row.\n"
     "\n"
     "To ground the catalog, you ALSO receive ``host_spoken_terms``: the "
@@ -187,8 +195,13 @@ _SYSTEM_PROMPT = (
     "noise. Korean and English forms of the same brand/SKU are the "
     "same product (e.g. 'DALSIM 콜라겐' and '달심 콜라겐 부스터').\n"
     "  • The canonical_entry_id MUST be one of the input entry_ids in "
-    "that group. Prefer the input row whose llm_label is most "
-    "specific and most branded.\n"
+    "that group. Product-card source preference is load-bearing: "
+    "when a group contains a sellable overlay row, choose an overlay "
+    "row as canonical_entry_id; else when it contains a sellable "
+    "vision row, choose a vision row; else choose the best STT row. "
+    "This preserves the product-card parent row and its crop/source "
+    "metadata. The canonical_label may still come from STT or "
+    "host_spoken_terms; ID/source choice and label choice are separate.\n"
     "  • canonical_label preference order: (1) the matching "
     "host_spoken_terms entry verbatim, if any row in the group "
     "plausibly refers to the same physical product as a spoken term, "
@@ -213,9 +226,13 @@ _SYSTEM_PROMPT = (
     "category being sold.\n"
     "  • ambient_object — background props, studio furniture, "
     "decoration, plants, lighting equipment.\n"
-    "  • on_screen_graphic — caption banners, price overlays, sticker "
-    "graphics; the VLM read text from a graphic rather than a real "
-    "product.\n"
+    "  • on_screen_graphic — non-product captions, decorative stickers, "
+    "section labels, coupon/free-shipping banners, or generic price "
+    "graphics that do NOT identify a sellable SKU. Do NOT reject a "
+    "source='overlay' row merely because it came from an on-screen "
+    "graphic: overlay rows are intentionally extracted from commerce "
+    "graphics and should be KEPT when they identify a product name, "
+    "brand, SKU, bundle, option, or concrete sellable offer.\n"
     "  • generic_noun — bare English category words with no brand and "
     "no specificity: 'Bottle', 'Box', 'Bowl', 'Container', 'Plate', "
     "'Tube', 'Jar', 'Cup', 'Pack'. Also color-or-material + generic "
@@ -459,6 +476,10 @@ class CatalogConsolidator:
             groups=groups,
             host_spoken_terms=terms,
             relabel_jaccard=self._relabel_jaccard,
+        )
+        groups = _prefer_product_card_source_canonical(
+            groups=groups,
+            entries=entries,
         )
 
         return ConsolidationResult(
@@ -774,6 +795,48 @@ def _apply_stt_relabel(
             canonical_aliases=new_aliases,
             stt_match_term=best_term,
             stt_match_score=best_score,
+        ))
+    return out
+
+
+def _prefer_product_card_source_canonical(
+    *,
+    groups: list[ConsolidationGroup],
+    entries: list[CatalogConsolidatorInput],
+) -> list[ConsolidationGroup]:
+    """Keep the DB canonical row on a product-card-capable source.
+
+    The LLM is still allowed to choose the best ``canonical_label``
+    from STT / host_spoken_terms, but the row that stays active in the
+    catalog should be the best product-card parent available in the
+    merged group. Overlay rows are first choice because overlay-parent
+    mode surfaces them; vision rows are second because they usually
+    carry crop metadata; STT rows are the fallback.
+    """
+    source_by_id = {entry.entry_id: entry.source for entry in entries}
+    priority = {"overlay": 0, "vision": 1, "stt": 2}
+    out: list[ConsolidationGroup] = []
+    for group in groups:
+        candidate_ids = [group.canonical_entry_id, *group.member_entry_ids]
+        preferred_id = min(
+            candidate_ids,
+            key=lambda entry_id: (
+                priority.get(source_by_id.get(entry_id, ""), 99),
+                candidate_ids.index(entry_id),
+            ),
+        )
+        if preferred_id == group.canonical_entry_id:
+            out.append(group)
+            continue
+        new_members = [
+            entry_id
+            for entry_id in candidate_ids
+            if entry_id != preferred_id
+        ]
+        out.append(replace(
+            group,
+            canonical_entry_id=preferred_id,
+            member_entry_ids=new_members,
         ))
     return out
 

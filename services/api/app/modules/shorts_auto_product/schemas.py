@@ -31,6 +31,15 @@ ScanStatus = Literal[
     "failed",      # most recent enumeration failed terminally
 ]
 
+CatalogStatus = Literal[
+    "never",
+    "enumerating",
+    "augmenting_stt",
+    "consolidating",
+    "ready",
+    "failed",
+]
+
 ScanStage = Literal[
     "queued",
     "enumerating",
@@ -110,6 +119,9 @@ class ProductCatalogResponse(BaseModel):
     video_id: UUID
     scan_status: ScanStatus
     scan_job_id: UUID | None = None        # set when scan_status="in_progress"
+    catalog_status: CatalogStatus = "never"
+    catalog_finalized_at: datetime | None = None
+    catalog_revision_id: UUID | None = None
     enumeration_version: str | None = None  # of the populated catalog (if any)
     enumeration_prompt_version: str | None = None
     products: list[CatalogProductSummary] = Field(default_factory=list)

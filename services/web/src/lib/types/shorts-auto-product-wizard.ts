@@ -14,11 +14,7 @@ export type ProductDistribution = "single" | "multi";
 export type Language = "ko" | "en";
 export type ScanIntent = "preview" | "commit";
 
-export type JobKind =
-  | "enumeration"
-  | "tracking"
-  | "scan_order"
-  | "render_child";
+export type JobKind = "enumeration" | "tracking" | "scan_order" | "render_child";
 
 export type ScanStage =
   | "queued"
@@ -97,7 +93,7 @@ export interface ProductScanResponse {
    */
   deduped: boolean;
   /** Set when the tangibility gate skips an intangible-product video. */
-  skipped_reason: 'intangible_product' | null;
+  skipped_reason: "intangible_product" | null;
 }
 
 /**
@@ -130,7 +126,7 @@ export interface CatalogProductSummary {
   appearance_count: number | null;
   total_appearance_seconds: number | null;
   // v0.16.0 — STT-first enumeration provenance fields.
-  /** ``"vision"`` (default) | ``"stt"`` | ``"stt_xref"`` | ``"manifest"`` | ``"hybrid"``. */
+  /** ``"vision"`` (default) | ``"overlay"`` | ``"stt"`` | ``"stt_xref"`` | ``"manifest"`` | ``"hybrid"``. */
   enumeration_source: string;
   /** First spoken mention timestamp (ms). NULL for vision-source rows. */
   first_mention_ms: number | null;
@@ -148,11 +144,22 @@ export interface CatalogProductSummary {
  */
 export type ScanStatus = "never" | "in_progress" | "complete" | "failed";
 
+export type CatalogStatus =
+  | "never"
+  | "enumerating"
+  | "augmenting_stt"
+  | "consolidating"
+  | "ready"
+  | "failed";
+
 /** Response for ``GET /api/shorts/auto/products/{video_id}``. */
 export interface ProductCatalogResponse {
   video_id: string;
   scan_status: ScanStatus;
   scan_job_id: string | null;
+  catalog_status?: CatalogStatus;
+  catalog_finalized_at?: string | null;
+  catalog_revision_id?: string | null;
   enumeration_version: string | null;
   enumeration_prompt_version: string | null;
   products: CatalogProductSummary[];
@@ -166,7 +173,7 @@ export interface ScanOrderResponse {
   parent_job_id: string;
   deduped: boolean;
   /** Set when the tangibility gate skips an intangible-product video. */
-  skipped_reason: 'intangible_product' | null;
+  skipped_reason: "intangible_product" | null;
 }
 
 // ----------------------------------------------------------------------

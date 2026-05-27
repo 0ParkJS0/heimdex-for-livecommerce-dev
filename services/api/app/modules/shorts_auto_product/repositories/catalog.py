@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import case, nullslast, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.shorts_auto_product.models import ProductCatalogEntry
@@ -58,6 +58,59 @@ class ProductCatalogRepository:
             .order_by(
                 ProductCatalogEntry.prominence_score.desc(),
                 ProductCatalogEntry.enumeration_confidence.desc(),
+            )
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def list_visible_for_product_selection(
+        self,
+        *,
+        org_id: UUID,
+        video_id: UUID,
+        overlay_parent_enabled: bool,
+    ) -> list[ProductCatalogEntry]:
+        """Return the user-selectable catalog under source-priority rules.
+
+        Overlay-parent mode intentionally makes overlay rows the visible
+        source of truth: when at least one active overlay row exists, rows
+        from vision/STT stay available for internal enrichment/debugging
+        but are not shown as competing product cards.
+        """
+        rows = await self._list_active_source_ordered(
+            org_id=org_id, video_id=video_id,
+        )
+        if overlay_parent_enabled:
+            overlay_rows = [r for r in rows if r.enumeration_source == "overlay"]
+            if overlay_rows:
+                return overlay_rows
+        return rows
+
+    async def _list_active_source_ordered(
+        self,
+        *,
+        org_id: UUID,
+        video_id: UUID,
+    ) -> list[ProductCatalogEntry]:
+        source_priority = case(
+            (ProductCatalogEntry.enumeration_source == "overlay", 0),
+            (ProductCatalogEntry.enumeration_source == "stt", 1),
+            (ProductCatalogEntry.enumeration_source == "vision", 2),
+            else_=3,
+        )
+        stmt = (
+            select(ProductCatalogEntry)
+            .where(
+                ProductCatalogEntry.org_id == org_id,
+                ProductCatalogEntry.video_id == video_id,
+                ProductCatalogEntry.rejected_at.is_(None),
+            )
+            .order_by(
+                source_priority.asc(),
+                nullslast(ProductCatalogEntry.prominence_score.desc()),
+                ProductCatalogEntry.enumeration_confidence.desc(),
+                nullslast(ProductCatalogEntry.first_mention_ms.asc()),
+                ProductCatalogEntry.created_at.asc(),
+                ProductCatalogEntry.id.asc(),
             )
         )
         return list((await self.session.execute(stmt)).scalars().all())
