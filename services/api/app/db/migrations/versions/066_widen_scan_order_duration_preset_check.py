@@ -1,7 +1,7 @@
 """Widen product_scan_jobs duration mirror constraint for scan orders.
 
-Revision ID: 065_widen_scan_order_duration_preset_check
-Revises: 064_add_overlay_enumeration_source
+Revision ID: 066_widen_scan_order_duration_preset_check
+Revises: 065_create_product_catalog_runs
 Create Date: 2026-05-27
 """
 from __future__ import annotations
@@ -10,8 +10,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "065_widen_scan_order_duration_preset_check"
-down_revision: str | None = "064_add_overlay_enumeration_source"
+revision: str = "066_widen_scan_order_duration_preset_check"
+down_revision: str | None = "065_create_product_catalog_runs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
