@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
-import { ChevronsUpDown } from "lucide-react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { ChevronsUpDown, X as XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditorClip, EditorState, EditorSubtitle, HistoryEntry, LayerOrderId, Playback, PlaybackEvent } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
@@ -96,9 +96,22 @@ interface PreviewPanelProps {
   // Optional so existing callers (e.g. embedded preview tiles that
   // don't surface dragging) don't break.
   onPushHistory?: (entry: HistoryEntry) => void;
-  // when true, the preview container expands to the 352×626 iPhone
-  // mockup size used inside FullscreenOverlay. Layout/logic otherwise identical.
+  // 2026-05-26 — fullscreen now means "this same PreviewPanel
+  // instance scales up to fill the viewport"; the separate
+  // FullscreenOverlay component was removed because mounting a
+  // second <video> element raced the inline one's src/load and left
+  // the fullscreen surface on a black, silent frame whenever
+  // hydration timing didn't line up. Keeping one video element and
+  // flipping the wrapper to ``fixed inset-0`` instead means
+  // src/currentTime never get touched on toggle, so the
+  // operator-reported "fullscreen has no image and no sound" path
+  // can't happen by construction. ``onCloseFullscreen`` is the
+  // ESC + chrome-close callback; required when ``fullscreen`` is
+  // true so the operator can exit. ``filename`` shows above the
+  // close button so the operator knows which short they're viewing.
   fullscreen?: boolean;
+  onCloseFullscreen?: () => void;
+  filename?: string;
 }
 
 function PlayIcon() {
@@ -149,8 +162,22 @@ export function PreviewPanel({
   onSelectLetterbox,
   onClearSelections,
   fullscreen = false,
+  onCloseFullscreen,
+  filename,
 }: PreviewPanelProps) {
   const isPlaying = playback.kind === "playing";
+
+  // ESC closes the fullscreen surface — only attached while in
+  // fullscreen so the editor's other ESC handlers (e.g. dialog
+  // dismiss) keep working normally outside this mode.
+  useEffect(() => {
+    if (!fullscreen || !onCloseFullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseFullscreen();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [fullscreen, onCloseFullscreen]);
 
   const {
     videoRef,
@@ -747,10 +774,39 @@ export function PreviewPanel({
 
   return (
     <div
-      className="relative h-full w-full"
+      className={cn(
+        "relative h-full w-full",
+        // 2026-05-26 — fullscreen wraps the SAME preview surface in a
+        // fixed viewport-filling shell so the video element + its
+        // usePlaybackSync wiring stay mounted across the toggle. No
+        // new <video>, no src race, no black-frame-on-open.
+        fullscreen &&
+          "fixed inset-0 z-50 flex flex-col items-center justify-center bg-black p-4",
+      )}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
     >
+      {fullscreen && (
+        <>
+          {filename && (
+            <div
+              data-testid="preview-fullscreen-filename"
+              className="pointer-events-none absolute left-4 top-4 z-10 max-w-[60%] truncate text-sm font-semibold text-white"
+            >
+              {filename}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onCloseFullscreen}
+            aria-label="전체화면 닫기"
+            data-testid="preview-fullscreen-close"
+            className="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            <XIcon className="h-5 w-5" />
+          </button>
+        </>
+      )}
       {/* Preview container — figma 1602:37722: shorts canvas fills the card
           surface so the editor center is the 9:16 stage with no padding. */}
       <div
@@ -765,7 +821,11 @@ export function PreviewPanel({
         className={cn(
           "relative overflow-hidden bg-black",
           aspectRatio === "9:16"
-            ? "h-full w-full"
+            ? fullscreen
+              ? // 9:16 fills the viewport height; width follows the
+                // 9:16 ratio so the short shape stays exact.
+                "h-full max-h-full aspect-[9/16]"
+              : "h-full w-full"
             : fullscreen
               ? "aspect-video w-full max-w-[626px] rounded-[10px]"
               : "aspect-video w-full max-w-[480px] rounded-[10px]",
