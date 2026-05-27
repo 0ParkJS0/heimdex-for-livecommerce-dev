@@ -500,6 +500,12 @@ def _run_overlay_pass(
         config=config,
         overlay_cosine_threshold=settings.overlay_cluster_cosine_threshold,
         detector_score_threshold=settings.overlay_detector_score_threshold,
+        ocr_blind_fallback_enabled=(
+            settings.overlay_ocr_blind_fallback_enabled
+        ),
+        ocr_blind_fallback_min_nonempty_ratio=(
+            settings.overlay_ocr_blind_fallback_min_nonempty_ratio
+        ),
         progress_callback=progress_callback,
     )
     return products, total_cost

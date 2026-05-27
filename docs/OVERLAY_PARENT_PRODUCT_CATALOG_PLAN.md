@@ -702,6 +702,136 @@ Manual test readiness:
   new catalog run is created with `source_mode=overlay` and prompt version
   `v2.2-overlay-source-parent`.
 
+### 2026-05-27 STT Fallback Leak
+
+Manual test video:
+`https://devorg.app.heimdexdemo.dev/videos/gd_fbd7b057d84d12ab?view=auto-shorts`.
+
+Finding:
+
+- The latest catalog run was correctly created as:
+  `status=ready`, `source_mode=overlay`, `overlay_policy=overlay_parent`.
+- The product-enumerate job returned `no_products_detected` for overlay mode.
+- STT recovery inserted six active `enumeration_source=stt` rows.
+- Those STT rows had `canonical_crop_s3_key=None`, so the UI rendered six
+  cards with `이미지 없음`.
+- Root cause in API visibility policy:
+  `list_visible_for_product_selection()` returned overlay rows only when any
+  existed, but fell back to all active rows when overlay produced zero rows.
+
+Fix:
+
+- Changed overlay-parent visibility to fail closed:
+  when `overlay_parent_enabled=True`, return only active overlay rows, even if
+  that set is empty.
+- Added repository tests for:
+  - overlay rows hide STT/vision rows
+  - empty overlay set returns empty list
+  - non-overlay-parent mode still returns all active rows
+
+Verification:
+
+```text
+Focused tests: 71 passed, 1 existing Pydantic deprecation warning
+Deployed commit: cd196430
+Staging API check for gd_fbd7b057d84d12ab:
+  overlay_parent: True
+  visible_count: 0
+  catalog_status: ready
+  scan_status: complete
+  product_count: 0
+```
+
+Remaining investigation:
+
+- Overlay mode produced zero rows for this specific apparel video. The product
+  list no longer leaks STT placeholders, but evaluating why overlay detection
+  missed the visible products requires product-enumerate worker/Aircloud logs
+  or an overlay eval run for this video.
+
+### 2026-05-27 Overlay OCR-Blind Detection Miss
+
+User-provided Aircloud logs showed product-enumerate-worker heartbeat and
+OpenAI activity followed by `/internal/products/{job_id}/complete`.
+
+Important correction:
+
+- The pasted Aircloud job ID `03e7c86d-1e5e-4038-87bc-1d84774c0bb1` belonged
+  to a different food video, not the apparel screenshot video.
+- That job completed normally but persisted `vision` and `stt` rows only; no
+  `overlay` rows were present for that job.
+
+Screenshot video diagnostic:
+
+```text
+video_id: gd_fbd7b057d84d12ab
+drive_file_id: fc15fa43-04ba-4270-9523-440853bb0768
+scenes-with-keyframes status: 200
+scene_count: 329
+duration_ms: 4930933
+proxy_s3_key present: true
+ocr_nonempty: 0
+max_ocr_len: 0
+price_hits: 0
+```
+
+Root cause:
+
+- The overlay pipeline first runs a classical cv2 detector before spending
+  overlay VLM calls.
+- That detector relies heavily on indexed OCR price text and has a structural
+  gate of `ocr_price >= 0.5 OR rect >= 0.5`.
+- For this video, every scene has empty `ocr_text_raw`, so the detector becomes
+  rectangle-only. Even when the video visibly contains overlay product cards,
+  the worker can reject all sampled keyframes before the overlay reader sees
+  them.
+- A second recall loss existed after extraction: if the VLM read a product but
+  the OWLv2 crop did not land near the coarse `position` label, the row was
+  dropped instead of using the best product-like crop.
+
+Fix in progress:
+
+- `heimdex-media-pipelines`:
+  - added an explicit OCR-blind fallback path to `enumerate_products_overlay`.
+  - when enabled and OCR coverage is below a threshold, the pipeline bypasses
+    the classical detector and sends the already API-sampled keyframes to the
+    overlay VLM.
+  - added a global crop fallback when strict position-gated crop selection
+    finds no match.
+- `product-enumerate-worker`:
+  - added settings:
+    `overlay_ocr_blind_fallback_enabled=True` and
+    `overlay_ocr_blind_fallback_min_nonempty_ratio=0.10`.
+  - passes those settings into the pure pipeline function.
+  - Docker Compose now exposes the same settings via
+    `AUTO_SHORTS_PRODUCT_V2_OVERLAY_OCR_BLIND_FALLBACK_*`.
+
+Focused verification:
+
+```text
+heimdex-media-pipelines:
+  .venv/bin/pytest tests/product_enum/test_overlay_pipeline.py -q --tb=short
+  14 passed
+
+dev-heimdex-for-livecommerce:
+  services/product-enumerate-worker/.venv/bin/pytest \
+    services/product-enumerate-worker/tests/test_enumerate_overlay.py \
+    -q --tb=short
+  10 passed, 2 existing warnings
+```
+
+Next required staging check:
+
+1. Commit/push both repos.
+2. Rebuild and redeploy the product-enumerate-worker image consumed by
+   Aircloud.
+3. Re-run product detection for
+   `gd_fbd7b057d84d12ab`.
+4. Verify the new worker logs include `overlay_ocr_blind_fallback`.
+5. Verify `product_catalog_entries` has active `enumeration_source=overlay`
+   rows with non-null `canonical_crop_s3_key`.
+6. Verify the auto-shorts product selection UI shows overlay thumbnail cards.
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when

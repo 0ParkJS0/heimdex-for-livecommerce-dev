@@ -173,6 +173,8 @@ def test_vision_plus_overlay_shares_loaded_owlv2_and_embedder():
     assert "extractor" in kwargs
     assert "owlv2_detector" in kwargs
     assert callable(kwargs["embedder"])
+    assert kwargs["ocr_blind_fallback_enabled"] is True
+    assert kwargs["ocr_blind_fallback_min_nonempty_ratio"] == 0.10
 
 
 # =========================================================================
