@@ -1200,6 +1200,75 @@ Frontend-facing service result:
   products with canonical_crop_url: 16
 ```
 
+OCR backfill follow-up:
+
+```text
+Context:
+  OCR backfill is necessary for overlay scoring because the overlay detector
+  uses indexed scene OCR to recognize product-card/price-card structure. It is
+  not sufficient by itself: a successful OCR worker pass can still produce
+  zero text if the selected keyframes do not contain readable overlay text.
+
+Failed retry batch:
+  Previous indexed OCR failures were reset to pending and requeued with v1
+  per-video OCR messages. The queue drained successfully.
+
+  Final indexed status:
+    ocr_status=pending: 0
+    ocr_status=failed: 0
+    ocr_status=done: 441
+    OCR queue visible/in-flight/delayed: 0/0/0
+
+Zero-OCR coverage scan:
+  Raw zero-OCR records with keyframes: 346
+  Actual video files among those records: 3
+  Most raw zero-OCR records are single-scene image assets, not video files.
+
+Remaining zero-OCR video records requeued:
+  gd_c80ce2d807c6f20a - lt's start with the touch.mp4
+  gd_7c03ce061202acf7 - NC SOFT _ BNS NEO.mp4
+  gd_045c5ce7a1a8c821 - 장원영의 다이슨 NEW 앰버실크 샴페인핑크 기프트 에디션!.mp4
+
+Post-rerun result:
+  All 3 returned to ocr_status=done and the queue drained, but OpenSearch still
+  has ocr_nonempty=0 and ocr_chars=0 for all 3. This distinguishes "OCR job
+  missing/failed" from "OCR ran but produced no text on sampled keyframes."
+
+Operational note:
+  Use v1 per-video OCR messages for OCR backfill. Do not use the generic
+  backfill path that emits v2 per-scene messages unless the OCR worker has been
+  explicitly migrated to that contract.
+```
+
+Legacy completion-cache fix:
+
+```text
+Incident video:
+  gd_005f45675035f730 - 260311_하비언니.mp4
+
+Finding:
+  The video was OCR-ready in OpenSearch:
+    scene docs: 462
+    OCR-positive docs: 95
+    total OCR chars: 7,632
+
+  The immediate "no products found" UI was not caused by OCR propagation.
+  ProductScanService.enqueue_scan() had a completion guard that returned the
+  latest enumeration_done job without enqueueing new work. For this video, the
+  latest job was a May 19 legacy scan with only `enumeration_source="vision"`
+  rows and no `product_catalog_runs` row. Overlay-parent visibility filters out
+  vision rows, so the catalog endpoint returned catalog_status=ready with an
+  empty visible product list immediately.
+
+Fix:
+  In overlay-parent mode, a completed scan is reusable only if the active
+  catalog already contains at least one overlay row. Completed legacy
+  vision-only catalogs are invalidated with
+  `overlay_parent_rescan_invalidated`, then a fresh overlay scan is enqueued.
+  This also clears stale consolidation markers before the new overlay catalog
+  reaches consolidation.
+```
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when

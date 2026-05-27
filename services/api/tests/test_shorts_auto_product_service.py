@@ -352,6 +352,79 @@ async def test_completed_enumeration_short_circuits(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_overlay_parent_completed_legacy_scan_rescans(monkeypatch):
+    svc = _build_service(_settings(
+        auto_shorts_product_v2_overlay_track_enabled=True,
+        auto_shorts_product_v2_overlay_parent_enabled=True,
+    ))
+    done = MagicMock(id=uuid4(), stage=SCAN_STAGE_ENUMERATION_DONE)
+    fake_job = MagicMock(id=uuid4())
+    svc.job_repo.find_latest_enumeration_for_video = AsyncMock(return_value=done)
+    svc.catalog_repo.list_active_by_video = AsyncMock(
+        return_value=[MagicMock(enumeration_source="vision")],
+    )
+    svc.catalog_repo.invalidate_video_catalog = AsyncMock(return_value=1)
+    svc.job_repo.create_enumeration_job = AsyncMock(return_value=fake_job)
+
+    import app.sqs_producer as sqs_producer
+
+    publish = MagicMock()
+    monkeypatch.setattr(sqs_producer, "publish_product_enumerate_job", publish)
+
+    org_id = uuid4()
+    video_id = uuid4()
+    resp = await svc.enqueue_scan(
+        org_id=org_id,
+        video_id=video_id,
+        user_id=uuid4(),
+        duration_preset_sec=60,
+    )
+
+    assert resp.deduped is False
+    assert resp.job_id == fake_job.id
+    svc.catalog_repo.invalidate_video_catalog.assert_awaited_once_with(
+        org_id=org_id,
+        video_id=video_id,
+        reason="overlay_parent_rescan_invalidated",
+    )
+    svc.job_repo.create_enumeration_job.assert_called_once()
+    publish.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_overlay_parent_completed_overlay_scan_still_short_circuits(monkeypatch):
+    svc = _build_service(_settings(
+        auto_shorts_product_v2_overlay_track_enabled=True,
+        auto_shorts_product_v2_overlay_parent_enabled=True,
+    ))
+    done = MagicMock(id=uuid4(), stage=SCAN_STAGE_ENUMERATION_DONE)
+    svc.job_repo.find_latest_enumeration_for_video = AsyncMock(return_value=done)
+    svc.catalog_repo.list_active_by_video = AsyncMock(
+        return_value=[MagicMock(enumeration_source="overlay")],
+    )
+    svc.catalog_repo.invalidate_video_catalog = AsyncMock()
+    svc.job_repo.create_enumeration_job = AsyncMock()
+
+    import app.sqs_producer as sqs_producer
+
+    publish = MagicMock()
+    monkeypatch.setattr(sqs_producer, "publish_product_enumerate_job", publish)
+
+    resp = await svc.enqueue_scan(
+        org_id=uuid4(),
+        video_id=uuid4(),
+        user_id=uuid4(),
+        duration_preset_sec=60,
+    )
+
+    assert resp.deduped is True
+    assert resp.job_id == done.id
+    svc.catalog_repo.invalidate_video_catalog.assert_not_called()
+    svc.job_repo.create_enumeration_job.assert_not_called()
+    publish.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_failed_enumeration_still_rescans(monkeypatch):
     svc = _build_service(_settings())
     failed = MagicMock(id=uuid4(), stage=SCAN_STAGE_FAILED)

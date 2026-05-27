@@ -428,7 +428,25 @@ class ProductScanService:
             org_id=org_id, video_id=video_id,
         )
         if latest is not None and latest.stage == SCAN_STAGE_ENUMERATION_DONE:
-            return ScanResponse(job_id=latest.id, deduped=True)
+            latest_is_reusable = True
+            if self.settings.auto_shorts_product_v2_overlay_parent_enabled:
+                entries = await self.catalog_repo.list_active_by_video(
+                    org_id=org_id,
+                    video_id=video_id,
+                )
+                latest_is_reusable = any(
+                    entry.enumeration_source == "overlay"
+                    for entry in entries
+                )
+                if not latest_is_reusable:
+                    await self.catalog_repo.invalidate_video_catalog(
+                        org_id=org_id,
+                        video_id=video_id,
+                        reason="overlay_parent_rescan_invalidated",
+                    )
+
+            if latest_is_reusable:
+                return ScanResponse(job_id=latest.id, deduped=True)
 
         await self._require_concurrency_slot(org_id)
 
