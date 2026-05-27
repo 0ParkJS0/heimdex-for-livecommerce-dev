@@ -34,7 +34,9 @@ from heimdex_media_pipelines.product_enum import (
     OVERLAY_ENUMERATION_VERSION,
     CanonicalProduct,
     EnumerationConfig,
+    EnumerationProgressEvent,
     OverlayKeyframe,
+    ProgressCallback,
     SceneKeyframe,
     enumerate_products,
     enumerate_products_overlay,
@@ -104,6 +106,58 @@ class EnumerateJobMessage:
             callback_base_url=str(body.get("callback_base_url", "")),
             enumeration_mode=str(body.get("enumeration_mode", "vision")),
         )
+
+
+def _make_progress_cb(
+    *,
+    api: ApiClient,
+    job_id: UUID,
+    claimed_by: str,
+    lease_seconds: int,
+) -> ProgressCallback:
+    """Translate pipeline-emitted ``EnumerationProgressEvent`` rows into
+    api heartbeats.
+
+    Each event extends the job lease (so the api stops marking long
+    vision+overlay scans as orphaned at the 10-min mark) and advances
+    ``product_scan_jobs.progress_pct`` + ``progress_label`` in the UI.
+
+    The pipeline-side ``ProgressThrottler`` already debounces by interval
+    + pct delta; here we only need to translate the event shape. We
+    swallow any HTTP exception -- a heartbeat 409 (lease lost during the
+    pipeline body) or a transient network error MUST NOT abort
+    enumeration; the api side handles the orphan via its own janitor and
+    the eventual ``/complete`` call returns 409 cleanly.
+
+    Belt + suspenders: the pipeline's throttler ALSO catches callback
+    exceptions, so a worker-side raise here would still be swallowed.
+    Catching at the boundary keeps the trace local + the log message
+    legible.
+    """
+    def _cb(event: EnumerationProgressEvent) -> None:
+        try:
+            api.heartbeat(
+                job_id=job_id,
+                claimed_by=claimed_by,
+                stage="enumerating",
+                progress_pct=int(event.progress_pct),
+                # ``message`` is the human-readable label; falling back to
+                # ``phase`` keeps the UI populated even if a future emit
+                # point forgets to pass a message string.
+                progress_label=event.message or event.phase,
+                cost_delta_usd=Decimal("0"),
+                lease_seconds=lease_seconds,
+            )
+        except Exception:
+            logger.warning(
+                "progress_heartbeat_failed",
+                extra={
+                    "job_id": str(job_id),
+                    "phase": event.phase,
+                    "progress_pct": event.progress_pct,
+                },
+            )
+    return _cb
 
 
 def handle_enumerate_job(
@@ -190,6 +244,18 @@ def handle_enumerate_job(
             cost_delta_usd=Decimal("0"),
             lease_seconds=settings.worker_lease_seconds,
         )
+        # Pipeline-emitted progress events become api heartbeats. The
+        # pipeline phases populate pct 32..79 between the explicit
+        # pct=30 above and the pct=80 "Uploading reference crops" below,
+        # so the job lease stays extended through the silent middle of
+        # vision+overlay work. See ``_make_progress_cb`` + the
+        # ``progress.py`` module in heimdex-media-pipelines.
+        progress_cb = _make_progress_cb(
+            api=api,
+            job_id=decoded.job_id,
+            claimed_by=settings.worker_id,
+            lease_seconds=settings.worker_lease_seconds,
+        )
         siglip = load_siglip(SiglipConfig(model_id=settings.siglip2_model_id))
 
         # The SAME embedder closure feeds both passes (one loaded model).
@@ -221,6 +287,7 @@ def handle_enumerate_job(
                     embedder=embedder,
                     config=config,
                     settings=settings,
+                    progress_callback=progress_cb,
                 )
             except VlmTimeoutError as exc:
                 api.fail(
@@ -253,6 +320,7 @@ def handle_enumerate_job(
                 embedder=embedder,
                 config=config,
                 settings=settings,
+                progress_callback=progress_cb,
             )
             total_cost += overlay_cost
 
@@ -336,6 +404,7 @@ def _run_vision_pass(
     embedder: Any,
     config: EnumerationConfig,
     settings: WorkerSettings,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[CanonicalProduct], float]:
     """The legacy vision pass — byte-identical to the pre-overlay flow.
 
@@ -343,6 +412,11 @@ def _run_vision_pass(
     cluster, then applies the rule-based label merge. Raises
     :class:`VlmTimeoutError` / :class:`VlmSchemaError` on model failure
     so the caller maps them to the right ``error_code``.
+
+    ``progress_callback`` (optional) is forwarded to the pipeline so
+    api heartbeats can fire at every phase boundary inside the long
+    silent stretch between the worker's pct=30 and pct=80 explicit
+    pings. Defaults to ``None`` for tests that don't need it.
     """
     # Prompts are ignored by ``OpenAIVlmClient`` in the OWLv2 two-stage
     # refactor — the client owns its own label prompt
@@ -357,6 +431,7 @@ def _run_vision_pass(
         system_prompt="",
         user_prompt_template="",
         config=config,
+        progress_callback=progress_callback,
     )
     products = merge_products_by_label(products, settings=settings)
     return products, total_cost
@@ -370,6 +445,7 @@ def _run_overlay_pass(
     embedder: Any,
     config: EnumerationConfig,
     settings: WorkerSettings,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[CanonicalProduct], float]:
     """The overlay pass — reads on-screen info-overlay graphics.
 
@@ -424,6 +500,7 @@ def _run_overlay_pass(
         config=config,
         overlay_cosine_threshold=settings.overlay_cluster_cosine_threshold,
         detector_score_threshold=settings.overlay_detector_score_threshold,
+        progress_callback=progress_callback,
     )
     return products, total_cost
 
