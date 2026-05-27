@@ -283,22 +283,24 @@ async def _run(args: argparse.Namespace) -> int:
     settings = get_settings()
     org_id = args.org_id or ""
     if not org_id:
-        # Avoid importing Org models unless the operator asks for slug
-        # resolution. The eval harnesses generally run by slug, but
-        # OpenSearch scene docs are keyed by UUID.
-        from sqlalchemy import select
+        # Use SQL text instead of importing ORM models. Standalone scripts can
+        # otherwise trigger partial mapper configuration before every app model
+        # is imported.
+        from sqlalchemy import text
 
         from app.db.base import get_async_session_factory
-        from app.modules.orgs.models import Org
 
         sf = get_async_session_factory()
         async with sf() as session:
-            org = (
-                await session.execute(select(Org).where(Org.slug == args.org_slug))
+            row = (
+                await session.execute(
+                    text("select id from orgs where slug = :slug"),
+                    {"slug": args.org_slug},
+                )
             ).scalar_one_or_none()
-            if org is None:
+            if row is None:
                 raise RuntimeError(f"org not found: {args.org_slug}")
-            org_id = str(org.id)
+            org_id = str(row)
 
     goldens = _load_goldens(
         golden_dir=args.golden_dir,
