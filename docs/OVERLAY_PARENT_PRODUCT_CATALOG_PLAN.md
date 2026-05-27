@@ -651,6 +651,57 @@ cd services/api
 Result: 102 passed, 1 existing Pydantic deprecation warning
 ```
 
+### 2026-05-27 Staging Deploy Verification
+
+Deployed commit `df3fa795` to staging via `deploy-staging.yml` run
+`26494197537`.
+
+Initial post-deploy finding:
+
+- Host code was on `df3fa79`.
+- API image contained the `v2.2-overlay-source-parent` code default.
+- The staging `.env` still had an explicit old override:
+  `AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION=v2.1-stt-cross-reference`.
+- `AUTO_SHORTS_PRODUCT_V2_OVERLAY_PARENT_ENABLED` was absent, so the runtime
+  value was `false`.
+
+Fix applied on staging:
+
+- Backed up `/opt/heimdex/dev-heimdex-for-livecommerce/.env`.
+- Set:
+
+```text
+AUTO_SHORTS_PRODUCT_V2_CONSOLIDATE_PROMPT_VERSION=v2.2-overlay-source-parent
+AUTO_SHORTS_PRODUCT_V2_OVERLAY_TRACK_ENABLED=true
+AUTO_SHORTS_PRODUCT_V2_OVERLAY_PARENT_ENABLED=true
+```
+
+- Recreated only the API container with
+  `docker compose up -d --force-recreate --no-deps api`.
+
+Verified after restart:
+
+```text
+api health: healthy
+public /api/health: {"status":"ok","environment":"staging","embedding_mode":"real",...}
+alembic current: 065_create_product_catalog_runs (head)
+settings_prompt_version: v2.2-overlay-source-parent
+default_prompt_version: v2.2-overlay-source-parent
+overlay_track: True
+overlay_parent: True
+ProductScanService._enumeration_mode(): overlay
+ProductScanService._overlay_policy(): overlay_parent
+recent API error scan: no error/exception/traceback/failed lines
+```
+
+Manual test readiness:
+
+- Staging is ready for browser testing at
+  `https://devorg.app.heimdexdemo.dev`.
+- Use a force rescan / product re-detection flow for the selected video so the
+  new catalog run is created with `source_mode=overlay` and prompt version
+  `v2.2-overlay-source-parent`.
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when
