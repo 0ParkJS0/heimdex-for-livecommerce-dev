@@ -1162,6 +1162,44 @@ Worker:
   process cannot complete a job after another process has reclaimed it.
 ```
 
+Aircloud retest result:
+
+```text
+Aircloud boot:
+  worker_id: product-enumerate-worker-local-470eccc97ce9-1-058946ac
+  gpu: true
+  openai_model: gpt-4o-mini
+
+Staging cleanup:
+  The first fresh rescan was blocked by the per-org active cap (10/10).
+  All active non-render product jobs were stale: expired leases or old queued
+  rows. They were marked failed with `manual_staging_stale_cleanup` or kept
+  their existing `orphan_janitor_manual` error_code.
+
+Successful rescan:
+  job_id: 938abc35-334c-4999-9afe-525b021eb2ff
+  SQS message_id: f86c8ae6-261e-4916-bd8c-20e4d1405e64
+  claim: succeeded with the new unique worker_id
+  progress: advanced through overlay extraction to "Uploading reference crops"
+  job stage: enumeration_done
+  catalog run:
+    augmenting_stt -> consolidating -> ready
+    stt_completed_at: 2026-05-27 09:56:11 UTC
+    finalized_at: 2026-05-27 09:58:10 UTC
+
+Persisted catalog:
+  before consolidation: 18 active overlay rows, 18 with crop keys
+  after consolidation: 16 active overlay rows, 16 with crop keys
+  internal STT rows: 8 active, not shown in overlay-parent product selection
+
+Frontend-facing service result:
+  scan_status: complete
+  catalog_status: ready
+  products returned: 16
+  sources returned: ["overlay"]
+  products with canonical_crop_url: 16
+```
+
 ## Open Questions
 
 1. Should overlay-parent fallback to non-overlay rows be enabled by default when
