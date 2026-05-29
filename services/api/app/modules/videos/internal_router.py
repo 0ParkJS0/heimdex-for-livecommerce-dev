@@ -120,6 +120,14 @@ async def update_reprocess_status(
         file_uuid = await _resolve_file_id(db, video_id, UUID(org_id))
         if file_uuid is not None:
             parsed_org_id = UUID(org_id)
+            if video_id.startswith("gd_"):
+                await _update_drive_file_after_reprocess(
+                    db=db,
+                    file_id=file_uuid,
+                    scene_count=scene_count,
+                    keyframe_s3_prefix=keyframe_s3_prefix,
+                    audio_s3_key=audio_s3_key,
+                )
 
             # v1: per-video enrichment for STT, OCR, face
             publish_enrichment_jobs(
@@ -159,6 +167,34 @@ async def update_reprocess_status(
             )
 
     return {"status": "ok"}
+
+
+async def _update_drive_file_after_reprocess(
+    *,
+    db: AsyncSession,
+    file_id: UUID,
+    scene_count: int,
+    keyframe_s3_prefix: str,
+    audio_s3_key: str | None,
+) -> None:
+    """Keep DriveFile metadata aligned with the scene docs just re-ingested."""
+    from sqlalchemy import update
+
+    from app.modules.drive.models import DriveFile
+
+    values: dict[str, Any] = {
+        "scene_count": scene_count,
+        "keyframe_s3_prefix": keyframe_s3_prefix,
+    }
+    if audio_s3_key is not None:
+        values["audio_s3_key"] = audio_s3_key or None
+
+    await db.execute(
+        update(DriveFile)
+        .where(DriveFile.id == file_id)
+        .values(**values)
+    )
+    await db.flush()
 
 
 # ---------------------------------------------------------------------------
