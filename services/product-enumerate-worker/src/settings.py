@@ -160,6 +160,12 @@ class WorkerSettings(BaseSettings):
     # directly instead of returning zero products before model extraction.
     overlay_ocr_blind_fallback_enabled: bool = True
     overlay_ocr_blind_fallback_min_nonempty_ratio: float = 0.10
+    # VLM call cap when the overlay pass enters its OCR-blind fallback.
+    # The pipelines fallback bypasses the classical detector and sends
+    # every keyframe to gpt-4o-mini; the worker sub-samples to this many
+    # frames first so extractor cost stays bounded even when
+    # max_keyframes_per_video is large.
+    overlay_ocr_blind_vlm_cap: int = 60
     # SigLIP2 cluster cosine threshold for the overlay path. Defaults to
     # the vision path's threshold so the same-frame disjointness
     # invariant + consolidate hook behave identically across sources.

@@ -495,6 +495,39 @@ def _run_overlay_pass(
         for kf in keyframes
     ]
 
+    # OCR-blind sub-sample: when the OCR-blind fallback is enabled AND
+    # the video's indexed OCR is sparse, the pipelines fallback would
+    # send EVERY keyframe to the extractor. Cap that worst-case VLM
+    # fan-out by evenly sub-sampling the overlay keyframe list here.
+    # Order-preserving; only kicks in when above the cap.
+    #
+    # NOTE — the gate predicate (``ratio < min_nonempty_ratio``) is
+    # also evaluated inside ``enumerate_products_overlay`` (see
+    # ``pipelines.product_enum.overlay_pipeline``). This worker-side
+    # duplication is deliberate and temporary: the cap exists to bound
+    # cost while the legacy-OCR corpus is sparse and the fallback
+    # fires on most videos. Once OCR backfill catches up the fallback
+    # rarely triggers and this whole block can be deleted. If pipelines
+    # changes its gate (e.g. ``<`` -> ``<=`` or whitespace handling),
+    # mirror the change here OR extract a shared
+    # ``pipelines.is_ocr_blind_mode(...)`` helper so the predicate has
+    # one owner.
+    if settings.overlay_ocr_blind_fallback_enabled:
+        nonempty = sum(1 for kf in overlay_keyframes if kf.ocr_text.strip())
+        ratio = nonempty / max(1, len(overlay_keyframes))
+        if (
+            ratio < settings.overlay_ocr_blind_fallback_min_nonempty_ratio
+            and len(overlay_keyframes) > settings.overlay_ocr_blind_vlm_cap
+        ):
+            cap = settings.overlay_ocr_blind_vlm_cap
+            step = len(overlay_keyframes) / cap
+            sampled = [overlay_keyframes[int(i * step)] for i in range(cap)]
+            logger.info(
+                "overlay_ocr_blind_sub_sampled in=%d out=%d ratio=%.3f",
+                len(overlay_keyframes), cap, ratio,
+            )
+            overlay_keyframes = sampled
+
     products, total_cost = enumerate_products_overlay(
         keyframes=overlay_keyframes,
         extractor=extractor,

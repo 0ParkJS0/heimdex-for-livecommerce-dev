@@ -977,6 +977,7 @@ services:
       - ENUM_MIN_CONFIDENCE=${AUTO_SHORTS_PRODUCT_V2_ENUM_MIN_CONFIDENCE:-0.6}
       - OVERLAY_OCR_BLIND_FALLBACK_ENABLED=${AUTO_SHORTS_PRODUCT_V2_OVERLAY_OCR_BLIND_FALLBACK_ENABLED:-true}
       - OVERLAY_OCR_BLIND_FALLBACK_MIN_NONEMPTY_RATIO=${AUTO_SHORTS_PRODUCT_V2_OVERLAY_OCR_BLIND_FALLBACK_MIN_NONEMPTY_RATIO:-0.10}
+      - OVERLAY_OCR_BLIND_VLM_CAP=${OVERLAY_OCR_BLIND_VLM_CAP:-60}
       # OCR-grounding filter + VLM prompt hint (defaults match settings.py
       # so behaviour is unchanged when .env is empty; each var is the
       # rollback lever documented in PR #283's env table).

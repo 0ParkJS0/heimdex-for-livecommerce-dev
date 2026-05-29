@@ -366,3 +366,126 @@ class TestWorkerOwlV2Detector:
             processor=MagicMock(), session=MagicMock(), device=MagicMock(),
         )
         assert detector.detect(np.zeros((10, 10, 3), dtype="uint8"), []) == []
+
+
+# =========================================================================
+# OCR-blind VLM sub-sampling cap
+# =========================================================================
+#
+# When the OCR-blind fallback is enabled AND the indexed OCR is sparse,
+# the pipelines fallback would send EVERY overlay keyframe to gpt-4o-mini.
+# The worker sub-samples the list to ``overlay_ocr_blind_vlm_cap`` first
+# so extractor cost stays bounded as ``MAX_KEYFRAMES_PER_VIDEO`` grows.
+
+
+def _settings_with(**overrides) -> WorkerSettings:
+    return WorkerSettings(
+        product_v2_enabled=True,
+        sqs_product_enumerate_queue_url="https://sqs/q",
+        drive_internal_api_key="test-token",
+        drive_api_base_url="http://api:8000",
+        drive_s3_bucket="test-bucket",
+        openai_api_key="sk-test",
+        **overrides,
+    )
+
+
+def _many_keyframes(n: int):
+    from heimdex_media_pipelines.product_enum import SceneKeyframe
+
+    return [
+        SceneKeyframe(
+            scene_id=f"gd_test_scene_{i:03d}",
+            frame_idx=i * 1000,
+            image=Image.new("RGB", (640, 480), (128, 128, 128)),
+        )
+        for i in range(n)
+    ]
+
+
+def _capture_overlay_keyframes(
+    *,
+    message: dict,
+    scene_keyframes: list,
+    ocr_by_scene_id: dict[str, str],
+    settings: WorkerSettings,
+) -> int:
+    """Drive ``handle_enumerate_job`` and return the number of keyframes
+    that actually reached ``enumerate_products_overlay``."""
+    vlm = _vlm_client()
+    api = MagicMock()
+    api.claim.return_value = {}
+
+    with patch("src.tasks.enumerate.ApiClient", return_value=api), \
+        patch("src.tasks.enumerate._fetch_keyframes") as fetch, \
+        patch("src.tasks.enumerate.load_siglip", return_value=MagicMock()), \
+        patch("src.tasks.enumerate.embed_pil_image_batch", return_value=[[0.1] * 768]), \
+        patch("src.tasks.enumerate.enumerate_products") as vision_fn, \
+        patch("src.tasks.enumerate.enumerate_products_overlay") as overlay_fn, \
+        patch("src.tasks.enumerate._upload_crops_and_build_payload") as upload:
+        fetch.return_value = (scene_keyframes, ocr_by_scene_id)
+        vision_fn.return_value = ([_canonical("v")], 0.01)
+        overlay_fn.return_value = ([_canonical("o")], 0.02)
+
+        def _fake_upload(*, products, enumeration_source, **kwargs):
+            return [
+                {"llm_label": p.llm_label, "enumeration_source": enumeration_source}
+                for p in products
+            ]
+
+        upload.side_effect = _fake_upload
+
+        handle_enumerate_job(message=message, settings=settings, vlm_client=vlm)
+
+        assert overlay_fn.call_count == 1
+        return len(overlay_fn.call_args.kwargs["keyframes"])
+
+
+def test_overlay_sub_samples_when_ocr_blind_and_above_cap():
+    # 200 keyframes, all OCR-empty -> ratio 0.0 < 0.10 -> trigger.
+    keyframes = _many_keyframes(200)
+    ocr_map = {kf.scene_id: "" for kf in keyframes}
+    n = _capture_overlay_keyframes(
+        message=_message(mode="overlay"),
+        scene_keyframes=keyframes,
+        ocr_by_scene_id=ocr_map,
+        settings=_settings_with(),
+    )
+    assert n == 60
+
+
+def test_overlay_skips_sub_sample_when_below_cap():
+    keyframes = _many_keyframes(30)
+    ocr_map = {kf.scene_id: "" for kf in keyframes}
+    n = _capture_overlay_keyframes(
+        message=_message(mode="overlay"),
+        scene_keyframes=keyframes,
+        ocr_by_scene_id=ocr_map,
+        settings=_settings_with(),
+    )
+    assert n == 30
+
+
+def test_overlay_skips_sub_sample_when_ocr_present():
+    # Every scene has OCR -> ratio 1.0 >= 0.10 -> skip even past the cap.
+    keyframes = _many_keyframes(200)
+    ocr_map = {kf.scene_id: "29,900원" for kf in keyframes}
+    n = _capture_overlay_keyframes(
+        message=_message(mode="overlay"),
+        scene_keyframes=keyframes,
+        ocr_by_scene_id=ocr_map,
+        settings=_settings_with(),
+    )
+    assert n == 200
+
+
+def test_overlay_skips_sub_sample_when_fallback_disabled():
+    keyframes = _many_keyframes(200)
+    ocr_map = {kf.scene_id: "" for kf in keyframes}
+    n = _capture_overlay_keyframes(
+        message=_message(mode="overlay"),
+        scene_keyframes=keyframes,
+        ocr_by_scene_id=ocr_map,
+        settings=_settings_with(overlay_ocr_blind_fallback_enabled=False),
+    )
+    assert n == 200
