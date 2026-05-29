@@ -166,6 +166,7 @@ def _run(message: dict):
         fetch.return_value = (
             _one_keyframe(),
             {"gd_test_scene_001": "29,900 원"},
+            None,  # file_name — not exercised in this progress-wiring test
         )
         handle_enumerate_job(message=message, settings=settings, vlm_client=vlm)
 
@@ -309,6 +310,7 @@ def test_pipeline_heartbeat_failure_does_not_abort_enumeration():
         fetch.return_value = (
             _one_keyframe(),
             {"gd_test_scene_001": "29,900 원"},
+            None,  # file_name — not exercised in this progress-wiring test
         )
         # MUST NOT raise even though every PIPELINE-bridged heartbeat
         # raises -- those go through _make_progress_cb's try/except.

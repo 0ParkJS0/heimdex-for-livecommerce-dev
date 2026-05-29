@@ -253,6 +253,7 @@ async def get_scenes_with_keyframes(
         {
           "video_id": "gd_<...>",        # string id used by OS
           "drive_file_id": "<uuid>",
+          "file_name": "<original drive upload filename>",
           "total_duration_ms": <int>,    # max(end_ms) across scenes
           "proxy_s3_key": "<org>/drive/<drive>/<gfid>/proxy.mp4" | null,
           "scenes": [
@@ -348,6 +349,13 @@ async def get_scenes_with_keyframes(
     return {
         "video_id": video_id_str,
         "drive_file_id": str(file_id),
+        # Original Drive upload filename. Worker uses this as one of two
+        # brand-detection sources for overlay OCR grounding (the other is
+        # OCR-frequency auto-detect). Korean livecommerce filenames
+        # follow ``YYMMDD_<brand>[ ...]`` convention so the brand prefix
+        # is reliable. Backwards-compat: older worker builds that don't
+        # consume this key simply ignore it.
+        "file_name": drive_file.file_name,
         "total_duration_ms": total_duration_ms,
         # ``DriveFile.proxy_s3_key`` is nullable — None means transcode
         # hasn't completed. Pass through verbatim; callers (product-

@@ -218,7 +218,7 @@ def handle_enumerate_job(
             cost_delta_usd=Decimal("0"),
             lease_seconds=settings.worker_lease_seconds,
         )
-        keyframes, ocr_by_scene_id = _fetch_keyframes(
+        keyframes, ocr_by_scene_id, file_name = _fetch_keyframes(
             settings=settings,
             org_id=decoded.org_id,
             video_id=decoded.video_id,
@@ -316,6 +316,7 @@ def handle_enumerate_job(
             overlay_products, overlay_cost = _run_overlay_pass(
                 keyframes=keyframes,
                 ocr_by_scene_id=ocr_by_scene_id,
+                file_name=file_name,
                 vlm_client=vlm_client,
                 embedder=embedder,
                 config=config,
@@ -441,6 +442,7 @@ def _run_overlay_pass(
     *,
     keyframes: list[SceneKeyframe],
     ocr_by_scene_id: dict[str, str],
+    file_name: str | None,
     vlm_client: OpenAIVlmClient,
     embedder: Any,
     config: EnumerationConfig,
@@ -469,6 +471,7 @@ def _run_overlay_pass(
         openai_client=vlm_client._client,
         model=settings.overlay_extraction_model,
         daily_cap_usd=settings.overlay_extraction_daily_budget_usd,
+        ocr_hint_enabled=settings.overlay_extraction_ocr_hint_enabled,
     )
     owlv2_detector = WorkerOwlV2Detector(
         processor=vlm_client.owlv2_processor,
@@ -506,6 +509,23 @@ def _run_overlay_pass(
         ocr_blind_fallback_min_nonempty_ratio=(
             settings.overlay_ocr_blind_fallback_min_nonempty_ratio
         ),
+        ocr_grounding_enabled=settings.overlay_ocr_grounding_enabled,
+        ocr_grounding_threshold=settings.overlay_ocr_grounding_threshold,
+        ocr_grounding_brand_strip_enabled=(
+            settings.overlay_ocr_grounding_brand_strip_enabled
+        ),
+        ocr_grounding_brand_strategy=(
+            settings.overlay_ocr_grounding_brand_strategy
+        ),
+        ocr_grounding_brand_min_scene_share=(
+            settings.overlay_ocr_grounding_brand_min_scene_share
+        ),
+        ocr_grounding_brand_filename_stopwords_extra=tuple(
+            t.strip()
+            for t in settings.overlay_ocr_grounding_brand_filename_stopwords_extra.split(",")
+            if t.strip()
+        ),
+        video_file_name=file_name,
         progress_callback=progress_callback,
     )
     return products, total_cost
@@ -520,11 +540,11 @@ def _fetch_keyframes(
     video_id: UUID,
     max_keyframes: int,
     s3_client: S3Client | None = None,
-) -> tuple[list[SceneKeyframe], dict[str, str]]:
+) -> tuple[list[SceneKeyframe], dict[str, str], str | None]:
     """Resolve the scene list via the Phase 2.5a internal endpoint and
     download each scene's keyframe from S3 / MinIO.
 
-    Returns ``(scene_keyframes, ocr_by_scene_id)``:
+    Returns ``(scene_keyframes, ocr_by_scene_id, file_name)``:
 
     * ``scene_keyframes`` — one :class:`SceneKeyframe` per successfully
       downloaded keyframe. Used by the vision-only enumeration path.
@@ -535,8 +555,12 @@ def _fetch_keyframes(
       AND structural gate read from this string). The dict carries one
       entry per scene we KEPT — scenes whose keyframe download failed
       drop out of both the list and the map together.
+    * ``file_name`` — original Drive upload filename for the video, or
+      ``None`` if absent in the API response (older API builds). The
+      overlay path uses it as a brand-detection source for OCR
+      grounding.
 
-    Returns ``([], {})`` if:
+    Returns ``([], {}, None)`` if:
     * the API returns 404 (video not registered) — the caller maps
       this to ``error_code="video_not_found"``;
     * the API returns 0 scenes — same downstream effect;
@@ -571,18 +595,22 @@ def _fetch_keyframes(
                 "fetch_keyframes_video_not_found",
                 extra={"video_id": str(video_id)},
             )
-            return [], {}
+            return [], {}, None
         resp.raise_for_status()
     except httpx.HTTPError:
         logger.exception(
             "fetch_keyframes_http_error", extra={"video_id": str(video_id)},
         )
-        return [], {}
+        return [], {}, None
 
     body = resp.json()
     raw_scenes: list[dict[str, Any]] = body.get("scenes", [])
+    # API returns ``file_name`` since 2026-05-29 to feed the overlay
+    # grounding brand-detection. Older builds omit it — the overlay
+    # path tolerates None and falls back to OCR-only auto-detect.
+    file_name: str | None = body.get("file_name")
     if not raw_scenes:
-        return [], {}
+        return [], {}, file_name
 
     # Subsample evenly when the video has more scenes than the cap.
     # Pipeline.enumerate_products also subsamples, but doing it here
@@ -644,7 +672,7 @@ def _fetch_keyframes(
         # of the gate.
         ocr_by_scene_id[str(scene_id)] = scene.get("ocr_text_raw") or ""
 
-    return keyframes, ocr_by_scene_id
+    return keyframes, ocr_by_scene_id, file_name
 
 
 def _upload_crops_and_build_payload(

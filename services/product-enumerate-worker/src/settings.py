@@ -10,6 +10,8 @@ publish-then-pin protocol per
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -162,6 +164,54 @@ class WorkerSettings(BaseSettings):
     # the vision path's threshold so the same-frame disjointness
     # invariant + consolidate hook behave identically across sources.
     overlay_cluster_cosine_threshold: float = 0.85
+    # OCR-grounding filter — drops clusters whose canonical label has no
+    # meaningful trigram overlap with the union of scene OCR text. The
+    # extractor (gpt-4o-mini) sometimes fabricates labels; OCR is the
+    # literal on-screen ground truth. Threshold 0.5 = at least half of
+    # the label's character trigrams must appear in OCR somewhere.
+    # Disable per-env for incident response or A/B; the filter is
+    # post-cluster, so toggling it never changes cluster identity —
+    # only the visible / rejected split.
+    overlay_ocr_grounding_enabled: bool = True
+    overlay_ocr_grounding_threshold: float = 0.5
+    # Brand-strip subfilter — removes auto-detected brand tokens from a
+    # scoring-only copy of each cluster's canonical label before trigram
+    # matching. Catches false positives like 'OSULLOC 라면' where the
+    # brand alone carries the trigram score. Disable per-env to fall back
+    # to the trigram-only behaviour if brand stripping over-rejects on a
+    # specific org.
+    overlay_ocr_grounding_brand_strip_enabled: bool = True
+    # Brand-token source. ``union`` (default) combines filename-derived
+    # brand with OCR-frequency auto-detection so Korean/English brand
+    # pairs (e.g. 오설록 + OSULLOC) are both captured.
+    # ``filename_only`` / ``auto_only`` / ``filename_then_auto`` are the
+    # fallback options for incident response or A/B. Typed as ``Literal``
+    # so a typo'd ``.env`` value (e.g. ``unoin``) crashes the worker at
+    # boot via pydantic's validation, rather than landing in pipelines'
+    # ``ValueError`` mid-job and failing every enumeration message.
+    overlay_ocr_grounding_brand_strategy: Literal[
+        "filename_only", "auto_only", "union", "filename_then_auto"
+    ] = "union"
+    # Auto-detect threshold — a token must appear in this share of
+    # nonempty scenes to qualify as a brand. 0.30 catches livecommerce
+    # brand prefixes (OSULLOC ~98%, 종가 ~75% on the PoC set) without
+    # promoting product nouns (참기름 17%, 포기김치 14%).
+    overlay_ocr_grounding_brand_min_scene_share: float = 0.30
+    # Operational stopword extension for the filename / auto brand
+    # detectors. Comma-separated tokens that should NEVER be classified
+    # as brand even if they meet the frequency cutoff. Use this to mute
+    # an org-specific noise word without a code change. Example:
+    # ``굿즈,스페셜키트``.
+    overlay_ocr_grounding_brand_filename_stopwords_extra: str = ""
+    # VLM prompt OCR-hint gate — appends the scene's PaddleOCR text to
+    # the gpt-4o-mini overlay prompt so the model anchors labels against
+    # the literal on-screen string. Default True matches the in-PR
+    # behaviour the author tested. Flip to False to roll back to the
+    # legacy image-only prompt if the hint causes recall loss on a
+    # specific corpus; the post-cluster grounding filter
+    # (``overlay_ocr_grounding_enabled``) is the independent second
+    # rollback lever.
+    overlay_extraction_ocr_hint_enabled: bool = True
 
     # ---------- safety ----------
 

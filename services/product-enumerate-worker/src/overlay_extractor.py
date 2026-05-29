@@ -168,6 +168,12 @@ class OverlayProductExtractor:
         daily_cap_usd: float = 20.0,
         timeout_sec: float = 30.0,
         max_retries: int = 3,
+        # Gates the OCR-text grounding hint in ``extract()``. Default True
+        # mirrors the in-PR behavior. Worker passes
+        # ``settings.overlay_extraction_ocr_hint_enabled`` so the prompt
+        # change has a 1-env-flip rollback if it ever causes recall loss
+        # on a corpus where PaddleOCR misses product names.
+        ocr_hint_enabled: bool = True,
     ) -> None:
         if openai_client is not None:
             self._client = openai_client
@@ -183,6 +189,7 @@ class OverlayProductExtractor:
             )
         self.model = model
         self.daily_cap_usd = daily_cap_usd
+        self.ocr_hint_enabled = ocr_hint_enabled
         # Per-UTC-day USD tally keyed by ISO date. Single-process;
         # the worker runs at concurrency=1 so this is accurate. A
         # multi-process deploy would need redis / a DB counter.
@@ -212,18 +219,37 @@ class OverlayProductExtractor:
     ) -> OverlayExtractionBatch:
         """Read the overlay graphic on one keyframe.
 
-        ``ocr_text`` is accepted to satisfy the protocol; the prompt
-        relies on the vision model reading the card directly (the
-        classical detector already used the OCR text to decide this
-        frame is overlay-bearing). Returns the products visible on the
-        card plus the call's USD cost.
+        ``ocr_text`` (PaddleOCR output for this scene) is injected into
+        the prompt as a grounding hint when available. The VLM still
+        reads the image directly for layout / position, but the OCR
+        snippet anchors product *labels* against the literal on-screen
+        text — gpt-4o-mini otherwise tends to fabricate plausible-
+        sounding product names ("OSULLOC 라면", "종가 아삭한 국물용
+        김치") on stylized cards. Empty OCR is a legitimate state (the
+        scene's OCR enrichment hasn't completed yet); we fall back to
+        the original image-only prompt in that case so behavior matches
+        legacy when OCR is unavailable.
 
-        Raises :class:`OverlayBudgetExceededError` once today's spend
-        crosses the cap so the pass stops extracting further frames.
+        Returns the products visible on the card plus the call's USD
+        cost. Raises :class:`OverlayBudgetExceededError` once today's
+        spend crosses the cap so the pass stops extracting further
+        frames.
         """
-        del ocr_text  # accepted for protocol parity; prompt reads the image
-
         prompt = _load_prompt()
+        if self.ocr_hint_enabled and ocr_text and ocr_text.strip():
+            # Cap to bound input tokens. 800 chars is well below a
+            # single overlay card's typical OCR yield (~150-300 chars);
+            # the cap exists for outlier scenes where OCR misclassifies
+            # background text and the snippet would otherwise balloon.
+            ocr_snippet = ocr_text.strip()[:800]
+            prompt = (
+                f"{prompt}\n\n"
+                f"참고: 이 frame의 OCR 인식 결과는 다음과 같습니다.\n"
+                f"```\n{ocr_snippet}\n```\n"
+                f"product name은 OCR 텍스트에 실제로 등장하는 한글 "
+                f"문자열을 그대로 사용하세요. OCR에 없는 product를 "
+                f"추측해서 만들지 마세요."
+            )
         data_url = _image_to_data_url(image)
 
         response = self._client.chat.completions.create(

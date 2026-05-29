@@ -103,7 +103,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(),
                 video_id=uuid4(),
@@ -138,7 +138,7 @@ class TestFetchKeyframes:
         with patch("src.tasks.enumerate.httpx.Client") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_client.get.return_value = MagicMock(status_code=404)
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
@@ -156,7 +156,7 @@ class TestFetchKeyframes:
         with patch("src.tasks.enumerate.httpx.Client") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_client.get.side_effect = httpx.ConnectError("api down")
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
@@ -199,7 +199,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
@@ -231,7 +231,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=5,
@@ -253,7 +253,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
@@ -291,7 +291,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
@@ -356,7 +356,7 @@ class TestFetchKeyframes:
             mock_resp.raise_for_status = MagicMock()
             mock_client.get.return_value = mock_resp
 
-            keyframes, ocr_by_scene_id = _fetch_keyframes(
+            keyframes, ocr_by_scene_id, _file_name = _fetch_keyframes(
                 settings=_settings(),
                 org_id=uuid4(), video_id=uuid4(),
                 max_keyframes=60,
