@@ -52,6 +52,8 @@ def _parse_args() -> argparse.Namespace:
                            help="Filter by org slug (resolved to UUID).")
     parser.add_argument("--limit", type=int, default=None,
                         help="Max number of videos to reprocess.")
+    parser.add_argument("--video", type=str, default=None,
+                        help="Only reprocess this video_id.")
     parser.add_argument("--max-scene-duration-ms", type=int, default=15_000,
                         help="Max scene duration in ms (default: 15000).")
     parser.add_argument("--min-scene-duration-ms", type=int, default=500,
@@ -87,6 +89,7 @@ def _fetch_videos(
     engine: Any,
     org_id: str | None,
     limit: int | None,
+    video_id: str | None,
 ) -> list[dict[str, Any]]:
     """Indexed drive_files joined with drive_connections for library_id."""
     query = """
@@ -110,6 +113,9 @@ def _fetch_videos(
     if org_id:
         query += " AND d.org_id = :org_id"
         params["org_id"] = org_id
+    if video_id:
+        query += " AND d.video_id = :video_id"
+        params["video_id"] = video_id
     query += " ORDER BY d.created_at ASC"
     if limit:
         query += " LIMIT :limit"
@@ -248,6 +254,7 @@ def main() -> int:
     print("=" * 64)
     print(f"  Queue:          {queue_url}")
     print(f"  Org filter:     {args.org_slug or args.org_id or 'all'}")
+    print(f"  Video filter:   {args.video or 'none'}")
     print(f"  Limit:          {args.limit or 'none'}")
     print(f"  Scene params:   {json.dumps(scene_params)}")
     print(f"  Dry run:        {args.dry_run}")
@@ -257,7 +264,7 @@ def main() -> int:
     org_id = _resolve_org_id(engine, args.org_id, args.org_slug)
 
     t0 = time.monotonic()
-    videos = _fetch_videos(engine, org_id, args.limit)
+    videos = _fetch_videos(engine, org_id, args.limit, args.video)
     print(f"Found {len(videos)} reprocessable videos ({time.monotonic() - t0:.1f}s)")
 
     if not videos:
