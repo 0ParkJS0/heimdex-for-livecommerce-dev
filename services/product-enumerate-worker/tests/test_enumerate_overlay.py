@@ -26,7 +26,7 @@ from heimdex_media_pipelines.product_enum import CanonicalProduct
 from PIL import Image
 
 from src.settings import WorkerSettings
-from src.tasks.enumerate import handle_enumerate_job
+from src.tasks.enumerate import EnumerateJobMessage, handle_enumerate_job
 
 
 def _settings() -> WorkerSettings:
@@ -77,9 +77,43 @@ def _message(*, mode: str) -> dict:
         "requested_by_user_id": str(uuid4()),
         "enumeration_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
+        "callback_base_url": "http://api:8000",
         "max_keyframes": 60,
         "enumeration_mode": mode,
     }
+
+
+def test_message_validation_rejects_contract_extra_fields():
+    msg = _message(mode="vision")
+    msg["unexpected"] = "boom"
+
+    try:
+        EnumerateJobMessage.from_dict(msg)
+    except ValueError as exc:
+        assert "Extra inputs are not permitted" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expected contract validation to reject extra fields")
+
+
+def test_message_validation_accepts_legacy_envelope_fields():
+    msg = _message(mode="vision")
+    msg["version"] = "1"
+    msg["timestamp"] = "2026-05-30T00:00:00+00:00"
+
+    decoded = EnumerateJobMessage.from_dict(msg)
+
+    assert decoded.enumeration_mode == "vision"
+
+
+def test_message_validation_rejects_invalid_mode():
+    msg = _message(mode="bad-mode")
+
+    try:
+        EnumerateJobMessage.from_dict(msg)
+    except ValueError as exc:
+        assert "enumeration_mode" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("expected contract validation to reject invalid mode")
 
 
 def _one_keyframe():
@@ -423,7 +457,7 @@ def _capture_overlay_keyframes(
         patch("src.tasks.enumerate.enumerate_products") as vision_fn, \
         patch("src.tasks.enumerate.enumerate_products_overlay") as overlay_fn, \
         patch("src.tasks.enumerate._upload_crops_and_build_payload") as upload:
-        fetch.return_value = (scene_keyframes, ocr_by_scene_id)
+        fetch.return_value = (scene_keyframes, ocr_by_scene_id, "test.mp4")
         vision_fn.return_value = ([_canonical("v")], 0.01)
         overlay_fn.return_value = ([_canonical("o")], 0.02)
 

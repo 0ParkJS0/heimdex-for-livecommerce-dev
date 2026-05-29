@@ -18,6 +18,15 @@ from typing import Any, Optional
 from uuid import UUID
 
 import boto3
+from heimdex_media_contracts.blur import (
+    BlurExportCreated,
+    BlurExportOptions,
+    BlurJobCreated,
+)
+from heimdex_media_contracts.product import (
+    ProductEnumerateJob,
+    ProductTrackJob,
+)
 
 from app.config import get_settings
 from app.logging_config import get_logger
@@ -897,18 +906,16 @@ def publish_blur_job(
         return
 
     now = datetime.now(timezone.utc)
-    body = {
-        "version": "1",
-        "type": "blur.job_created",
-        "timestamp": now.isoformat(),
-        "job_id": str(job_id),
-        "file_id": str(file_id),
-        "org_id": str(org_id),
-        "video_id": video_id,
-        "source_s3_key": proxy_s3_key,
-        "source_kind": "proxy",
-        "options": options,
-    }
+    body = BlurJobCreated(
+        timestamp=now,
+        job_id=job_id,
+        file_id=file_id,
+        org_id=org_id,
+        video_id=video_id,
+        source_s3_key=proxy_s3_key,
+        source_kind="proxy",
+        options=options,
+    ).model_dump(mode="json")
     dedup_id = f"{job_id}:blur:{now.strftime('%Y%m%dT%H%M')}"
     _publish("blur", body, dedup_id)
 
@@ -938,22 +945,20 @@ def publish_blur_export(
         return
 
     now = datetime.now(timezone.utc)
-    body = {
-        "version": "1",
-        "type": "blur.export_created",
-        "timestamp": now.isoformat(),
-        "export_id": str(export_id),
-        "blur_job_id": str(blur_job_id),
-        "file_id": str(file_id),
-        "org_id": str(org_id),
-        "video_id": video_id,
-        "source_s3_key": source_s3_key,
-        "mask_s3_keys": mask_s3_keys,
-        "options": {
-            "categories": list(categories),
-            "format": export_format,
-        },
-    }
+    body = BlurExportCreated(
+        timestamp=now,
+        export_id=export_id,
+        blur_job_id=blur_job_id,
+        file_id=file_id,
+        org_id=org_id,
+        video_id=video_id,
+        source_s3_key=source_s3_key,
+        mask_s3_keys=mask_s3_keys,
+        options=BlurExportOptions(
+            categories=tuple(categories),
+            format=export_format,
+        ),
+    ).model_dump(mode="json")
     dedup_id = f"{export_id}:blur-export:{now.strftime('%Y%m%dT%H%M')}"
     _publish("blur", body, dedup_id)
 
@@ -1014,24 +1019,21 @@ def publish_product_enumerate_job(
     selects the worker pass(es). Default "vision" preserves the legacy
     single-pass behavior for every caller that doesn't pass it.
 
-    Body shape MUST match
+    Body shape is owned by
     ``heimdex_media_contracts.product.ProductEnumerateJob``.
     """
     now = datetime.now(timezone.utc)
-    body = {
-        "version": "1",
-        "type": "product.enumerate_job",
-        "timestamp": now.isoformat(),
-        "job_id": str(job_id),
-        "org_id": str(org_id),
-        "video_id": str(video_id),
-        "requested_by_user_id": str(requested_by_user_id),
-        "enumeration_version": enumeration_version,
-        "enumeration_prompt_version": enumeration_prompt_version,
-        "max_keyframes": max_keyframes,
-        "callback_base_url": callback_base_url,
-        "enumeration_mode": enumeration_mode,
-    }
+    body = ProductEnumerateJob(
+        job_id=job_id,
+        org_id=org_id,
+        video_id=video_id,
+        requested_by_user_id=requested_by_user_id,
+        enumeration_version=enumeration_version,
+        enumeration_prompt_version=enumeration_prompt_version,
+        max_keyframes=max_keyframes,
+        callback_base_url=callback_base_url,
+        enumeration_mode=enumeration_mode,
+    ).model_dump(mode="json")
     dedup_id = f"{job_id}:product-enum:{now.strftime('%Y%m%dT%H%M')}"
     _publish_required("product_enumerate", body, dedup_id)
 
@@ -1062,8 +1064,8 @@ def publish_product_track_job(
 ) -> None:
     """Publish a shorts-auto-product track + assembly job.
 
-    Body shape MUST match
-    ``heimdex_media_contracts.product.ProductTrackJob`` v0.14.0+.
+    Body shape is owned by
+    ``heimdex_media_contracts.product.ProductTrackJob``.
 
     Two callers:
 
@@ -1080,40 +1082,25 @@ def publish_product_track_job(
     the v0.14.0 ProductTrackJob model which accepts both shapes.
     """
     now = datetime.now(timezone.utc)
-    body: dict[str, object] = {
-        "version": "1",
-        "type": "product.track_job",
-        "timestamp": now.isoformat(),
-        "job_id": str(job_id),
-        "org_id": str(org_id),
-        "video_id": str(video_id),
-        "requested_by_user_id": str(requested_by_user_id),
-        "tracker_version": tracker_version,
-        "enumeration_prompt_version": enumeration_prompt_version,
-        "callback_base_url": callback_base_url,
-        "mode": mode,
-    }
-    # Optional fields — included only when the caller set them. Keeps
-    # the wire format tight + makes the legacy vs scan_order
-    # distinction self-evident in CloudWatch logs.
-    if catalog_entry_id is not None:
-        body["catalog_entry_id"] = str(catalog_entry_id)
-    if duration_preset_sec is not None:
-        body["duration_preset_sec"] = duration_preset_sec
-    if length_seconds is not None:
-        body["length_seconds"] = length_seconds
-    if requested_count is not None:
-        body["requested_count"] = requested_count
-    if time_range_start_ms is not None:
-        body["time_range_start_ms"] = time_range_start_ms
-    if time_range_end_ms is not None:
-        body["time_range_end_ms"] = time_range_end_ms
-    if product_distribution is not None:
-        body["product_distribution"] = product_distribution
-    if language is not None:
-        body["language"] = language
-    if intent is not None:
-        body["intent"] = intent
+    body = ProductTrackJob(
+        job_id=job_id,
+        org_id=org_id,
+        video_id=video_id,
+        catalog_entry_id=catalog_entry_id,
+        requested_by_user_id=requested_by_user_id,
+        duration_preset_sec=duration_preset_sec,
+        tracker_version=tracker_version,
+        enumeration_prompt_version=enumeration_prompt_version,
+        callback_base_url=callback_base_url,
+        mode=mode,
+        length_seconds=length_seconds,
+        requested_count=requested_count,
+        time_range_start_ms=time_range_start_ms,
+        time_range_end_ms=time_range_end_ms,
+        product_distribution=product_distribution,
+        language=language,
+        intent=intent,
+    ).model_dump(mode="json", exclude_none=True)
 
     dedup_id = f"{job_id}:product-track:{now.strftime('%Y%m%dT%H%M')}"
     _publish_required("product_track", body, dedup_id)

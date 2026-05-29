@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from heimdex_media_contracts.product import PRODUCT_TRACK_JOB_TYPE
 from heimdex_worker_sdk.queue_client import QueueMessage
 from heimdex_worker_sdk.sqs_consumer import InvalidMessageError
 
@@ -55,7 +56,7 @@ def dispatch(
     body = _normalize_body(message)
 
     msg_type = body.get("type")
-    if msg_type == "product.track_job":
+    if msg_type == PRODUCT_TRACK_JOB_TYPE:
         try:
             handle_track_job(message=body, settings=settings)
         except Exception as exc:

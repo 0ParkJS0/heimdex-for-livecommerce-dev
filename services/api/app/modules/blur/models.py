@@ -1,7 +1,8 @@
 from datetime import datetime
-from typing import Any, final
+from typing import Any, final, get_args
 from uuid import UUID
 
+from heimdex_media_contracts.blur import BlurJobPhase
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -27,13 +28,21 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({
 
 # Blur job phase — written by the worker via the internal progress
 # heartbeat endpoint, read by the frontend to label the progress bar.
-# Mirrors heimdex_media_contracts.blur.BlurJobPhase.
-BLUR_PHASE_QUEUED = "queued"
-BLUR_PHASE_INITIALIZING = "initializing"
-BLUR_PHASE_DETECTING = "detecting"
-BLUR_PHASE_ENCODING = "encoding"
-BLUR_PHASE_UPLOADING = "uploading"
-BLUR_PHASE_FINALIZING = "finalizing"
+BLUR_PHASE_QUEUED: BlurJobPhase = "queued"
+BLUR_PHASE_INITIALIZING: BlurJobPhase = "initializing"
+BLUR_PHASE_DETECTING: BlurJobPhase = "detecting"
+BLUR_PHASE_ENCODING: BlurJobPhase = "encoding"
+BLUR_PHASE_UPLOADING: BlurJobPhase = "uploading"
+BLUR_PHASE_FINALIZING: BlurJobPhase = "finalizing"
+_LOCAL_BLUR_PHASES = {
+    BLUR_PHASE_QUEUED,
+    BLUR_PHASE_INITIALIZING,
+    BLUR_PHASE_DETECTING,
+    BLUR_PHASE_ENCODING,
+    BLUR_PHASE_UPLOADING,
+    BLUR_PHASE_FINALIZING,
+}
+assert _LOCAL_BLUR_PHASES == set(get_args(BlurJobPhase))
 
 
 @final

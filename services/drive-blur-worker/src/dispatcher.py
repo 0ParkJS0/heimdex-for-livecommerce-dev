@@ -23,16 +23,12 @@ import json
 import logging
 from typing import Any
 
+from heimdex_media_contracts.blur import (
+    BLUR_EXPORT_CREATED_TYPE,
+    BLUR_JOB_CREATED_TYPE,
+)
+
 logger = logging.getLogger(__name__)
-
-
-# Mirrors heimdex_media_contracts.blur.BLUR_JOB_CREATED_TYPE etc. We
-# hardcode string literals here (instead of importing from contracts)
-# so the dispatcher has zero import-time dependencies and the
-# unit-test harness can exercise routing without installing contracts
-# in the test venv.
-_TYPE_BLUR_JOB_CREATED = "blur.job_created"
-_TYPE_BLUR_EXPORT_CREATED = "blur.export_created"
 
 
 class UnknownMessageType(ValueError):
@@ -81,7 +77,7 @@ def dispatch(
     """
     msg_type = message_type(message)
 
-    if msg_type == _TYPE_BLUR_JOB_CREATED:
+    if msg_type == BLUR_JOB_CREATED_TYPE:
         blur_video = importlib.import_module("src.tasks.blur_video")
         claim_ref = blur_video.sqs_to_blur_claim(message)
         blur_video.process_blur_message(
@@ -93,7 +89,7 @@ def dispatch(
         )
         return
 
-    if msg_type == _TYPE_BLUR_EXPORT_CREATED:
+    if msg_type == BLUR_EXPORT_CREATED_TYPE:
         export_layer = importlib.import_module("src.tasks.export_layer")
         export_ref = export_layer.sqs_to_export_ref(message)
         export_layer.process_export_message(

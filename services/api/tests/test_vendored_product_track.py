@@ -15,20 +15,26 @@ Fast (<10ms): pure imports + a couple of constructions.
 
 from __future__ import annotations
 
+import ast
 from importlib import import_module
+from pathlib import Path
 
 import pytest
 
 
+_VENDORED_MODULES = (
+    "config",
+    "window_assembly",
+    "alignment",
+    "subset_selector",
+    "stitching",
+)
+
+
 def test_vendored_chain_imports_cleanly() -> None:
     """Every vendored submodule resolves without ImportError."""
-    for mod_name in (
-        "app.lib.product_track.config",
-        "app.lib.product_track.window_assembly",
-        "app.lib.product_track.alignment",
-        "app.lib.product_track.subset_selector",
-        "app.lib.product_track.stitching",
-    ):
+    for name in _VENDORED_MODULES:
+        mod_name = f"app.lib.product_track.{name}"
         # ``import_module`` raises ImportError if the chain is broken.
         import_module(mod_name)
 
@@ -76,3 +82,42 @@ def test_upstream_package_not_importable_from_api() -> None:
     """
     with pytest.raises(ImportError):
         import_module("heimdex_media_pipelines")
+
+
+def test_vendored_product_track_has_no_logic_drift() -> None:
+    """Compare vendored pure-math modules against the sibling pipelines repo.
+
+    Comments and import package names may differ, but the AST must remain
+    equivalent. This keeps the intentional vendor exception from becoming
+    silent duplicated logic.
+    """
+    api_root = Path(__file__).resolve().parents[1]
+    repo_root = api_root.parents[2]
+    upstream_root = (
+        repo_root
+        / "heimdex-media-pipelines"
+        / "src"
+        / "heimdex_media_pipelines"
+        / "product_track"
+    )
+    if not upstream_root.is_dir():
+        pytest.skip("sibling heimdex-media-pipelines checkout not present")
+
+    vendored_root = api_root / "app" / "lib" / "product_track"
+    drifted: list[str] = []
+    for name in _VENDORED_MODULES:
+        vendored_ast = _normalized_ast(vendored_root / f"{name}.py")
+        upstream_ast = _normalized_ast(upstream_root / f"{name}.py")
+        if vendored_ast != upstream_ast:
+            drifted.append(name)
+
+    assert drifted == []
+
+
+def _normalized_ast(path: Path) -> str:
+    text = path.read_text()
+    text = text.replace(
+        "heimdex_media_pipelines.product_track",
+        "app.lib.product_track",
+    )
+    return ast.dump(ast.parse(text), include_attributes=False)

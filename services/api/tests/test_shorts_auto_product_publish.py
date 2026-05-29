@@ -134,6 +134,8 @@ def test_publish_legacy_flow_carries_catalog_entry_id(monkeypatch):
 
     body = captured["body"]
     assert body["mode"] == "enumerate"
+    assert "timestamp" not in body
+    assert "version" not in body
     assert body["catalog_entry_id"] == str(catalog_id)
     assert body["duration_preset_sec"] == 60
     # Wizard fields MUST be absent for legacy senders.
@@ -183,6 +185,8 @@ def test_publish_scan_order_flow_carries_wizard_fields(monkeypatch):
     assert body["product_distribution"] == "single"
     assert body["language"] == "ko"
     assert body["intent"] == "commit"
+    assert "timestamp" not in body
+    assert "version" not in body
     # Legacy fields MUST be absent for scan_order parents.
     assert "catalog_entry_id" not in body
     assert "duration_preset_sec" not in body
@@ -213,6 +217,27 @@ def test_publish_raises_when_required_queue_disabled(monkeypatch):
             length_seconds=60,
             requested_count=5,
         )
+
+
+def test_publish_rejects_inconsistent_time_range(monkeypatch):
+    captured, fake = _capture_publish_body()
+    monkeypatch.setattr(sqs_producer, "_publish_required", fake)
+
+    with pytest.raises(ValueError):
+        sqs_producer.publish_product_track_job(
+            job_id=uuid4(),
+            org_id=uuid4(),
+            video_id=uuid4(),
+            requested_by_user_id=uuid4(),
+            tracker_version="v1.0",
+            enumeration_prompt_version="v1.0",
+            callback_base_url="https://x",
+            mode="scan_order",
+            length_seconds=60,
+            requested_count=5,
+            time_range_start_ms=1000,
+        )
+    assert "body" not in captured
 
 
 # ======================================================================

@@ -61,9 +61,9 @@ def _process_single_transcode(
 ) -> None:
     drive_keys = importlib.import_module("heimdex_worker_sdk.drive_keys")
     probe_video = importlib.import_module("heimdex_media_pipelines.transcoding").probe_video
-    detect_scenes = importlib.import_module("heimdex_media_pipelines.scenes.detector").detect_scenes
-    extract_all_keyframes = importlib.import_module("heimdex_media_pipelines.scenes.keyframe").extract_all_keyframes
-    assemble_scenes = importlib.import_module("heimdex_media_pipelines.scenes.assembler").assemble_scenes
+    build_scene_documents = importlib.import_module(
+        "heimdex_media_pipelines.scenes.scene_pipeline"
+    ).build_scene_documents
     S3Client = importlib.import_module("heimdex_worker_sdk.s3").S3Client
 
     audio_s3_key = drive_keys.audio_s3_key
@@ -190,16 +190,10 @@ def _process_single_transcode(
             )
 
         proxy_probe = probe_video(proxy_path)
-        scene_boundaries = detect_scenes(video_path=str(proxy_path), video_id=video_id)
-        extract_all_keyframes(
-            video_path=str(proxy_path),
-            scenes=scene_boundaries,
-            out_dir=str(temp_dir / "keyframes"),
-        )
-        scene_result = assemble_scenes(
+        scene_result = build_scene_documents(
             video_path=str(proxy_path),
             video_id=video_id,
-            scene_boundaries=scene_boundaries,
+            keyframe_dir=str(temp_dir / "keyframes"),
             total_duration_ms=proxy_probe.duration_ms,
         )
 

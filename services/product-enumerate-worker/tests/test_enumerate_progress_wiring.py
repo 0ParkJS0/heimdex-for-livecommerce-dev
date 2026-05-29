@@ -83,6 +83,7 @@ def _message(mode: str = "vision+overlay") -> dict:
         "requested_by_user_id": str(uuid4()),
         "enumeration_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
+        "callback_base_url": "http://api:8000",
         "max_keyframes": 60,
         "enumeration_mode": mode,
     }

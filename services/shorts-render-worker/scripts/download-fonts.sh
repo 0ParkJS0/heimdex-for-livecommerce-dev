@@ -16,9 +16,9 @@
 #     Source-of-truth assets live in
 #     services/web/public/fonts/<family>/ on the editor side; copy
 #     them across when adding a new family. The corresponding
-#     contracts ``_FONT_FILE_BASES`` entry pins the exact base
+#     contracts font registry pins the exact base
 #     filename worker-side; rename one without updating the other
-#     and ``_resolve_font_path`` will raise ``FontNotFoundError``
+#     and ``resolve_font_path`` will raise ``FontNotFoundError``
 #     at boot via ``worker.py::_verify_fonts_or_exit``.
 #
 # ffmpeg drawtext works with both OTF and TTF regardless of extension.

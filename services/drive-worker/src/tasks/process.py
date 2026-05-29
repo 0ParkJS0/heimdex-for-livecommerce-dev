@@ -336,9 +336,7 @@ def _process_single_file(
         proxy_s3_key, thumbnail_s3_key, thumbnail_s3_prefix,
     )
     from heimdex_media_pipelines.transcoding import make_transcode_decision, probe_video, transcode_to_proxy
-    from heimdex_media_pipelines.scenes.detector import detect_scenes
-    from heimdex_media_pipelines.scenes.keyframe import extract_all_keyframes
-    from heimdex_media_pipelines.scenes.assembler import assemble_scenes
+    from heimdex_media_pipelines.scenes.scene_pipeline import build_scene_documents
     from heimdex_worker_sdk.s3 import S3Client
 
     org_id_str = str(claimed_file.org_id)
@@ -478,31 +476,10 @@ def _process_single_file(
             lease_token=claimed_file.lease_token,
         )
 
-        t0 = time.monotonic()
-        scene_boundaries = detect_scenes(
+        scene_result = build_scene_documents(
             video_path=str(original_path),
             video_id=claimed_file.video_id,
-        )
-        logger.info(
-            "scene_detection_complete",
-            extra={
-                "video_id": claimed_file.video_id,
-                "scene_count": len(scene_boundaries),
-                "elapsed_s": round(time.monotonic() - t0, 3),
-            },
-        )
-
-        keyframe_dir = temp_dir / "keyframes"
-        keyframe_paths = extract_all_keyframes(
-            video_path=str(original_path),
-            scenes=scene_boundaries,
-            out_dir=str(keyframe_dir),
-        )
-
-        scene_result = assemble_scenes(
-            video_path=str(original_path),
-            video_id=claimed_file.video_id,
-            scene_boundaries=scene_boundaries,
+            keyframe_dir=temp_dir / "keyframes",
             total_duration_ms=proxy_probe.duration_ms,
         )
 

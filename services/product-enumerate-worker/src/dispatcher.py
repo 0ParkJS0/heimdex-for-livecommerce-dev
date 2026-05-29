@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from heimdex_media_contracts.product import PRODUCT_ENUMERATE_JOB_TYPE
 from heimdex_worker_sdk.queue_client import QueueMessage
 from heimdex_worker_sdk.sqs_consumer import InvalidMessageError
 
@@ -51,7 +52,7 @@ def dispatch(
     body = _normalize_body(message)
 
     msg_type = body.get("type")
-    if msg_type == "product.enumerate_job":
+    if msg_type == PRODUCT_ENUMERATE_JOB_TYPE:
         # v0.19.0 contract: ``enumeration_mode`` selects the pass(es) the
         # handler runs. Read here for routing visibility; the handler
         # parses it off the same body dict (default "vision" for old

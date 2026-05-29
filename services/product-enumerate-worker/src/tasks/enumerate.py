@@ -24,12 +24,12 @@ from __future__ import annotations
 import io
 import logging
 import uuid as _uuid
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import httpx
+from heimdex_media_contracts.product import ProductEnumerateJob
 from heimdex_media_pipelines.product_enum import (
     OVERLAY_ENUMERATION_VERSION,
     CanonicalProduct,
@@ -40,6 +40,8 @@ from heimdex_media_pipelines.product_enum import (
     SceneKeyframe,
     enumerate_products,
     enumerate_products_overlay,
+    ocr_nonempty_ratio,
+    should_use_ocr_blind_fallback,
 )
 from heimdex_media_pipelines.siglip2 import (
     SiglipConfig,
@@ -74,38 +76,17 @@ _MODES_WITH_OVERLAY = frozenset({"vision+overlay", "overlay"})
 _MODES_WITH_VISION = frozenset({"vision", "vision+overlay"})
 
 
-@dataclass
-class EnumerateJobMessage:
-    """Decoded SQS body shape — matches
-    ``heimdex_media_contracts.product.ProductEnumerateJob``."""
-
-    job_id: UUID
-    org_id: UUID
-    video_id: UUID
-    requested_by_user_id: UUID
-    enumeration_version: str
-    enumeration_prompt_version: str
-    max_keyframes: int
-    callback_base_url: str
-    # v0.19.0 contract addition. Old senders omit it → "vision" preserves
-    # the legacy single-pass behavior byte-identically.
-    enumeration_mode: str = "vision"
+class EnumerateJobMessage(ProductEnumerateJob):
+    """Decoded SQS body validated by the shared media contract."""
 
     @classmethod
     def from_dict(cls, body: dict[str, Any]) -> "EnumerateJobMessage":
-        return cls(
-            job_id=UUID(body["job_id"]),
-            org_id=UUID(body["org_id"]),
-            video_id=UUID(body["video_id"]),
-            requested_by_user_id=UUID(body["requested_by_user_id"]),
-            enumeration_version=str(body["enumeration_version"]),
-            enumeration_prompt_version=str(body["enumeration_prompt_version"]),
-            max_keyframes=int(body.get("max_keyframes", 60)),
-            # SECURITY (F3): tolerated-but-ignored. Future contract
-            # bump should drop this field entirely.
-            callback_base_url=str(body.get("callback_base_url", "")),
-            enumeration_mode=str(body.get("enumeration_mode", "vision")),
-        )
+        # Compatibility for messages already queued by the pre-contract
+        # publisher. New publishes are contract-exact and omit these.
+        normalized = dict(body)
+        normalized.pop("version", None)
+        normalized.pop("timestamp", None)
+        return cls.model_validate(normalized)
 
 
 def _make_progress_cb(
@@ -501,32 +482,22 @@ def _run_overlay_pass(
     # fan-out by evenly sub-sampling the overlay keyframe list here.
     # Order-preserving; only kicks in when above the cap.
     #
-    # NOTE — the gate predicate (``ratio < min_nonempty_ratio``) is
-    # also evaluated inside ``enumerate_products_overlay`` (see
-    # ``pipelines.product_enum.overlay_pipeline``). This worker-side
-    # duplication is deliberate and temporary: the cap exists to bound
-    # cost while the legacy-OCR corpus is sparse and the fallback
-    # fires on most videos. Once OCR backfill catches up the fallback
-    # rarely triggers and this whole block can be deleted. If pipelines
-    # changes its gate (e.g. ``<`` -> ``<=`` or whitespace handling),
-    # mirror the change here OR extract a shared
-    # ``pipelines.is_ocr_blind_mode(...)`` helper so the predicate has
-    # one owner.
-    if settings.overlay_ocr_blind_fallback_enabled:
-        nonempty = sum(1 for kf in overlay_keyframes if kf.ocr_text.strip())
-        ratio = nonempty / max(1, len(overlay_keyframes))
-        if (
-            ratio < settings.overlay_ocr_blind_fallback_min_nonempty_ratio
-            and len(overlay_keyframes) > settings.overlay_ocr_blind_vlm_cap
-        ):
-            cap = settings.overlay_ocr_blind_vlm_cap
-            step = len(overlay_keyframes) / cap
-            sampled = [overlay_keyframes[int(i * step)] for i in range(cap)]
-            logger.info(
-                "overlay_ocr_blind_sub_sampled in=%d out=%d ratio=%.3f",
-                len(overlay_keyframes), cap, ratio,
-            )
-            overlay_keyframes = sampled
+    if (
+        should_use_ocr_blind_fallback(
+            overlay_keyframes,
+            enabled=settings.overlay_ocr_blind_fallback_enabled,
+            min_nonempty_ratio=settings.overlay_ocr_blind_fallback_min_nonempty_ratio,
+        )
+        and len(overlay_keyframes) > settings.overlay_ocr_blind_vlm_cap
+    ):
+        cap = settings.overlay_ocr_blind_vlm_cap
+        step = len(overlay_keyframes) / cap
+        sampled = [overlay_keyframes[int(i * step)] for i in range(cap)]
+        logger.info(
+            "overlay_ocr_blind_sub_sampled in=%d out=%d ratio=%.3f",
+            len(overlay_keyframes), cap, ocr_nonempty_ratio(overlay_keyframes),
+        )
+        overlay_keyframes = sampled
 
     products, total_cost = enumerate_products_overlay(
         keyframes=overlay_keyframes,

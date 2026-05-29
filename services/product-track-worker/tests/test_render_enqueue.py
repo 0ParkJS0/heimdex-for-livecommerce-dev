@@ -28,7 +28,7 @@ from heimdex_media_pipelines.product_track.stitching import StitchPlan
 from heimdex_media_pipelines.product_track.subset_selector import ScoredWindow
 
 from src.settings import WorkerSettings
-from src.tasks.track import _build_composition_spec, handle_track_job
+from src.tasks.track import TrackJobMessage, _build_composition_spec, handle_track_job
 
 
 def _settings() -> WorkerSettings:
@@ -53,7 +53,43 @@ def _job_body() -> dict:
         "duration_preset_sec": 60,
         "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
+        "callback_base_url": "http://api:8000",
     }
+
+
+def test_message_validation_rejects_contract_extra_fields():
+    body = _job_body()
+    body["unexpected"] = "boom"
+
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        TrackJobMessage.from_dict(body)
+
+
+def test_message_validation_accepts_legacy_envelope_fields():
+    body = _job_body()
+    body["version"] = "1"
+    body["timestamp"] = "2026-05-30T00:00:00+00:00"
+
+    decoded = TrackJobMessage.from_dict(body)
+
+    assert decoded.mode == "enumerate"
+
+
+def test_message_validation_rejects_inconsistent_time_range():
+    body = _job_body()
+    body.update(
+        {
+            "mode": "scan_order",
+            "catalog_entry_id": None,
+            "duration_preset_sec": None,
+            "length_seconds": 60,
+            "requested_count": 5,
+            "time_range_start_ms": 1000,
+        }
+    )
+
+    with pytest.raises(ValueError, match="time_range_start_ms"):
+        TrackJobMessage.from_dict(body)
 
 
 def _fake_canonical():

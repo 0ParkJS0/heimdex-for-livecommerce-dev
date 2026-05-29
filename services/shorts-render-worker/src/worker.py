@@ -43,15 +43,18 @@ def _verify_fonts_or_exit() -> None:
     check guarantees every render will find its font. Reads FONT_DIR
     via the same fallback chain as `tasks.render` (env var → default).
     """
-    from heimdex_media_contracts.composition import SUPPORTED_FONTS, FontNotFoundError
-    from heimdex_media_contracts.composition.filters import _resolve_font_path
+    from heimdex_media_contracts.composition import (
+        SUPPORTED_FONTS,
+        FontNotFoundError,
+        resolve_font_path,
+    )
     from src.tasks.render import _DEFAULT_FONT_DIR
 
     font_dir = os.environ.get("FONT_DIR", _DEFAULT_FONT_DIR)
     missing: list[str] = []
     for family in SUPPORTED_FONTS:
         try:
-            _resolve_font_path(family, 400, font_dir)
+            resolve_font_path(family, 400, font_dir)
         except FontNotFoundError as exc:
             missing.append(f"{family}: {exc}")
 

@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import httpx
+from heimdex_media_contracts.product import ProductTrackJob
 # The lib's __init__ doesn't re-export — import each symbol from
 # its submodule. Mirrors how product-enumerate-worker imports the
 # product_enum lib.
@@ -256,89 +257,17 @@ class _CountingSam2Tracker:
         return self.attempted > 0 and self.failed == self.attempted
 
 
-@dataclass
-class TrackJobMessage:
-    """Decoded SQS body — matches
-    ``heimdex_media_contracts.product.ProductTrackJob`` (v0.14.0+).
-
-    Fields ``catalog_entry_id`` and ``duration_preset_sec`` are
-    Optional in v0.14.0 to support the wizard scan_order parent flow,
-    which has no single catalog entry to anchor on.
-
-    Mode dispatch (in ``handle_track_job`` below):
-      * ``mode='enumerate'`` (default) AND ``catalog_entry_id`` set
-        → legacy single-product flow (existing track pipeline).
-      * ``mode='scan_order'`` AND ``catalog_entry_id`` is None
-        → wizard parent — process the whole video catalog. Real
-        per-catalog loop lands in PR #5b; PR #5a stubs this with a
-        clear ``not_yet_implemented`` failure so the dispatcher
-        doesn't crash on unknown shapes.
-      * ``mode='render_child'`` → reserved; render_child rows are
-        processed in-API by the child runner, NOT via SQS. If we
-        ever see one here, it's a bug — fail loudly.
-    """
-
-    job_id: UUID
-    org_id: UUID
-    video_id: UUID  # DriveFile UUID, NOT the OS string id
-    catalog_entry_id: UUID | None
-    requested_by_user_id: UUID
-    duration_preset_sec: int | None
-    tracker_version: str
-    enumeration_prompt_version: str
-    callback_base_url: str
-
-    # v0.14.0 wizard fields — None for legacy senders.
-    mode: str = "enumerate"
-    length_seconds: int | None = None
-    requested_count: int | None = None
-    time_range_start_ms: int | None = None
-    time_range_end_ms: int | None = None
-    product_distribution: str | None = None
-    language: str | None = None
-    intent: str | None = None
+class TrackJobMessage(ProductTrackJob):
+    """Decoded SQS body validated by the shared media contract."""
 
     @classmethod
     def from_dict(cls, body: dict[str, Any]) -> "TrackJobMessage":
-        catalog_entry_id_raw = body.get("catalog_entry_id")
-        duration_preset_raw = body.get("duration_preset_sec")
-        return cls(
-            job_id=UUID(body["job_id"]),
-            org_id=UUID(body["org_id"]),
-            video_id=UUID(body["video_id"]),
-            catalog_entry_id=(
-                UUID(catalog_entry_id_raw) if catalog_entry_id_raw else None
-            ),
-            requested_by_user_id=UUID(body["requested_by_user_id"]),
-            duration_preset_sec=(
-                int(duration_preset_raw) if duration_preset_raw is not None else None
-            ),
-            tracker_version=str(body["tracker_version"]),
-            enumeration_prompt_version=str(body["enumeration_prompt_version"]),
-            # SECURITY (F3): tolerated-but-ignored. Future contract
-            # bump should drop this field entirely.
-            callback_base_url=str(body.get("callback_base_url", "")),
-            mode=str(body.get("mode", "enumerate")),
-            length_seconds=(
-                int(body["length_seconds"]) if "length_seconds" in body else None
-            ),
-            requested_count=(
-                int(body["requested_count"]) if "requested_count" in body else None
-            ),
-            time_range_start_ms=(
-                int(body["time_range_start_ms"])
-                if "time_range_start_ms" in body
-                else None
-            ),
-            time_range_end_ms=(
-                int(body["time_range_end_ms"])
-                if "time_range_end_ms" in body
-                else None
-            ),
-            product_distribution=body.get("product_distribution"),
-            language=body.get("language"),
-            intent=body.get("intent"),
-        )
+        # Compatibility for messages already queued by the pre-contract
+        # publisher. New publishes are contract-exact and omit these.
+        normalized = dict(body)
+        normalized.pop("version", None)
+        normalized.pop("timestamp", None)
+        return cls.model_validate(normalized)
 
 
 def handle_track_job(

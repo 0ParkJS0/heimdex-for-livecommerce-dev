@@ -29,6 +29,7 @@ from uuid import UUID
 
 import requests
 
+from heimdex_media_contracts.blur import BlurJobCreated
 from heimdex_worker_sdk import emit_event
 
 logger = logging.getLogger(__name__)
@@ -51,14 +52,15 @@ class BlurClaimRef:
 
 
 def sqs_to_blur_claim(message: Any) -> BlurClaimRef:
-    """Parse an SQS message body into a ``BlurClaimRef``."""
+    """Validate an SQS body with contracts, then build a claim ref."""
     body_raw = message.body if hasattr(message, "body") else message["Body"]
     body = json.loads(body_raw) if isinstance(body_raw, str) else body_raw
+    job = BlurJobCreated.model_validate(body)
     return BlurClaimRef(
-        job_id=UUID(body["job_id"]),
-        org_id=UUID(body["org_id"]),
-        file_id=UUID(body["file_id"]),
-        video_id=body["video_id"],
+        job_id=job.job_id,
+        org_id=job.org_id,
+        file_id=job.file_id,
+        video_id=job.video_id,
     )
 
 

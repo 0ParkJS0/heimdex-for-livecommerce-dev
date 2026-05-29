@@ -31,6 +31,7 @@ from uuid import UUID
 
 import requests
 
+from heimdex_media_contracts.blur import BlurExportCreated
 from heimdex_worker_sdk import emit_event
 
 from src.tasks.ffmpeg_compose import run_compose
@@ -54,11 +55,12 @@ class BlurExportRef:
 def sqs_to_export_ref(message: Any) -> BlurExportRef:
     body_raw = message.body if hasattr(message, "body") else message["Body"]
     body = json.loads(body_raw) if isinstance(body_raw, str) else body_raw
+    export = BlurExportCreated.model_validate(body)
     return BlurExportRef(
-        export_id=UUID(body["export_id"]),
-        org_id=UUID(body["org_id"]),
-        blur_job_id=UUID(body["blur_job_id"]),
-        video_id=body["video_id"],
+        export_id=export.export_id,
+        org_id=export.org_id,
+        blur_job_id=export.blur_job_id,
+        video_id=export.video_id,
     )
 
 

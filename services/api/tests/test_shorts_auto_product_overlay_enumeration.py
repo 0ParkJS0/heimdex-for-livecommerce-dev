@@ -183,6 +183,11 @@ def test_publish_body_carries_enumeration_mode(monkeypatch):
         max_keyframes=60, callback_base_url="http://api:8000",
         enumeration_mode="vision+overlay",
     )
+    assert set(captured["body"]).issuperset(
+        {"type", "job_id", "org_id", "video_id", "requested_by_user_id"}
+    )
+    assert "timestamp" not in captured["body"]
+    assert "version" not in captured["body"]
     assert captured["body"]["enumeration_mode"] == "vision+overlay"
 
 
@@ -202,6 +207,23 @@ def test_publish_body_defaults_enumeration_mode_to_vision(monkeypatch):
         max_keyframes=60, callback_base_url="http://api:8000",
     )
     assert captured["body"]["enumeration_mode"] == "vision"
+
+
+def test_publish_rejects_invalid_enumeration_mode(monkeypatch):
+    import app.sqs_producer as sqs_producer
+
+    publish = MagicMock()
+    monkeypatch.setattr(sqs_producer, "_publish_required", publish)
+
+    with pytest.raises(ValueError):
+        sqs_producer.publish_product_enumerate_job(
+            job_id=uuid4(), org_id=uuid4(), video_id=uuid4(),
+            requested_by_user_id=uuid4(),
+            enumeration_version="v1.0", enumeration_prompt_version="v1.0",
+            max_keyframes=60, callback_base_url="http://api:8000",
+            enumeration_mode="bad-mode",
+        )
+    publish.assert_not_called()
 
 
 # =========================================================================

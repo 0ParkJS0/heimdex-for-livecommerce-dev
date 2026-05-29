@@ -11,8 +11,8 @@ dependencies = [
     "structlog>=23.0",
     "requests>=2.31",
     "Pillow>=10.0",
-    "heimdex-media-contracts>=0.7.0",
-    "heimdex-media-pipelines>=0.6.0",
+    "heimdex-media-contracts>=0.20.1",
+    "heimdex-media-pipelines>=0.16.3",
 ]
 
 [build-system]

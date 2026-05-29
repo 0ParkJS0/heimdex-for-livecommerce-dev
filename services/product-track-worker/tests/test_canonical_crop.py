@@ -48,7 +48,7 @@ def _decoded(*, org_id: UUID | None = None) -> TrackJobMessage:
         duration_preset_sec=60,
         tracker_version="v1.0",
         enumeration_prompt_version="v1.0",
-        callback_base_url="",
+        callback_base_url="http://api:8000",
     )
 
 

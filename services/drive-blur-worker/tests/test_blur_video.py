@@ -152,6 +152,9 @@ def _http_response(status_code: int, json_body: dict | None = None):
 class TestSqsAdapter:
     def test_parses_dict_message(self):
         body = {
+            "version": "1",
+            "type": "blur.job_created",
+            "timestamp": "2026-05-30T00:00:00+00:00",
             "job_id": str(uuid4()),
             "org_id": str(uuid4()),
             "file_id": str(uuid4()),
@@ -168,10 +171,16 @@ class TestSqsAdapter:
 
     def test_parses_sqs_style_mapping(self):
         body = {
+            "version": "1",
+            "type": "blur.job_created",
+            "timestamp": "2026-05-30T00:00:00+00:00",
             "job_id": str(uuid4()),
             "org_id": str(uuid4()),
             "file_id": str(uuid4()),
             "video_id": "gd_video",
+            "source_s3_key": "proxies/gd_video/proxy.mp4",
+            "source_kind": "proxy",
+            "options": {},
         }
         msg = {"Body": json.dumps(body)}
         ref = sqs_to_blur_claim(msg)
