@@ -28,6 +28,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from heimdex_media_contracts.ingest import IngestScenesRequest
+from heimdex_media_contracts.ocr import gate_ocr_text
 
 from heimdex_media_contracts.speech.tagger import SpeechTagger, PRODUCT_KEYWORD_DICT
 
@@ -72,6 +73,35 @@ def generate_tags(transcript: str, caption: str) -> tuple[list[str], list[str]]:
         product_tags.update(tagged.tags)
 
     return sorted(keyword_tags), sorted(product_tags)
+
+
+# ---------------------------------------------------------------------------
+# OCR ingest processing — single chokepoint for the contracts gating rules.
+#
+# Applies heimdex_media_contracts.ocr.gate_ocr_text before storage so that
+# every OCR-bearing scene that lands in OpenSearch honors G2 (min 3 chars),
+# G3 (useful-char ratio), and G4 (10k clamp).
+#
+# ocr_char_count follows heimdex_media_contracts.ocr.OCRSceneResult: it is
+# len(raw_gated), NOT len(norm). Storing len(norm) was the prior bug — search
+# scoring used the norm count while the contract assumed raw count.
+# ---------------------------------------------------------------------------
+
+
+def process_ocr_text(raw: str | None) -> tuple[str, str, int]:
+    """Apply contracts OCR gating + normalization at the ingest boundary.
+
+    Returns (ocr_text_raw, ocr_text_norm, ocr_char_count) ready to write to
+    OpenSearch. All three derive from the same gated text so the fields are
+    guaranteed consistent at storage time — no risk of char_count
+    disagreeing with the text it counts.
+    """
+    if not raw:
+        return "", "", 0
+    gated = gate_ocr_text(raw)
+    if not gated:
+        return "", "", 0
+    return gated, normalize_transcript(gated), len(gated)
 
 
 # ---------------------------------------------------------------------------
@@ -203,16 +233,17 @@ class SceneIngestService:
         now = datetime.now(timezone.utc)
         org_id_str = str(org_id)
 
-        normalized: list[tuple[str, str, int, str]] = []
+        # OCR fields go through process_ocr_text() so the storage contract
+        # is enforced even if an upstream worker sends legacy raw text.
+        normalized: list[tuple[str, str, str, int, str]] = []
         for scene in request.scenes:
             transcript_norm = normalize_transcript(scene.transcript_raw)
-            ocr_norm = normalize_transcript(scene.ocr_text_raw) if scene.ocr_text_raw else ""
-            ocr_char_count = len(ocr_norm)
+            ocr_raw_gated, ocr_norm, ocr_char_count = process_ocr_text(scene.ocr_text_raw)
             caption_norm = normalize_transcript(scene.scene_caption) if scene.scene_caption else ""
-            normalized.append((transcript_norm, ocr_norm, ocr_char_count, caption_norm))
+            normalized.append((transcript_norm, ocr_raw_gated, ocr_norm, ocr_char_count, caption_norm))
 
         texts_to_embed: list[tuple[int, str]] = []
-        for idx, (transcript_norm, ocr_norm, _, caption_norm) in enumerate(normalized):
+        for idx, (transcript_norm, _ocr_raw, ocr_norm, _, caption_norm) in enumerate(normalized):
             embedding_text = build_embedding_text(transcript_norm, ocr_norm, caption_norm)
             if embedding_text:
                 texts_to_embed.append((idx, embedding_text))
@@ -233,7 +264,7 @@ class SceneIngestService:
         # 4. Build bulk index payload (reuse cached normalized transcripts)
         documents: list[tuple[str, dict[str, Any]]] = []
         for idx, scene in enumerate(request.scenes):
-            transcript_norm, ocr_norm, ocr_char_count, caption_norm = normalized[idx]
+            transcript_norm, ocr_raw_gated, ocr_norm, ocr_char_count, caption_norm = normalized[idx]
             char_count = len(transcript_norm)
 
             doc: dict[str, Any] = {
@@ -253,7 +284,7 @@ class SceneIngestService:
                 "product_tags": scene.product_tags,
                 "product_entities": scene.product_entities,
                 "ai_tags": scene.ai_tags or [],
-                "ocr_text_raw": scene.ocr_text_raw,
+                "ocr_text_raw": ocr_raw_gated,
                 "ocr_text_norm": ocr_norm,
                 "ocr_char_count": ocr_char_count,
                 "scene_caption": caption_norm,
@@ -411,10 +442,12 @@ class SceneIngestService:
                     w.model_dump() for w in enrichment.transcript_words
                 ]
             if enrichment.ocr_text_raw is not None:
-                ocr_norm = normalize_transcript(enrichment.ocr_text_raw) if enrichment.ocr_text_raw else ""
-                partial["ocr_text_raw"] = enrichment.ocr_text_raw
+                ocr_raw_gated, ocr_norm, ocr_char_count = process_ocr_text(
+                    enrichment.ocr_text_raw
+                )
+                partial["ocr_text_raw"] = ocr_raw_gated
                 partial["ocr_text_norm"] = ocr_norm
-                partial["ocr_char_count"] = len(ocr_norm)
+                partial["ocr_char_count"] = ocr_char_count
                 needs_embedding_update = True
             if enrichment.scene_caption is not None and "scene_caption" not in protected:
                 caption_norm = normalize_transcript(enrichment.scene_caption) if enrichment.scene_caption else ""
@@ -527,15 +560,16 @@ class SceneIngestService:
                 skipped += 1
                 continue
 
-            ocr_text = enrichment.ocr_text_raw or ""
-            ocr_norm = normalize_transcript(ocr_text) if ocr_text else ""
+            ocr_raw_gated, ocr_norm, ocr_char_count = process_ocr_text(
+                enrichment.ocr_text_raw
+            )
             partial_updates.append(
                 (
                     doc_id,
                     {
-                        "ocr_text_raw": ocr_text,
+                        "ocr_text_raw": ocr_raw_gated,
                         "ocr_text_norm": ocr_norm,
-                        "ocr_char_count": len(ocr_norm),
+                        "ocr_char_count": ocr_char_count,
                         "ingest_time": now.isoformat(),
                     },
                 )

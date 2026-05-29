@@ -16,7 +16,8 @@ RUN pip install --no-cache-dir -e . 2>/dev/null || \
     pip install --no-cache-dir \
       "boto3>=1.34" "apscheduler>=3.10,<4" "pydantic-settings>=2.0" \
       "structlog>=23.0" "requests>=2.31" \
-      "paddleocr>=2.8.0" "paddlepaddle>=2.6.1"
+      "paddleocr>=2.8.0" "paddlepaddle>=2.6.1" \
+      "heimdex-media-contracts>=0.7.0" "heimdex-media-pipelines>=0.16.2"
 
 COPY services/drive-ocr-worker/src/ src/
 

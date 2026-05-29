@@ -52,6 +52,10 @@ class EnrichSceneUpdate(BaseModel):
     speech_segment_count: int | None = Field(default=None)
     speaker_transcript: str | None = Field(default=None)
     speaker_count: int | None = Field(default=None)
+    # Do not set max_length here. The ingest service applies
+    # heimdex_media_contracts.ocr.gate_ocr_text(), whose G4 rule clamps
+    # overlong OCR to 10,000 chars. Rejecting before that boundary would
+    # turn a contract clamp into a 422 and break legacy/backfill workers.
     ocr_text_raw: str | None = Field(default=None)
     ocr_char_count: int | None = Field(default=None)
     scene_caption: str | None = Field(default=None)

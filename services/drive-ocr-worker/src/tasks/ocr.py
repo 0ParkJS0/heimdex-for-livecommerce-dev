@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from heimdex_media_pipelines.ocr import process_ocr_blocks
 from heimdex_worker_sdk import emit_event
 
 logger = logging.getLogger(__name__)
@@ -236,9 +237,9 @@ def _process_single_ocr(
                         },
                     )
                 continue
-            text = " ".join(b.text for b in blocks if b.text.strip())
-            if text:
-                ocr_results[scene_idx] = text
+            postprocessed = process_ocr_blocks(blocks)
+            if postprocessed.ocr_text_raw:
+                ocr_results[scene_idx] = postprocessed.ocr_text_raw
 
         # Defense in depth: if EVERY frame errored at the engine level,
         # this is a worker bug (not "video genuinely had no text"). The
@@ -263,12 +264,11 @@ def _process_single_ocr(
         for i, scene in enumerate(scenes):
             scene_copy = dict(scene)
             if i in ocr_results:
-                ocr_text = ocr_results[i][:10_000]
+                ocr_text = ocr_results[i]
                 scene_copy["ocr_text_raw"] = ocr_text
                 scene_copy["ocr_char_count"] = len(ocr_text)
                 total_ocr_chars += len(ocr_text)
-                if ocr_text:
-                    frames_with_text += 1
+                frames_with_text += 1
             updated_scenes.append(scene_copy)
 
         try:
