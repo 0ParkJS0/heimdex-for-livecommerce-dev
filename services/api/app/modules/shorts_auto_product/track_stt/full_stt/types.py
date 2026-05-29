@@ -42,14 +42,18 @@ class FullSttSegment:
 class FullSttClipPlan:
     """Output of FullSttExplainerPicker.
 
-    Segments are chronological, non-overlapping. Falls back to a positional
-    plan when the LLM fails; ``fallback_used=True`` in that case.
+    Segments are chronological, non-overlapping. ``fallback_used=True``
+    means the LLM pick was not used. ``error`` carries the failure reason
+    for the mention-extraction path (``pick``) — empty plan + ``error``
+    string. The multi-short ``pick_many`` path uses a positional fallback
+    instead and leaves ``error=None``.
     """
 
     segments: list[FullSttSegment]
     total_duration_ms: int
     global_rationale: str = ""
     fallback_used: bool = False
+    error: str | None = None
 
     @property
     def is_empty(self) -> bool:

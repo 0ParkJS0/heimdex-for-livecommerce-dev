@@ -1,8 +1,15 @@
-"""Prompt construction for the full-STT product explainer picker.
+"""Prompt construction for the full-STT product mention extractor.
 
-No slot structure. No HOOK/INTRO/DETAIL/CTA. The LLM decides how many
-segments to pick and which ones — we only constrain the output shape
-(chronological, 3-8 segments, no timestamp hallucination).
+The single-short ``pick`` path extracts EVERY scene range where the
+detected product is mentioned (no chunk-pick, no duration packing) via
+``_SYSTEM_PROMPT`` + ``build_mention_user_prompt``.
+
+The multi-short ``pick_many`` path is two-stage: stage 1 reuses the exact
+same mention extraction above (so "what counts as a mention" lives in ONE
+place), and stage 2 groups those already-found regions into N distinct
+shorts via ``_MULTI_SYSTEM_PROMPT`` + ``build_grouping_user_prompt``. The
+grouping prompt does NOT re-define what a mention is — it only partitions
+the regions it is handed.
 
 Imports only: full_stt/types.FullSttScene (no other track_stt deps).
 """
@@ -12,62 +19,79 @@ from __future__ import annotations
 from app.modules.shorts_auto_product.track_stt.full_stt.types import FullSttScene
 
 
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 
 _SYSTEM_PROMPT = (
-    "You are a video editor. The transcript below is split into consecutive "
-    "multi-scene chunks (each entry merges several adjacent scenes). Select "
-    "chunk(s) that explain the product clearly to someone who was not present "
-    "at the live stream.\n\n"
-    "Each transcript entry is context for a source range. The final rendered "
-    "short will be assembled from original scenes inside the selected chunk(s), "
-    "so pick the chunk(s) with the best product story even if a full chunk is "
-    "longer than the target duration.\n\n"
-    "Guidelines:\n"
-    "- Select 1-2 chunks. Prefer 1 if it already covers the product story well.\n"
-    "- Each chunk must explain, demonstrate, or describe the product "
-    "(what it does, who it is for, why it matters)\n"
-    "- If picking 2, they must cover distinct story beats — no redundancy\n"
-    "- Prefer chunks that are self-contained over heavily context-dependent ones\n"
-    "- Avoid time-sensitive language (\"today only\", \"limited stock\", \"right now\") "
-    "— this clip will be watched weeks or months after the live stream\n"
-    "- Chunks must be in chronological order\n\n"
-    "Return the segment_index of each chosen chunk and a short rationale. "
-    "Chunks must be in chronological order."
+    "You are analyzing a video transcript to find every moment the product "
+    "\"{product_name}\" is discussed. Scenes are listed chronologically with "
+    "0-based indices and grouped into chunks (15 consecutive scenes each) so "
+    "you can use surrounding context to disambiguate references.\n\n"
+    "Your job: return every scene range where \"{product_name}\" — and only "
+    "this product — is mentioned, explained, demonstrated, or described. A "
+    "'mention' requires the referent to be \"{product_name}\": its name or a "
+    "listed alias — including STT-garbled forms that are phonetically close "
+    "(e.g. dropped/swapped syllables, split words) — stated explicitly, OR a "
+    "pronoun/deictic ('this', 'it') or a feature/use description that nearby "
+    "context clearly ties to it. Talk about the product CATEGORY in general, "
+    "or about a DIFFERENT same-category product (even in comparison, even "
+    "described favorably in detail), does NOT count. When a reference could "
+    "plausibly be another product, EXCLUDE it.\n\n"
+    "Rules:\n"
+    "- Return EVERY qualifying region, but only ones you can tie to "
+    "\"{product_name}\"; if it is never mentioned, return an empty list.\n"
+    "- A region is a CONSECUTIVE range [start_scene_idx, end_scene_idx], both "
+    "bounds inclusive; use the same value for a single scene.\n"
+    "- Do NOT merge across a gap: mentions in 5,6,7 and 12 are TWO regions "
+    "[5,7] and [12,12].\n"
+    "- Chunks are context only; a scene that merely helped resolve a reference "
+    "but carries no mention of its own must NOT be in any region.\n"
+    "- Regions must be chronological and must not overlap.\n\n"
+    "For each region return start_scene_idx, end_scene_idx, and a short "
+    "rationale that quotes the actual transcript wording (even if garbled) and "
+    "notes why it refers to \"{product_name}\" rather than another product in "
+    "the category."
 )
 
+def build_mention_system_prompt(llm_label: str) -> str:
+    """Fill the {product_name} slots in the mention-extraction system prompt.
 
-# ── Multi-short (shared planner) prompt ──────────────────────────────
-# Parallel to the single-short prompt above. The shared planner asks for
-# N meaningfully-different shorts in ONE call. The legacy single-short
-# prompt is left byte-stable so the flag-off path is an exact rollback.
-MULTI_PROMPT_VERSION = "v4"
+    The picker must send the FORMATTED string — sending ``_SYSTEM_PROMPT``
+    raw leaves literal ``{product_name}`` in the LLM's instructions and
+    silently disables the "only this product" constraint.
+    """
+    return _SYSTEM_PROMPT.format(product_name=llm_label)
+
+
+# ── Multi-short grouping prompt (pick_many stage 2) ──────────────────
+# Stage 1 already found every product-mention region (reusing the
+# single-short extraction above). This prompt ONLY groups those regions
+# into N distinct shorts — it must not re-judge what counts as a mention.
+# Bumped v4 → v5 when the chunk-pick prompt was replaced by grouping.
+MULTI_PROMPT_VERSION = "v5"
 
 _MULTI_SYSTEM_PROMPT = (
-    "You are a video editor. The transcript below is split into consecutive "
-    "multi-scene chunks (each entry merges several adjacent scenes). Produce "
-    "several distinct short video edits that each explain the product clearly "
-    "to someone who was not present at the live stream.\n\n"
-    "Each transcript entry is context for a source range. The final rendered "
-    "short will be assembled from original scenes inside the selected chunk(s), "
-    "so pick the chunk(s) with the best product story even if a full chunk is "
-    "longer than the target duration.\n\n"
+    "You are a video editor. Below is a numbered list of transcript regions "
+    "that have ALREADY been confirmed to mention a specific product — each "
+    "region carries an index, a timestamp, the spoken text, and a note on why "
+    "it refers to the product.\n\n"
+    "Your job: group these regions into exactly the requested number of short "
+    "video edits, each explaining the product to someone who was not present "
+    "at the live stream. Reference regions only by their given index — never "
+    "invent regions that are not in the list.\n\n"
     "Guidelines:\n"
-    "- Produce exactly the requested number of shorts\n"
-    "- Each short selects 1-2 chunks. Prefer 1 if a single chunk already covers "
-    "the product story well.\n"
-    "- Every chunk must explain, demonstrate, or describe the product "
-    "(what it does, who it is for, why it matters)\n"
-    "- Within a short, avoid redundancy and keep chunks in chronological order\n"
-    "- Make the shorts MEANINGFULLY DIFFERENT from one another: feature distinct "
-    "moments of the video and vary the aspect of the product emphasized. "
-    "Do not return the same selection twice.\n"
+    "- Produce exactly the requested number of shorts.\n"
+    "- Each short selects one or more regions whose combined length is roughly "
+    "the target duration. A region may be reused across shorts only if there "
+    "are not enough distinct regions to fill every short.\n"
+    "- Within a short, keep regions in chronological order (ascending index).\n"
+    "- Make the shorts MEANINGFULLY DIFFERENT from one another: feature "
+    "distinct regions and vary the aspect of the product emphasized. Do not "
+    "return the same set of regions twice.\n"
     "- Avoid time-sensitive language (\"today only\", \"limited stock\", "
-    "\"right now\") — these clips will be watched weeks or months later\n\n"
-    "For each short return: the segment_index of each chosen chunk with a short "
-    "per-segment rationale, a global_rationale for the short, and a "
-    "differentiation_note saying how this short differs from the others. "
-    "Chunks within each short must be in chronological order."
+    "\"right now\") — these clips will be watched weeks or months later.\n\n"
+    "For each short return: region_indices (the chosen region indices in "
+    "chronological order), a global_rationale for the short, and a "
+    "differentiation_note saying how this short differs from the others."
 )
 
 
@@ -196,29 +220,81 @@ def build_user_prompt(
     return "\n".join(lines)
 
 
-def build_multi_user_prompt(
+def build_mention_user_prompt(
     *,
-    scenes: list[FullSttScene],
-    target_duration_ms: int,
+    scene_groups: list[list[FullSttScene]],
     llm_label: str,
     spoken_aliases: list[str],
+) -> str:
+    """Format the mention-extraction prompt: chunk headers + per-scene lines.
+
+    Each scene gets a flat 0-based ``scene_idx`` that the LLM uses to
+    address mention regions. Chunk headers are visual context only —
+    the addressable unit is the scene index.
+
+    Empty groups are skipped silently.
+    """
+    flat_scenes: list[FullSttScene] = [s for group in scene_groups for s in group]
+    total_ms = flat_scenes[-1].end_ms if flat_scenes else 0
+
+    clean_aliases = [a for a in (spoken_aliases or []) if a and a != llm_label]
+    alias_str = ", ".join(clean_aliases) if clean_aliases else "(no aliases)"
+
+    lines = [
+        f"Product: {llm_label} (also called: {alias_str})",
+        f"Source: {_ms_to_mmss(total_ms)}",
+        "",
+        (
+            f"Transcript ({len(flat_scenes)} scenes in {len(scene_groups)} "
+            f"chunks, chronological, scene_idx 0-indexed):"
+        ),
+    ]
+
+    scene_idx = 0
+    for chunk_i, group in enumerate(scene_groups):
+        if not group:
+            continue
+        chunk_start = _ms_to_mmss(group[0].start_ms)
+        chunk_end = _ms_to_mmss(group[-1].end_ms)
+        lines.append("")
+        lines.append(f"── Chunk {chunk_i} ({chunk_start}-{chunk_end}) ──")
+        for scene in group:
+            start_str = _ms_to_mmss(scene.start_ms)
+            end_str = _ms_to_mmss(scene.end_ms)
+            text = scene.text.replace('"', "'")
+            lines.append(f'[{scene_idx}] {start_str}-{end_str} "{text}"')
+            scene_idx += 1
+
+    return "\n".join(lines)
+
+
+def build_grouping_user_prompt(
+    *,
+    regions: list[tuple[int, int, str, str]],
+    target_duration_ms: int,
     n: int,
 ) -> str:
-    """User-turn prompt for the shared planner: ask for ``n`` distinct shorts.
+    """User-turn prompt for ``pick_many`` stage 2: group regions into ``n``
+    shorts.
 
-    Reuses ``build_user_prompt`` for the product header + transcript block
-    (single source of truth for the scene formatting) and prepends the
-    N-shorts instruction. Callers cap + sort scenes upstream.
+    ``regions`` is the stage-1 mention list, pre-flattened by the picker into
+    ``(start_ms, end_ms, text, rationale)`` tuples so this module stays free
+    of schema/picker imports. Each region is listed with its 0-based index —
+    the index the model returns in ``region_indices``.
     """
     target_s = target_duration_ms // 1000
-    header = (
+    lines = [
         f"Produce exactly {n} shorts, each approximately {target_s}s, that are "
-        f"meaningfully different from one another.\n"
-    )
-    base = build_user_prompt(
-        scenes=scenes,
-        target_duration_ms=target_duration_ms,
-        llm_label=llm_label,
-        spoken_aliases=spoken_aliases,
-    )
-    return header + "\n" + base
+        f"meaningfully different from one another.",
+        "",
+        f"Mention regions ({len(regions)}, chronological, index 0-based):",
+    ]
+    for idx, (start_ms, end_ms, text, rationale) in enumerate(regions):
+        start_str = _ms_to_mmss(start_ms)
+        end_str = _ms_to_mmss(end_ms)
+        clean_text = (text or "").replace('"', "'")
+        line = f'[{idx}] {start_str}-{end_str} "{clean_text}"'
+        if rationale:
+            line += f" — {rationale}"
+        lines.append(line)
+    return "\n".join(lines)

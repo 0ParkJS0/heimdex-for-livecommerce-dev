@@ -799,13 +799,22 @@ class Settings(BaseSettings):
     # talking) before passing to the LLM.  Default True — reduces token
     # count and improves pick quality by excluding silent b-roll.
     auto_shorts_product_v2_full_stt_live_only: bool = True
-    # When True, one shared LLM call per scan (per product) returns N
+    # When True, a shared planning step per scan (per product) returns N
     # *distinct* shorts, planned once and persisted per child — instead of
     # N independent per-child calls that rate-limit each other and (being
-    # deterministic) produce identical shorts. Default False; flip per-env
-    # after staging smoke. See
-    # ``.claude/plans/full-stt-shared-planner-2026-05-20.md``.
-    auto_shorts_product_v2_full_stt_shared_plan_enabled: bool = False
+    # deterministic) produce identical shorts. The planning step makes two
+    # gpt calls per product group: stage 1 extracts every product-mention
+    # region (shared with the single-short ``pick``), stage 2 groups those
+    # regions into N distinct shorts.
+    #
+    # Default flipped False -> True on 2026-05-29: with it OFF, requesting
+    # multiple shorts for one product produced identical copies (same
+    # product + stable seed + temperature 0 → deterministic same pick),
+    # which is never what a wizard user wants when they choose a shorts
+    # count > 1. Distinct multi-shorts is the expected behavior, so it is
+    # now the default; the OFF path is retained only as an emergency
+    # rollback. See ``.claude/plans/full-stt-shared-planner-2026-05-20.md``.
+    auto_shorts_product_v2_full_stt_shared_plan_enabled: bool = True
 
     # --- Auto-shorts: Phase 1 live-only segmentation filter ---
     # When True, the STT pipeline partitions a video's scenes into

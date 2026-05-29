@@ -1,10 +1,21 @@
-"""Full-STT product explainer picker — one LLM call, no slot structure.
+"""Full-STT product mention extractor + multi-short grouping picker.
 
-Calls gpt-4o-mini once per clip with the full timestamped transcript +
-product context, asks it to freely pick 3-8 segments that explain the
-product, and validates the response (OpenAI strict-mode JSON schema →
-Pydantic → semantic constraints). Any defect at any layer falls back to a
-positional plan that requires no external calls.
+Two entry points:
+
+* ``pick`` — one gpt-4o-mini call. Extracts EVERY scene range where the
+  product is mentioned. The LLM sees per-scene transcript lines grouped
+  under chunk headers (chunk grouping is context only — output is
+  per-scene). Returns a ``FullSttClipPlan`` whose ``segments`` are the
+  actual mention regions, with no target-duration packing.
+
+* ``pick_many`` — two gpt-4o-mini calls. Stage 1 reuses the EXACT same
+  mention extraction as ``pick`` (so "what counts as a mention" lives in
+  one place). Stage 2 hands the found regions to the model and asks it to
+  group them into N meaningfully-different shorts; each short's mention
+  scenes are then packed front-to-back to the target render window
+  (mention scenes only — no padding with non-mention scenes). A short that
+  cannot be built (or when extraction/grouping fails) degrades to a
+  distinct positional cut so exactly N plans are always returned.
 
 Coupling:
 * Imports ``app.lib.whisper_transcribe.budget`` for the BudgetTracker
@@ -14,11 +25,6 @@ Coupling:
   segment_assembler, clip_selector, or any other track_stt submodule.
 * Picker NEVER raises out — any defect path logs structured and returns
   a FullSttClipPlan with fallback_used=True.
-
-Cost shape (gpt-4o-mini):
-* 300-scene cap → ~9,000 input tokens × $0.15/1M = $0.00135
-* ~200 output tokens × $0.60/1M = $0.00012
-* Per call: ~$0.0015 (reservation: $0.002 to absorb token variance).
 """
 
 from __future__ import annotations
@@ -38,11 +44,10 @@ from app.lib.whisper_transcribe.budget import BudgetTracker as _BudgetTracker
 from app.logging_config import get_logger
 from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
     _MULTI_SYSTEM_PROMPT,
-    _SYSTEM_PROMPT,
-    build_multi_user_prompt,
-    build_user_prompt,
+    build_grouping_user_prompt,
+    build_mention_system_prompt,
+    build_mention_user_prompt,
     group_consecutive_scenes,
-    merge_consecutive_scenes,
     select_scenes_for_prompt,
 )
 from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
@@ -54,9 +59,10 @@ from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
 from app.modules.shorts_auto_product.track_stt.full_stt.schemas import (
     _RESPONSE_JSON_SCHEMA,
     FullSttClipResponse,
-    FullSttMultiClipResponse,
-    FullSttShort,
-    build_multi_response_schema,
+    FullSttGroupingResponse,
+    FullSttGroupingShort,
+    FullSttMention,
+    build_grouping_response_schema,
 )
 from app.modules.shorts_auto_product.track_stt.full_stt.types import (
     FullSttClipPlan,
@@ -119,11 +125,30 @@ def _stable_seed(*, llm_label: str, prompt_version: str) -> int:
 
 
 @dataclass
-class FullSttExplainerPicker:
-    """Pick product-explainer segments from the full video transcript.
+class _MentionExtraction:
+    """Result of stage-1 mention extraction, shared by ``pick`` (builds one
+    plan) and ``pick_many`` (groups the regions into N shorts).
 
-    Stateless once instantiated — ``pick`` is the entry point.
-    Picker NEVER raises out: every defect path falls back to positional.
+    ``mentions`` are validated (in range, chronological, non-overlapping)
+    against ``active_scenes``. ``cost_usd`` is already recorded on the
+    budget tracker by the time this is returned.
+    """
+
+    mentions: list[FullSttMention]
+    active_scenes: list[FullSttScene]
+    global_rationale: str
+    cost_usd: float
+
+
+@dataclass
+class FullSttExplainerPicker:
+    """Full-STT picker with two entry points.
+
+    * ``pick`` — extract every scene range where the product is mentioned.
+    * ``pick_many`` — produce N meaningfully-different chunk-picked shorts.
+
+    Stateless once instantiated. Picker NEVER raises out: every defect path
+    falls back to a positional plan.
     """
 
     openai_client: Any  # AsyncOpenAI — typed as Any to avoid SDK import at module load
@@ -144,10 +169,65 @@ class FullSttExplainerPicker:
         spoken_aliases: list[str],
         org_id: UUID | None = None,
     ) -> FullSttClipPlan:
-        """Pick segments via the LLM. Falls back to positional on any defect.
+        """Extract every scene range where the product is mentioned.
+
+        The LLM is shown per-scene transcript lines grouped under chunk
+        headers (chunk grouping is context only — output is per-scene). The
+        returned plan's ``segments`` are the actual mention regions, with no
+        target-duration packing. ``target_duration_ms`` is preserved in the
+        signature for caller compatibility and is only used by the positional
+        fallback.
 
         Picker NEVER raises out — Protocol contract guarantee. Every defect
         path logs structured and returns FullSttClipPlan(fallback_used=True).
+        """
+        extraction, error = await self._run_mention_extraction(
+            scenes=scenes,
+            target_duration_ms=target_duration_ms,
+            llm_label=llm_label,
+            spoken_aliases=spoken_aliases,
+        )
+        if extraction is None:
+            return self._empty_failure_plan(error or "mention_extraction_failed")
+
+        plan = self._build_plan_from_mentions(
+            extraction.mentions,
+            extraction.active_scenes,
+            extraction.global_rationale,
+        )
+
+        logger.info(
+            "full_stt_pick_response",
+            cost_usd=extraction.cost_usd,
+            mention_count=len(extraction.mentions),
+            segment_count=len(plan.segments),
+            total_duration_ms=plan.total_duration_ms,
+            target_duration_ms=target_duration_ms,
+            global_rationale=(extraction.global_rationale or "")[:200],
+            prompt_version=self.prompt_version,
+            full_stt_fallback_used=False,
+        )
+
+        return plan
+
+    async def _run_mention_extraction(
+        self,
+        *,
+        scenes: list[FullSttScene],
+        target_duration_ms: int,
+        llm_label: str,
+        spoken_aliases: list[str],
+    ) -> tuple[_MentionExtraction | None, str | None]:
+        """Stage-1 mention extraction shared by ``pick`` and ``pick_many``.
+
+        One gpt call over the per-scene transcript (grouped under chunk
+        headers for context). Handles scene capping, budget reservation,
+        the API call, parse + ``_validate_mentions``, and cost recording.
+
+        Returns ``(extraction, None)`` on success (budget already recorded)
+        or ``(None, error_reason)`` on any defect (reservation released, a
+        structured ``full_stt_pick_skipped`` log already emitted). Never
+        raises — the picker contract.
         """
         # ── 0. PROMPT_VERSION drift check ──
         if self.prompt_version != _MODULE_PROMPT_VERSION:
@@ -160,16 +240,12 @@ class FullSttExplainerPicker:
 
         # ── 1. Select scenes with temporal coverage ──
         active_scenes = select_scenes_for_prompt(scenes, max_scenes=self.max_scenes)
-
         if not active_scenes:
             logger.info("full_stt_pick_skipped", reason="empty_scenes")
-            return self._positional_fallback(active_scenes, target_duration_ms)
+            return None, "empty_scenes"
 
-        # ── 1b. Merge consecutive scenes to reduce prompt size ──
+        # ── 1b. Group scenes for chunk-header context (scenes stay addressable) ──
         scene_groups = group_consecutive_scenes(
-            active_scenes, group_size=self.scene_group_size,
-        )
-        merged_scenes = merge_consecutive_scenes(
             active_scenes, group_size=self.scene_group_size,
         )
 
@@ -178,16 +254,13 @@ class FullSttExplainerPicker:
             self.budget_tracker.check_and_reserve(self._reservation_usd)
         except _BudgetExceededError as exc:
             logger.info(
-                "full_stt_pick_skipped",
-                reason="budget_exceeded",
-                error=str(exc),
+                "full_stt_pick_skipped", reason="budget_exceeded", error=str(exc),
             )
-            return self._positional_fallback(active_scenes, target_duration_ms)
+            return None, f"budget_exceeded: {exc}"
 
         # ── 3. Build prompt + call OpenAI ──
-        user_prompt = build_user_prompt(
-            scenes=merged_scenes,
-            target_duration_ms=target_duration_ms,
+        user_prompt = build_mention_user_prompt(
+            scene_groups=scene_groups,
             llm_label=llm_label,
             spoken_aliases=spoken_aliases,
         )
@@ -195,8 +268,8 @@ class FullSttExplainerPicker:
 
         logger.info(
             "full_stt_pick_request",
-            scene_count=len(merged_scenes),
-            scene_count_pre_merge=len(active_scenes),
+            scene_count=len(active_scenes),
+            chunk_count=len(scene_groups),
             scene_count_pre_cap=len(scenes),
             target_duration_ms=target_duration_ms,
             model=self.model,
@@ -208,7 +281,7 @@ class FullSttExplainerPicker:
                 self.openai_client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "system", "content": build_mention_system_prompt(llm_label)},
                         {"role": "user", "content": user_prompt},
                     ],
                     response_format={
@@ -222,7 +295,7 @@ class FullSttExplainerPicker:
             )
         except (TimeoutError, Exception) as exc:  # noqa: BLE001
             # Catch-all so an unrecognised SDK exception class doesn't bypass
-            # the fallback. Loud structured log is the diagnostic.
+            # the failure path. Loud structured log is the diagnostic.
             self.budget_tracker.release_reservation(self._reservation_usd)
             logger.warning(
                 "full_stt_pick_skipped",
@@ -230,13 +303,13 @@ class FullSttExplainerPicker:
                 error_class=type(exc).__name__,
                 error=str(exc)[:200],
             )
-            return self._positional_fallback(active_scenes, target_duration_ms)
+            return None, f"api_failure: {type(exc).__name__}: {str(exc)[:200]}"
 
         # ── 4. Parse + validate ──
         try:
             content = response.choices[0].message.content
             clip_response = FullSttClipResponse.model_validate_json(content)
-            self._validate(clip_response, merged_scenes)
+            self._validate_mentions(clip_response, active_scenes)
         except (ValidationError, ValueError, KeyError, AttributeError) as exc:
             self.budget_tracker.release_reservation(self._reservation_usd)
             logger.warning(
@@ -245,38 +318,21 @@ class FullSttExplainerPicker:
                 error_class=type(exc).__name__,
                 error=str(exc)[:300],
             )
-            return self._positional_fallback(active_scenes, target_duration_ms)
+            return None, f"validation_failed: {type(exc).__name__}: {str(exc)[:200]}"
 
-        # ── 5. Record cost + build plan ──
+        # ── 5. Record cost ──
         cost_usd = _cost_from_usage(response, model=self.model)
         self.budget_tracker.record(cost_usd)
 
-        plan = self._build_plan_from_chunk_response(
-            clip_response,
-            scene_groups,
-            target_duration_ms,
+        return (
+            _MentionExtraction(
+                mentions=clip_response.mentions,
+                active_scenes=active_scenes,
+                global_rationale=clip_response.global_rationale,
+                cost_usd=cost_usd,
+            ),
+            None,
         )
-        if not self._plan_duration_within_bounds(plan, target_duration_ms):
-            logger.warning(
-                "full_stt_pick_skipped",
-                reason="final_duration_out_of_bounds",
-                total_duration_ms=plan.total_duration_ms,
-                target_duration_ms=target_duration_ms,
-            )
-            return self._positional_fallback(active_scenes, target_duration_ms)
-
-        logger.info(
-            "full_stt_pick_response",
-            cost_usd=cost_usd,
-            segment_count=len(plan.segments),
-            total_duration_ms=plan.total_duration_ms,
-            target_duration_ms=target_duration_ms,
-            global_rationale=(clip_response.global_rationale or "")[:200],
-            prompt_version=self.prompt_version,
-            full_stt_fallback_used=False,
-        )
-
-        return plan
 
     async def pick_many(
         self,
@@ -288,19 +344,25 @@ class FullSttExplainerPicker:
         n: int,
         org_id: UUID | None = None,
     ) -> list[FullSttClipPlan]:
-        """Pick ``n`` distinct shorts in ONE LLM call. NEVER raises.
+        """Pick ``n`` distinct shorts in TWO LLM calls. NEVER raises.
 
-        Whole-call defects (timeout, budget, parse failure) degrade to ``n``
-        distinct positional fallback plans. Per-short defects (out-of-range
-        index, non-chronological, overlap, duration out of bounds, or a
-        duplicate of an already-accepted short) degrade only that short to a
-        distinct positional cut — valid LLM shorts are preserved. Always
+        Stage 1 reuses ``_run_mention_extraction`` (identical to ``pick``) to
+        find every product-mention region. Stage 2 (``_run_grouping``) asks
+        the model to group those regions into ``n`` distinct shorts; each
+        short's mention scenes are then packed front-to-back to the target
+        duration (mention scenes only — no padding).
+
+        Whole-call defects (timeout, budget, parse failure) at either stage,
+        or zero mentions found, degrade to ``n`` distinct positional fallback
+        plans. Per-short defects (out-of-range region index, duplicate of an
+        already-accepted short, or no usable scenes) degrade only that short
+        to a distinct positional cut — valid LLM shorts are preserved. Always
         returns exactly ``n`` plans.
         """
         if n <= 0:
             return []
 
-        # ── 0. PROMPT_VERSION drift check (multi prompt) ──
+        # ── 0. PROMPT_VERSION drift check (grouping prompt) ──
         if self.prompt_version != _MODULE_MULTI_PROMPT_VERSION:
             logger.warning(
                 "full_stt_multi_prompt_version_drift",
@@ -309,44 +371,121 @@ class FullSttExplainerPicker:
                 resolution="using module value at runtime",
             )
 
-        # ── 1. Select scenes with temporal coverage ──
-        active_scenes = select_scenes_for_prompt(scenes, max_scenes=self.max_scenes)
-        if not active_scenes:
-            logger.info("full_stt_pick_skipped", reason="empty_scenes")
+        # ── 1. Stage 1: mention extraction (shared with ``pick``) ──
+        extraction, error = await self._run_mention_extraction(
+            scenes=scenes,
+            target_duration_ms=target_duration_ms,
+            llm_label=llm_label,
+            spoken_aliases=spoken_aliases,
+        )
+        active_scenes = (
+            extraction.active_scenes
+            if extraction is not None
+            else select_scenes_for_prompt(scenes, max_scenes=self.max_scenes)
+        )
+        if extraction is None or not extraction.mentions:
+            logger.info(
+                "full_stt_multi_extraction_unusable",
+                reason=error or "no_mentions",
+                requested_shorts=n,
+            )
             return self._positional_fallback_many(active_scenes, target_duration_ms, n)
 
-        # ── 1b. Merge consecutive scenes to reduce prompt size ──
-        scene_groups = group_consecutive_scenes(
-            active_scenes, group_size=self.scene_group_size,
+        # ── 2. Stage 2: group the found regions into N shorts ──
+        grouping, group_error = await self._run_grouping(
+            extraction=extraction,
+            target_duration_ms=target_duration_ms,
+            llm_label=llm_label,
+            n=n,
         )
-        merged_scenes = merge_consecutive_scenes(
-            active_scenes, group_size=self.scene_group_size,
-        )
+        if grouping is None:
+            logger.info(
+                "full_stt_multi_grouping_failed",
+                reason=group_error or "grouping_failed",
+                requested_shorts=n,
+            )
+            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
 
-        # ── 2. Budget reservation (one for the whole call) ──
+        # ── 3. Build N plans: per-short validate + distinctness dedup ──
+        plans: list[FullSttClipPlan] = []
+        seen_signatures: set[tuple[int, ...]] = set()
+        fallback_cursor = 0
+        llm_short_count = 0
+
+        for i in range(n):
+            short = grouping.shorts[i] if i < len(grouping.shorts) else None
+            plan: FullSttClipPlan | None = None
+            if short is not None:
+                signature = tuple(sorted(set(short.region_indices)))
+                try:
+                    self._validate_grouping_short(short, extraction.mentions)
+                    if signature in seen_signatures:
+                        raise ValueError("duplicate short (identical region set)")
+                    plan = self._build_plan_from_regions(
+                        short,
+                        extraction.mentions,
+                        extraction.active_scenes,
+                        target_duration_ms,
+                    )
+                    if plan.is_empty:
+                        raise ValueError("no usable scenes after packing")
+                    seen_signatures.add(signature)
+                    llm_short_count += 1
+                except (ValueError, KeyError, IndexError):
+                    plan = None
+            if plan is None:
+                pattern = _FALLBACK_PATTERNS[fallback_cursor % len(_FALLBACK_PATTERNS)]
+                fallback_cursor += 1
+                plan = self._positional_fallback(
+                    active_scenes, target_duration_ms, positions=pattern,
+                )
+            plans.append(plan)
+
+        logger.info(
+            "full_stt_multi_pick_response",
+            cost_usd=extraction.cost_usd,
+            mention_region_count=len(extraction.mentions),
+            requested_shorts=n,
+            llm_shorts=llm_short_count,
+            fallback_shorts=n - llm_short_count,
+            prompt_version=self.prompt_version,
+        )
+        return plans
+
+    async def _run_grouping(
+        self,
+        *,
+        extraction: _MentionExtraction,
+        target_duration_ms: int,
+        llm_label: str,
+        n: int,
+    ) -> tuple[FullSttGroupingResponse | None, str | None]:
+        """Stage-2 grouping call: partition the stage-1 mention regions into
+        ``n`` distinct shorts.
+
+        Reserves + records its own budget (second call of the pair). Returns
+        ``(grouping, None)`` on success or ``(None, error_reason)`` on any
+        defect (reservation released). Never raises.
+        """
         try:
             self.budget_tracker.check_and_reserve(self._reservation_usd)
         except _BudgetExceededError as exc:
             logger.info(
                 "full_stt_pick_skipped", reason="budget_exceeded", error=str(exc),
             )
-            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+            return None, f"budget_exceeded: {exc}"
 
-        # ── 3. Build prompt + call OpenAI once ──
-        user_prompt = build_multi_user_prompt(
-            scenes=merged_scenes,
+        regions = self._regions_for_prompt(extraction)
+        user_prompt = build_grouping_user_prompt(
+            regions=regions,
             target_duration_ms=target_duration_ms,
-            llm_label=llm_label,
-            spoken_aliases=spoken_aliases,
             n=n,
         )
         seed = _stable_seed(llm_label=llm_label, prompt_version=self.prompt_version)
 
         logger.info(
             "full_stt_multi_pick_request",
-            scene_count=len(merged_scenes),
-            scene_count_pre_merge=len(active_scenes),
-            scene_count_pre_cap=len(scenes),
+            mention_region_count=len(regions),
             target_duration_ms=target_duration_ms,
             requested_shorts=n,
             model=self.model,
@@ -363,7 +502,7 @@ class FullSttExplainerPicker:
                     ],
                     response_format={
                         "type": "json_schema",
-                        "json_schema": build_multi_response_schema(n),
+                        "json_schema": build_grouping_response_schema(n),
                     },
                     temperature=0.0,
                     seed=seed,
@@ -378,12 +517,11 @@ class FullSttExplainerPicker:
                 error_class=type(exc).__name__,
                 error=str(exc)[:200],
             )
-            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+            return None, f"api_failure: {type(exc).__name__}: {str(exc)[:200]}"
 
-        # ── 4. Parse top-level shape ──
         try:
             content = response.choices[0].message.content
-            multi = FullSttMultiClipResponse.model_validate_json(content)
+            grouping = FullSttGroupingResponse.model_validate_json(content)
         except (ValidationError, ValueError, KeyError, AttributeError) as exc:
             self.budget_tracker.release_reservation(self._reservation_usd)
             logger.warning(
@@ -392,119 +530,169 @@ class FullSttExplainerPicker:
                 error_class=type(exc).__name__,
                 error=str(exc)[:300],
             )
-            return self._positional_fallback_many(active_scenes, target_duration_ms, n)
+            return None, f"validation_failed: {type(exc).__name__}: {str(exc)[:200]}"
 
-        # ── 5. Record cost ──
         cost_usd = _cost_from_usage(response, model=self.model)
         self.budget_tracker.record(cost_usd)
+        return grouping, None
 
-        # ── 6. Build N plans: per-short validate + distinctness dedup ──
-        plans: list[FullSttClipPlan] = []
-        seen_signatures: set[tuple[int, ...]] = set()
-        fallback_cursor = 0
-        llm_short_count = 0
+    @staticmethod
+    def _regions_for_prompt(
+        extraction: _MentionExtraction,
+    ) -> list[tuple[int, int, str, str]]:
+        """Flatten the stage-1 mentions into ``(start_ms, end_ms, text,
+        rationale)`` tuples for the grouping prompt.
 
-        for i in range(n):
-            short = multi.shorts[i] if i < len(multi.shorts) else None
-            plan: FullSttClipPlan | None = None
-            if short is not None:
-                signature = tuple(p.segment_index for p in short.segments)
-                try:
-                    self._validate(short, merged_scenes)
-                    if signature in seen_signatures:
-                        raise ValueError("duplicate short (identical segment set)")
-                    plan = self._build_plan_from_chunk_response(
-                        short,
-                        scene_groups,
-                        target_duration_ms,
-                    )
-                    if not self._plan_duration_within_bounds(
-                        plan, target_duration_ms,
-                    ):
-                        raise ValueError(
-                            "final duration outside target render bounds"
-                        )
-                    seen_signatures.add(signature)
-                    llm_short_count += 1
-                except (ValueError, KeyError, IndexError):
-                    plan = None
-            if plan is None:
-                pattern = _FALLBACK_PATTERNS[fallback_cursor % len(_FALLBACK_PATTERNS)]
-                fallback_cursor += 1
-                plan = self._positional_fallback(
-                    active_scenes, target_duration_ms, positions=pattern,
+        Index in the returned list == the ``region_indices`` value the
+        grouping model returns. Text concatenates the covered scenes'
+        transcript in chronological order.
+        """
+        scenes = extraction.active_scenes
+        regions: list[tuple[int, int, str, str]] = []
+        for mention in extraction.mentions:
+            covered = scenes[mention.start_scene_idx : mention.end_scene_idx + 1]
+            text = " ".join(s.text for s in covered if s.text).strip()
+            regions.append(
+                (
+                    scenes[mention.start_scene_idx].start_ms,
+                    scenes[mention.end_scene_idx].end_ms,
+                    text,
+                    mention.rationale,
                 )
-            plans.append(plan)
-
-        logger.info(
-            "full_stt_multi_pick_response",
-            cost_usd=cost_usd,
-            requested_shorts=n,
-            llm_shorts=llm_short_count,
-            fallback_shorts=n - llm_short_count,
-            prompt_version=self.prompt_version,
-        )
-        return plans
+            )
+        return regions
 
     # ──────────────────────── private helpers ────────────────────────
 
-    def _validate(
+    @staticmethod
+    def _empty_failure_plan(reason: str) -> FullSttClipPlan:
+        """Empty plan returned by the mention-extraction path on failure.
+
+        Unlike the multi-short ``pick_many`` path (which falls back to a
+        positional cut), mention extraction returns nothing rather than
+        fake mentions — positional time slices would be semantically
+        wrong here. ``fallback_used=True`` still flags that the LLM pick
+        was not used; ``error`` carries the reason for downstream display.
+        """
+        return FullSttClipPlan(
+            segments=[],
+            total_duration_ms=0,
+            global_rationale="",
+            fallback_used=True,
+            error=reason,
+        )
+
+    def _validate_mentions(
         self,
-        response: FullSttClipResponse | FullSttShort,
+        response: FullSttClipResponse,
         scenes: list[FullSttScene],
     ) -> None:
-        """Raise ValueError on any semantic violation.
+        """Raise ValueError on any semantic violation for the mention path.
 
-        Accepts either a single-short ``FullSttClipResponse`` or one
-        ``FullSttShort`` from a multi-short response — both expose
-        ``.segments``. Called after Pydantic parsing passes, so basic type /
-        uniqueness constraints are already satisfied. This layer checks
-        index/order constraints that require the prompt chunk list.
+        Each mention is a [start_scene_idx, end_scene_idx] inclusive range
+        into the per-scene transcript shown to the LLM. Bound order
+        (``end >= start``) is already enforced by Pydantic; this checks
+        constraints that need the scene list as context.
         """
         n = len(scenes)
 
-        # 1. All indices in range
-        for pick in response.segments:
-            if pick.segment_index >= n:
+        for mention in response.mentions:
+            if mention.start_scene_idx >= n or mention.end_scene_idx >= n:
                 raise ValueError(
-                    f"segment_index {pick.segment_index} out of range [0, {n})"
+                    f"mention range [{mention.start_scene_idx}, "
+                    f"{mention.end_scene_idx}] out of range [0, {n})"
                 )
 
-        # 2. Chronological order (segments must be in ascending start_ms order)
-        for i in range(len(response.segments) - 1):
-            curr_start = scenes[response.segments[i].segment_index].start_ms
-            next_start = scenes[response.segments[i + 1].segment_index].start_ms
-            if curr_start >= next_start:
+        # Regions must be chronological and non-overlapping by scene index.
+        # Adjacent regions are allowed (gap of zero) — the LLM is asked to
+        # split rather than merge across discontinuities, so [5,7] then [8,8]
+        # is a legitimate "two regions touching".
+        for i in range(len(response.mentions) - 1):
+            curr_end = response.mentions[i].end_scene_idx
+            next_start = response.mentions[i + 1].start_scene_idx
+            if next_start <= curr_end:
                 raise ValueError(
-                    f"segments not in chronological order at position {i}: "
-                    f"{curr_start} >= {next_start}"
+                    f"mentions not chronological/non-overlapping at position "
+                    f"{i}: end={curr_end} >= next_start={next_start}"
                 )
 
-        # 3. No overlapping segments
-        for i in range(len(response.segments) - 1):
-            curr_end = scenes[response.segments[i].segment_index].end_ms
-            next_start = scenes[response.segments[i + 1].segment_index].start_ms
-            if curr_end > next_start:
-                raise ValueError(
-                    f"segments {i} and {i+1} overlap: end={curr_end} > start={next_start}"
-                )
-
-    def _build_plan_from_chunk_response(
+    def _build_plan_from_mentions(
         self,
-        response: FullSttClipResponse | FullSttShort,
-        scene_groups: list[list[FullSttScene]],
+        mentions: list[FullSttMention],
+        scenes: list[FullSttScene],
+        global_rationale: str,
+    ) -> FullSttClipPlan:
+        """Build a plan whose segments are the actual mention regions.
+
+        Each mention [start, end] expands to one segment per covered scene
+        (so durations remain accurate even when scenes have gaps). No
+        target-duration packing — total duration is the sum of mention
+        durations.
+        """
+        segments: list[FullSttSegment] = []
+        for mention in mentions:
+            for scene_idx in range(mention.start_scene_idx, mention.end_scene_idx + 1):
+                scene = scenes[scene_idx]
+                segments.append(
+                    FullSttSegment(
+                        scene_id=scene.scene_id,
+                        source_start_ms=scene.start_ms,
+                        source_end_ms=scene.end_ms,
+                        rationale=mention.rationale,
+                    )
+                )
+
+        total_duration_ms = sum(s.duration_ms for s in segments)
+        return FullSttClipPlan(
+            segments=segments,
+            total_duration_ms=total_duration_ms,
+            global_rationale=global_rationale,
+            fallback_used=False,
+        )
+
+    @staticmethod
+    def _validate_grouping_short(
+        short: FullSttGroupingShort,
+        mentions: list[FullSttMention],
+    ) -> None:
+        """Raise ValueError if a grouping short references an out-of-range
+        region.
+
+        Used by the multi-short ``pick_many`` stage-2 flow. ``region_indices``
+        point into the stage-1 ``mentions`` list. Non-emptiness and
+        per-short uniqueness are already enforced by Pydantic; chronological
+        order and non-overlap are guaranteed for free because the stage-1
+        mentions are themselves validated chronological + non-overlapping
+        (see ``_validate_mentions``) and the builder sorts the indices.
+        """
+        m = len(mentions)
+        for ri in short.region_indices:
+            if ri >= m:
+                raise ValueError(
+                    f"region_index {ri} out of range [0, {m})"
+                )
+
+    def _build_plan_from_regions(
+        self,
+        short: FullSttGroupingShort,
+        mentions: list[FullSttMention],
+        scenes: list[FullSttScene],
         target_duration_ms: int,
     ) -> FullSttClipPlan:
-        """Build the final render plan from original scenes inside chunks.
+        """Build a short's render plan from its assigned mention regions.
 
-        LLM responses name prompt chunks, not final render spans. This keeps
-        chunking as context compression while enforcing product-short duration
-        on the actual rendered source scenes.
+        Used by the multi-short ``pick_many`` stage-2 flow. Expands each
+        referenced region to its covered scenes (chronological — indices are
+        sorted, and stage-1 regions are non-overlapping) and packs those
+        mention scenes front-to-back to the target duration. No padding with
+        non-mention scenes: if the assigned regions are shorter than target,
+        the short is simply shorter.
         """
         candidate_scenes: list[tuple[FullSttScene, str]] = []
-        for pick in response.segments:
-            for scene in scene_groups[pick.segment_index]:
-                candidate_scenes.append((scene, pick.rationale))
+        for ri in sorted(set(short.region_indices)):
+            mention = mentions[ri]
+            for scene_idx in range(mention.start_scene_idx, mention.end_scene_idx + 1):
+                candidate_scenes.append((scenes[scene_idx], mention.rationale))
 
         segments = self._pack_source_scenes_to_target(
             candidate_scenes,
@@ -514,7 +702,7 @@ class FullSttExplainerPicker:
         return FullSttClipPlan(
             segments=segments,
             total_duration_ms=total_duration_ms,
-            global_rationale=response.global_rationale,
+            global_rationale=short.global_rationale,
             fallback_used=False,
         )
 
@@ -565,14 +753,6 @@ class FullSttExplainerPicker:
             total_ms += take_ms
 
         return segments
-
-    def _plan_duration_within_bounds(
-        self,
-        plan: FullSttClipPlan,
-        target_duration_ms: int,
-    ) -> bool:
-        lower, upper = self._duration_bounds(target_duration_ms)
-        return lower <= plan.total_duration_ms <= upper
 
     @staticmethod
     def _duration_bounds(target_duration_ms: int) -> tuple[int, int]:

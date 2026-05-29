@@ -10,7 +10,9 @@ from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
     _SYSTEM_PROMPT,
     MULTI_PROMPT_VERSION,
     PROMPT_VERSION,
-    build_multi_user_prompt,
+    build_grouping_user_prompt,
+    build_mention_system_prompt,
+    build_mention_user_prompt,
     build_user_prompt,
     group_consecutive_scenes,
     merge_consecutive_scenes,
@@ -24,11 +26,26 @@ def _scene(idx: int, *, start_ms: int, end_ms: int, text: str = "hello") -> Full
 
 
 class TestPromptVersion:
-    def test_constant_is_v3(self):
-        assert PROMPT_VERSION == "v3"
+    def test_constant_is_v4(self):
+        assert PROMPT_VERSION == "v4"
 
     def test_system_prompt_non_empty(self):
         assert len(_SYSTEM_PROMPT) > 100
+
+
+class TestMentionSystemPrompt:
+    def test_fills_product_name(self):
+        out = build_mention_system_prompt("DysonV11")
+        assert "DysonV11" in out
+        # No literal placeholder may survive into the LLM instructions —
+        # leftover {product_name} silently disables the "only this product"
+        # constraint (picker.py was sending _SYSTEM_PROMPT raw).
+        assert "{product_name}" not in out
+
+    def test_every_placeholder_is_filled(self):
+        # _SYSTEM_PROMPT has 5 {product_name} slots; all must be replaced.
+        out = build_mention_system_prompt("ACME Blender")
+        assert out.count("ACME Blender") == 5
 
 
 class TestNoSlotKeywords:
@@ -174,8 +191,8 @@ class TestMergeConsecutiveScenes:
 
 
 class TestMultiPrompt:
-    def test_multi_prompt_version_is_v4(self):
-        assert MULTI_PROMPT_VERSION == "v4"
+    def test_multi_prompt_version_is_v5(self):
+        assert MULTI_PROMPT_VERSION == "v5"
 
     def test_multi_system_prompt_non_empty(self):
         assert len(_MULTI_SYSTEM_PROMPT) > 100
@@ -187,27 +204,94 @@ class TestMultiPrompt:
         assert "cta" not in low
 
     def test_multi_system_prompt_asks_for_difference(self):
-        # The variety constraint is the whole point of the shared planner.
+        # The variety constraint is the whole point of the grouping step.
         assert "different" in _MULTI_SYSTEM_PROMPT.lower()
 
-    def test_multi_user_prompt_states_count(self):
-        scenes = [_scene(0, start_ms=0, end_ms=10_000, text="t")]
-        out = build_multi_user_prompt(
-            scenes=scenes, target_duration_ms=60_000,
-            llm_label="X", spoken_aliases=[], n=3,
+    def test_multi_system_prompt_groups_existing_regions(self):
+        # The grouping prompt must NOT re-define what a mention is — it only
+        # partitions already-found regions.
+        low = _MULTI_SYSTEM_PROMPT.lower()
+        assert "region" in low
+        assert "group" in low
+
+
+class TestGroupingUserPrompt:
+    def test_states_count(self):
+        regions = [(0, 10_000, "t", "r0")]
+        out = build_grouping_user_prompt(
+            regions=regions, target_duration_ms=60_000, n=3,
         )
         assert "3 shorts" in out
 
-    def test_multi_user_prompt_includes_transcript_block(self):
-        # Reuses build_user_prompt for the transcript — product + scenes present.
-        scenes = [_scene(0, start_ms=0, end_ms=14_000, text="hello")]
-        out = build_multi_user_prompt(
-            scenes=scenes, target_duration_ms=60_000,
-            llm_label="DysonV11", spoken_aliases=["다이슨"], n=2,
+    def test_lists_regions_with_index_time_text_and_rationale(self):
+        regions = [
+            (0, 14_000, "hello world", "mentions DysonV11"),
+            (30_000, 45_000, "second region", "again DysonV11"),
+        ]
+        out = build_grouping_user_prompt(
+            regions=regions, target_duration_ms=60_000, n=2,
+        )
+        # Region 0 line: index, timestamp, text, rationale
+        assert '[0] 00:00-00:14 "hello world" — mentions DysonV11' in out
+        assert '[1] 00:30-00:45 "second region" — again DysonV11' in out
+
+    def test_empty_rationale_omits_dash(self):
+        regions = [(0, 14_000, "hello", "")]
+        out = build_grouping_user_prompt(
+            regions=regions, target_duration_ms=60_000, n=1,
+        )
+        assert '[0] 00:00-00:14 "hello"' in out
+        assert "—" not in out
+
+
+class TestMentionPrompt:
+    def test_chunk_headers_present(self):
+        scenes = [
+            _scene(i, start_ms=i * 10_000, end_ms=(i + 1) * 10_000, text=f"t{i}")
+            for i in range(3)
+        ]
+        groups = group_consecutive_scenes(scenes, group_size=2)
+        out = build_mention_user_prompt(
+            scene_groups=groups, llm_label="P", spoken_aliases=[],
+        )
+        assert "── Chunk 0" in out
+        assert "── Chunk 1" in out
+
+    def test_flat_scene_indices_continue_across_chunks(self):
+        scenes = [
+            _scene(i, start_ms=i * 10_000, end_ms=(i + 1) * 10_000, text=f"t{i}")
+            for i in range(5)
+        ]
+        groups = group_consecutive_scenes(scenes, group_size=2)
+        out = build_mention_user_prompt(
+            scene_groups=groups, llm_label="P", spoken_aliases=[],
+        )
+        # 5 scenes across 3 chunks (2,2,1) → scene_idx 0..4 should appear,
+        # 5 should not
+        for i in range(5):
+            assert f"[{i}]" in out
+        assert "[5]" not in out
+
+    def test_per_scene_timestamps_visible(self):
+        scenes = [
+            _scene(0, start_ms=0, end_ms=14_000, text="hi"),
+            _scene(1, start_ms=14_000, end_ms=30_000, text="there"),
+        ]
+        groups = group_consecutive_scenes(scenes, group_size=15)
+        out = build_mention_user_prompt(
+            scene_groups=groups, llm_label="P", spoken_aliases=[],
+        )
+        assert "[0] 00:00-00:14" in out
+        assert "[1] 00:14-00:30" in out
+
+    def test_product_line_and_aliases(self):
+        scenes = [_scene(0, start_ms=0, end_ms=10_000)]
+        groups = group_consecutive_scenes(scenes, group_size=15)
+        out = build_mention_user_prompt(
+            scene_groups=groups, llm_label="DysonV11", spoken_aliases=["다이슨"],
         )
         assert "DysonV11" in out
         assert "다이슨" in out
-        assert "[0] 00:00-00:14" in out
 
 
 class TestCapTemporalCoverage:
