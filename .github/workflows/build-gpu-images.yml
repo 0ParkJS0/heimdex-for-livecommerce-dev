@@ -193,3 +193,64 @@ jobs:
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.worker }}-worker-gpu:${{ github.sha }}
           echo "✅ ${{ matrix.worker }}-worker-gpu image verified"
+
+      - name: Notify Slack
+        if: ${{ success() }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKER: ${{ matrix.worker }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is not configured; skipping Slack notification"
+            exit 0
+          fi
+
+          SHORT_SHA="${COMMIT_SHA::7}"
+          IMAGE_SHA="${REGISTRY}/${IMAGE_PREFIX}-${WORKER}-worker-gpu:${COMMIT_SHA}"
+          IMAGE_LATEST="${REGISTRY}/${IMAGE_PREFIX}-${WORKER}-worker-gpu:latest"
+          payload=$(jq -n \
+            --arg text "GPU worker image built: ${WORKER}" \
+            --arg worker "$WORKER" \
+            --arg image_sha "$IMAGE_SHA" \
+            --arg image_latest "$IMAGE_LATEST" \
+            --arg run_url "$RUN_URL" \
+            --arg short_sha "$SHORT_SHA" \
+            '{
+              text: $text,
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: ":white_check_mark: *GPU worker image built*"
+                  }
+                },
+                {
+                  type: "section",
+                  fields: [
+                    { type: "mrkdwn", text: "*Worker:*\n\($worker)" },
+                    { type: "mrkdwn", text: "*Commit:*\n`\($short_sha)`" },
+                    { type: "mrkdwn", text: "*SHA tag:*\n`\($image_sha)`" },
+                    { type: "mrkdwn", text: "*Latest tag:*\n`\($image_latest)`" }
+                  ]
+                },
+                {
+                  type: "actions",
+                  elements: [
+                    {
+                      type: "button",
+                      text: { type: "plain_text", text: "View workflow" },
+                      url: $run_url
+                    }
+                  ]
+                }
+              ]
+            }')
+
+          curl -fsS \
+            -X POST \
+            -H 'Content-type: application/json' \
+            --data "$payload" \
+            "$SLACK_WEBHOOK_URL"
