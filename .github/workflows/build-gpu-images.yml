@@ -211,6 +211,23 @@ jobs:
           # ``feat/product-enum-shorts-auto-v2`` is merged.
           ref: ${{ github.event.inputs.pipelines_ref || 'main' }}
 
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            "$AGENT_TOOLSDIRECTORY"
+
+          docker system prune -af || true
+
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
