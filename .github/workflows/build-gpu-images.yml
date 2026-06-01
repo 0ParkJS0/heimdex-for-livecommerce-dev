@@ -110,6 +110,64 @@ jobs:
             echo "Building: ${WORKERS[*]}"
           fi
 
+  # -- Step 1.5: Announce build start in Slack --------------------------------
+  # One message per run (not per worker), listing the workers about to build.
+  # The per-worker success notification lives in build-and-push below.
+  notify-start:
+    name: Notify build start
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.workers != '[]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack (build started)
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKERS_JSON: ${{ needs.detect-changes.outputs.workers }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is not configured; skipping Slack notification"
+            exit 0
+          fi
+
+          SHORT_SHA="${COMMIT_SHA::7}"
+          # JSON array -> comma-separated list, e.g. ["caption","stt"] -> "caption, stt"
+          WORKERS_LIST=$(echo "$WORKERS_JSON" | jq -r 'join(", ")')
+          payload=$(jq -n \
+            --arg workers "$WORKERS_LIST" \
+            --arg run_url "$RUN_URL" \
+            --arg short_sha "$SHORT_SHA" \
+            '{
+              text: "GPU worker image build started",
+              blocks: [
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: ":rocket: *GPU worker image build started*" }
+                },
+                {
+                  type: "section",
+                  fields: [
+                    { type: "mrkdwn", text: "*Workers:*\n\($workers)" },
+                    { type: "mrkdwn", text: "*Commit:*\n`\($short_sha)`" }
+                  ]
+                },
+                {
+                  type: "actions",
+                  elements: [
+                    { type: "button", text: { type: "plain_text", text: "View workflow" }, url: $run_url }
+                  ]
+                }
+              ]
+            }')
+
+          curl -fsS \
+            -X POST \
+            -H 'Content-type: application/json' \
+            --data "$payload" \
+            "$SLACK_WEBHOOK_URL"
+
   # ── Step 2: Build only the workers that changed ───────────────────────────
   build-and-push:
     name: Build ${{ matrix.worker }} GPU image
@@ -166,6 +224,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push ${{ matrix.worker }} GPU image
+        id: build_image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -190,12 +249,14 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.worker }},mode=max
 
       - name: Verify image
+        id: verify_image
         run: |
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.worker }}-worker-gpu:${{ github.sha }}
           echo "✅ ${{ matrix.worker }}-worker-gpu image verified"
 
       - name: Notify Slack
         if: ${{ success() }}
+        continue-on-error: true
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           WORKER: ${{ matrix.worker }}
@@ -244,6 +305,56 @@ jobs:
                       text: { type: "plain_text", text: "View workflow" },
                       url: $run_url
                     }
+                  ]
+                }
+              ]
+            }')
+
+          curl -fsS \
+            -X POST \
+            -H 'Content-type: application/json' \
+            --data "$payload" \
+            "$SLACK_WEBHOOK_URL"
+
+      - name: Notify Slack (build failed)
+        # Fires if any earlier step in this job failed (build / verify).
+        # Per-worker, mirroring the success notification above.
+        if: ${{ failure() && (steps.build_image.conclusion == 'failure' || steps.verify_image.conclusion == 'failure') }}
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKER: ${{ matrix.worker }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is not configured; skipping Slack notification"
+            exit 0
+          fi
+
+          SHORT_SHA="${COMMIT_SHA::7}"
+          payload=$(jq -n \
+            --arg worker "$WORKER" \
+            --arg run_url "$RUN_URL" \
+            --arg short_sha "$SHORT_SHA" \
+            '{
+              text: "GPU worker image build FAILED: \($worker)",
+              blocks: [
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: ":x: *GPU worker image build failed*" }
+                },
+                {
+                  type: "section",
+                  fields: [
+                    { type: "mrkdwn", text: "*Worker:*\n\($worker)" },
+                    { type: "mrkdwn", text: "*Commit:*\n`\($short_sha)`" }
+                  ]
+                },
+                {
+                  type: "actions",
+                  elements: [
+                    { type: "button", text: { type: "plain_text", text: "View workflow" }, url: $run_url }
                   ]
                 }
               ]
