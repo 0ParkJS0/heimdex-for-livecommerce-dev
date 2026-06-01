@@ -218,6 +218,12 @@ class WorkerSettings(BaseSettings):
     # (``overlay_ocr_grounding_enabled``) is the independent second
     # rollback lever.
     overlay_extraction_ocr_hint_enabled: bool = True
+    # Optional operator diagnostics for overlay crop-selection incidents.
+    # When enabled, the worker collects pure pipeline debug events and
+    # uploads one JSON artifact to S3. Catalog rows/API schemas are not
+    # changed; this is operational evidence only.
+    overlay_debug_artifacts_enabled: bool = False
+    overlay_debug_artifacts_max_events: int = 500
 
     # ---------- safety ----------
 

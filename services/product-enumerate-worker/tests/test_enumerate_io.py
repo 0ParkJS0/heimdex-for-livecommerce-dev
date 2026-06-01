@@ -9,17 +9,19 @@ HTTP client + S3Client so the suite stays unit-level.
 from __future__ import annotations
 
 import io
+import json
 from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import pytest
 from PIL import Image
 
+from heimdex_media_pipelines.product_enum import OverlayDebugEvent
 from heimdex_media_pipelines.product_enum.pipeline import CanonicalProduct
 
 from src.settings import WorkerSettings
 from src.tasks.enumerate import (
     _fetch_keyframes,
+    _upload_overlay_debug_artifact,
     _upload_crops_and_build_payload,
 )
 
@@ -533,3 +535,69 @@ class TestUploadCrops:
         )
         assert result == []
         s3._client.put_object.assert_not_called()
+
+
+# =========================================================================
+# _upload_overlay_debug_artifact
+# =========================================================================
+
+class TestUploadOverlayDebugArtifact:
+    def test_empty_events_skip_upload(self):
+        s3 = MagicMock()
+        s3.bucket = "test-bucket"
+        s3._client = MagicMock()
+
+        key = _upload_overlay_debug_artifact(
+            settings=_settings(),
+            org_id=uuid4(),
+            video_id=uuid4(),
+            job_id=uuid4(),
+            events=[],
+            max_events=500,
+            s3_client=s3,
+        )
+
+        assert key is None
+        s3._client.put_object.assert_not_called()
+
+    def test_uploads_json_artifact_to_debug_prefix(self):
+        org_id = uuid4()
+        video_id = uuid4()
+        job_id = uuid4()
+        s3 = MagicMock()
+        s3.bucket = "test-bucket"
+        s3._client = MagicMock()
+        events = [
+            OverlayDebugEvent(
+                kind="overlay_crop_decision",
+                scene_id="s1",
+                frame_idx=1000,
+                data={
+                    "label": "데님 롱 스커트",
+                    "used_full_frame_fallback": True,
+                    "fallback_reason": "position_gate_miss",
+                },
+            )
+        ]
+
+        key = _upload_overlay_debug_artifact(
+            settings=_settings(),
+            org_id=org_id,
+            video_id=video_id,
+            job_id=job_id,
+            events=events,
+            max_events=500,
+            s3_client=s3,
+        )
+
+        assert key == f"debug/product-overlay/{org_id}/{video_id}/{job_id}.json"
+        s3._client.put_object.assert_called_once()
+        put = s3._client.put_object.call_args.kwargs
+        assert put["Bucket"] == "test-bucket"
+        assert put["Key"] == key
+        assert put["ContentType"] == "application/json"
+        payload = json.loads(put["Body"].decode("utf-8"))
+        assert payload["artifact_type"] == "product_overlay_debug"
+        assert payload["event_count"] == 1
+        assert payload["events"][0]["kind"] == "overlay_crop_decision"
+        assert payload["events"][0]["data"]["fallback_reason"] == "position_gate_miss"

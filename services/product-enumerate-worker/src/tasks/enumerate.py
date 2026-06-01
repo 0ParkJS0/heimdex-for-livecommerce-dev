@@ -22,10 +22,12 @@ the dispatcher can map exceptions to the right ``error_code``.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import uuid as _uuid
+from dataclasses import asdict
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -35,6 +37,8 @@ from heimdex_media_pipelines.product_enum import (
     CanonicalProduct,
     EnumerationConfig,
     EnumerationProgressEvent,
+    OverlayDebugCallback,
+    OverlayDebugEvent,
     OverlayKeyframe,
     ProgressCallback,
     SceneKeyframe,
@@ -58,9 +62,6 @@ from src.overlay_extractor import OverlayProductExtractor
 from src.overlay_owlv2_adapter import WorkerOwlV2Detector
 from src.product_merge import merge_products_by_label
 from src.settings import WorkerSettings
-
-if TYPE_CHECKING:  # pragma: no cover
-    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,21 @@ def _make_progress_cb(
                     "progress_pct": event.progress_pct,
                 },
             )
+    return _cb
+
+
+def _make_overlay_debug_cb(
+    *,
+    events: list[OverlayDebugEvent],
+    max_events: int,
+) -> OverlayDebugCallback:
+    """Collect bounded overlay debug events for a worker-side artifact."""
+    cap = max(0, int(max_events))
+
+    def _cb(event: OverlayDebugEvent) -> None:
+        if len(events) < cap:
+            events.append(event)
+
     return _cb
 
 
@@ -259,6 +275,13 @@ def handle_enumerate_job(
         vision_products: list[CanonicalProduct] = []
         overlay_products: list[CanonicalProduct] = []
         total_cost = 0.0
+        overlay_debug_events: list[OverlayDebugEvent] = []
+        overlay_debug_cb: OverlayDebugCallback | None = None
+        if run_overlay and settings.overlay_debug_artifacts_enabled:
+            overlay_debug_cb = _make_overlay_debug_cb(
+                events=overlay_debug_events,
+                max_events=settings.overlay_debug_artifacts_max_events,
+            )
 
         if run_vision:
             try:
@@ -303,8 +326,18 @@ def handle_enumerate_job(
                 config=config,
                 settings=settings,
                 progress_callback=progress_cb,
+                debug_callback=overlay_debug_cb,
             )
             total_cost += overlay_cost
+            if overlay_debug_cb is not None:
+                _upload_overlay_debug_artifact(
+                    settings=settings,
+                    org_id=decoded.org_id,
+                    video_id=decoded.video_id,
+                    job_id=decoded.job_id,
+                    events=overlay_debug_events,
+                    max_events=settings.overlay_debug_artifacts_max_events,
+                )
 
         # All-rejected != failure — we still post the rejected entries
         # so the API surfaces the empty-state UI honestly. But "0
@@ -429,6 +462,7 @@ def _run_overlay_pass(
     config: EnumerationConfig,
     settings: WorkerSettings,
     progress_callback: ProgressCallback | None = None,
+    debug_callback: OverlayDebugCallback | None = None,
 ) -> tuple[list[CanonicalProduct], float]:
     """The overlay pass — reads on-screen info-overlay graphics.
 
@@ -531,8 +565,70 @@ def _run_overlay_pass(
         ),
         video_file_name=file_name,
         progress_callback=progress_callback,
+        debug_callback=debug_callback,
     )
     return products, total_cost
+
+
+def _upload_overlay_debug_artifact(
+    *,
+    settings: WorkerSettings,
+    org_id: UUID,
+    video_id: UUID,
+    job_id: UUID,
+    events: list[OverlayDebugEvent],
+    max_events: int,
+    s3_client: S3Client | None = None,
+) -> str | None:
+    """Upload one JSON artifact for overlay crop-selection diagnostics.
+
+    This is intentionally outside ``heimdex-media-pipelines``: the
+    pipeline emits pure debug events, while the worker owns S3/I/O.
+    Upload failures are non-fatal because diagnostics must never change
+    enumeration behavior.
+    """
+    if not events:
+        return None
+
+    s3 = s3_client if s3_client is not None else S3Client(
+        bucket=settings.drive_s3_bucket,
+    )
+    key = f"debug/product-overlay/{org_id}/{video_id}/{job_id}.json"
+    payload = {
+        "schema_version": 1,
+        "artifact_type": "product_overlay_debug",
+        "job_id": str(job_id),
+        "org_id": str(org_id),
+        "video_id": str(video_id),
+        "event_count": len(events),
+        "max_events": max_events,
+        "events": [asdict(event) for event in events],
+    }
+    try:
+        body = json.dumps(payload, ensure_ascii=False, default=str, indent=2)
+        s3._client.put_object(  # type: ignore[attr-defined]
+            Bucket=s3.bucket,
+            Key=key,
+            Body=body.encode("utf-8"),
+            ContentType="application/json",
+        )
+    except Exception:
+        logger.warning(
+            "overlay_debug_artifact_upload_failed",
+            extra={"job_id": str(job_id), "event_count": len(events)},
+            exc_info=True,
+        )
+        return None
+
+    logger.info(
+        "overlay_debug_artifact_uploaded",
+        extra={
+            "job_id": str(job_id),
+            "event_count": len(events),
+            "s3_key": key,
+        },
+    )
+    return key
 
 
 # ---------- I/O helpers (Phase 2.5b — wired) ----------
