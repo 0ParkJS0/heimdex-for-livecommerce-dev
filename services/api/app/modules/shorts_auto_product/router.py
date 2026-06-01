@@ -23,8 +23,6 @@ from app.config import Settings, get_settings
 from app.db.base import get_db_session
 from app.modules.auth.service import get_current_user
 from app.modules.shorts_auto_product.schemas import (
-    ClipRequest,
-    ClipResponse,
     JobStatusResponse,
     ProductCatalogResponse,
     ProductV2AvailabilityFragment,
@@ -175,42 +173,30 @@ async def enqueue_scan(
 
 @router.post(
     "/products/{video_id}/{catalog_entry_id}/clip",
-    response_model=ClipResponse,
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=status.HTTP_410_GONE,
 )
 async def enqueue_clip(
     video_id: str,
     catalog_entry_id: UUID,
-    body: ClipRequest,
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> ClipResponse:
-    """Enqueue tracking + assembly + render for a chosen catalog entry.
+) -> None:
+    """Retired legacy single-product SAM2 tracking endpoint.
 
-    Path's ``video_id`` is the OS-style string (``gd_xxx``); see
-    :func:`_resolve_video_uuid`. ``catalog_entry_id`` is a UUID
-    (it IS the catalog row's primary key, so no resolution needed).
-
-    Same idempotency / cap semantics as ``/scan`` but keyed on
-    ``(video_id, user_id, catalog_entry_id)``.
-
-    NOTE: Plan §4.2 marks this endpoint for deprecation (will return
-    410 Gone after Phase 4 fully ships). The type fix here is a
-    forward-compat hedge — keeps the endpoint working consistently
-    until the 410 conversion lands.
+    The product wizard now creates scan orders and the API-process STT
+    child runner performs composition/rendering. This endpoint used to
+    publish ``product.track_job`` messages for the SAM2 product-track
+    worker, which has been removed from the active product scope.
     """
-    video_uuid = await _resolve_video_uuid(
-        db=db, org_id=org_ctx.org_id, video_id=video_id,
-    )
-    service = _build_service(db, settings)
-    return await service.enqueue_clip(
-        org_id=org_ctx.org_id,
-        video_id=video_uuid,
-        catalog_entry_id=catalog_entry_id,
-        user_id=user.id,
-        duration_preset_sec=body.duration_preset_sec,
+    _ = (video_id, catalog_entry_id, org_ctx, user, db, settings)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "single-product SAM2 clipping has been retired; create a "
+            "scan order instead"
+        ),
     )
 
 

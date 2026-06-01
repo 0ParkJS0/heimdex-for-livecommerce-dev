@@ -78,16 +78,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.lib.product_track.config import TrackingConfig
-from app.lib.product_track.stitching import build_stitch_plan
-from app.lib.product_track.subset_selector import (
-    GreedyPicker,
-    score_windows,
-    select_subset,
-)
-from app.modules.shorts_auto_product.children.composition import (
-    build_composition_spec_from_stitch_plan,
-)
 from app.modules.shorts_auto_product.children.picker import (
     SingleProductSubsetPicker,
 )
@@ -98,11 +88,7 @@ from app.modules.shorts_auto_product.models import (
     PRODUCT_DISTRIBUTION_SINGLE,
     SCAN_STAGE_ASSEMBLING,
     SCAN_STAGE_RENDERING,
-    ProductAppearance,
     ProductScanJob,
-)
-from app.modules.shorts_auto_product.repositories.appearance import (
-    ProductAppearanceRepository,
 )
 from app.modules.shorts_auto_product.repositories.catalog import (
     ProductCatalogRepository,
@@ -955,155 +941,13 @@ class ChildRunner:
 
         catalog_label = catalog_label_lookup.get(chosen_catalog_id)
 
-        # ── 3.5. Track-mode branch ────────────────────────────────
-        # When ``auto_shorts_product_v2_track_mode='stt'`` the rest of
-        # this method is replaced by the in-process STT pipeline
-        # (``track_stt.service.assemble_stt_clip``). Default ``"sam2"``
-        # preserves the existing path. See
-        # ``.claude/plans/shorts-auto-product-stt-pivot.md`` PR 2.5.
-        if (
-            getattr(self.settings, "auto_shorts_product_v2_track_mode", "sam2")
-            == "stt"
-        ):
-            await self._process_child_stt(
-                child=child,
-                parent=parent,
-                chosen_catalog_id=chosen_catalog_id,
-                catalog_label=catalog_label,
-                catalog_aliases_lookup=catalog_aliases_lookup,
-                lease=lease,
-            )
-            return
-
-        # ── 4. Score + select windows for the chosen catalog ──────
-        appearances = await self._load_appearances_for_catalog(
-            org_id=parent.org_id, catalog_entry_id=chosen_catalog_id,
-        )
-        if not appearances:
-            logger.info(
-                "child_no_appearances_for_chosen_catalog",
-                extra={
-                    "child_id": str(child_id),
-                    "catalog_entry_id": str(chosen_catalog_id),
-                },
-            )
-            await self._complete_no_render(
-                child_id=child_id,
-                reason="no_appearances_for_catalog",
-            )
-            return
-
-        annotated_windows = [
-            _appearance_to_annotated_window(a) for a in appearances
-        ]
-        cfg = TrackingConfig()
-        length_seconds = parent.length_seconds or parent.duration_preset_sec or 60
-        scored = score_windows(
-            annotated_windows,
-            duration_preset_sec=length_seconds,
-            config=cfg,
-        )
-        if not scored:
-            await self._complete_no_render(
-                child_id=child_id,
-                reason="no_scored_windows",
-            )
-            return
-
-        selected = select_subset(
-            scored,
-            picker=GreedyPicker(),
-            duration_preset_sec=length_seconds,
-            config=cfg,
-        )
-        if not selected:
-            await self._complete_no_render(
-                child_id=child_id,
-                reason="picker_returned_empty",
-            )
-            return
-
-        plan = build_stitch_plan(
-            selected,
-            duration_target_sec=length_seconds,
-            config=cfg,
-        )
-        os_video_id = os_video_id_from_scene_id(
-            plan.windows[0].window.scene_id,
-        )
-        composition_spec = build_composition_spec_from_stitch_plan(
-            plan=plan, os_video_id=os_video_id,
-        )
-
-        # ── 5. Create render via the shorts-render service ────────
-        # Pass ``str(child_id)`` as the dedupe idempotency key
-        # (migration 057). Two different scan_jobs that happen to
-        # produce identical compositions stay distinct rather than
-        # collapsing into one render row — fixes the staging
-        # 2026-05-06 collision where the LLM enumerator picked the
-        # same product for clips 1 and 5.
-        # Planner contribution complete → entering render (60%).
-        lease.set_stage(
-            stage=SCAN_STAGE_RENDERING,
-            progress_pct=60,
-            progress_label="rendering",
-        )
-        if not await lease.heartbeat_now():
-            logger.warning(
-                "child_render_enqueue_skipped_lease_lost",
-                extra={
-                    "child_id": str(child_id),
-                    "instance_id": self.instance_id,
-                },
-            )
-            return
-
-        render_job_id = await self._create_render_job(
-            org_id=parent.org_id,
-            user_id=parent.requested_by_user_id,
-            os_video_id=os_video_id,
-            title=catalog_label,
-            composition_spec=composition_spec,
-            scan_job_id=child_id,
-        )
-
-        # ── 6. Complete with the new render_job_id ────────────────
-        async with self.session_factory() as session:
-            repo = ProductScanJobRepository(session)
-            completed = await repo.complete_tracking(
-                job_id=child_id,
-                claimed_by=self.claimed_by,
-                cost_delta_usd=Decimal("0"),
-                render_job_id=render_job_id,
-            )
-            if completed is None:
-                logger.warning(
-                    "child_complete_lease_lost",
-                    extra={
-                        "child_id": str(child_id),
-                        "instance_id": self.instance_id,
-                        "render_job_id": str(render_job_id),
-                    },
-                )
-                return
-            await session.commit()
-        logger.info(
-            "child_runner_processed_child",
-            extra={
-                "child_id": str(child_id),
-                "render_job_id": str(render_job_id),
-                "catalog_entry_id": str(chosen_catalog_id),
-                "shorts_index": child.shorts_index,
-                "windows": len(plan.windows),
-            },
-        )
-        # PR 2: eager parent promotion — when this child is the last
-        # active sibling, promote parent fanned_out → committed in a
-        # single atomic UPDATE. Lazy block in get_scan_order_status
-        # stays as belt-and-suspenders. parent.id is in scope from
-        # _load_child_context.
-        await self._try_promote_parent_for_child(
-            child_id=child_id, parent_id_hint=parent.id,
+        await self._process_child_stt(
+            child=child,
+            parent=parent,
+            chosen_catalog_id=chosen_catalog_id,
+            catalog_label=catalog_label,
+            catalog_aliases_lookup=catalog_aliases_lookup,
+            lease=lease,
         )
 
     def _resolve_catalog_for_child(
@@ -1162,9 +1006,8 @@ class ChildRunner:
         catalog_aliases_lookup: dict[UUID, list[str]],
         lease: _ChildLeaseRenewer,
     ) -> None:
-        """STT-track replacement for steps 4-6 of ``_process_child_payload``.
+        """STT product-track implementation for one render child.
 
-        Branched into when ``auto_shorts_product_v2_track_mode='stt'``.
         Loads the full catalog entry (we already have its label, but
         not ``llm_label`` + ``spoken_aliases``), resolves the
         ``os_video_id`` from ``drive_files``, constructs an
@@ -1184,8 +1027,8 @@ class ChildRunner:
           enqueue failed) → ``_mark_child_failed`` with descriptive
           message. Distinct from no-render because the user CAN retry.
 
-        Imports the STT module lazily so the SAM2 path doesn't pay
-        the import cost when track_mode='sam2'.
+        Imports the STT module lazily so the runner's module-level
+        dependencies stay small.
         """
         # ── Shared-planner path ────────────────────────────────────
         # When the shared-plan flag is on, the planner poll already made
@@ -1773,15 +1616,6 @@ class ChildRunner:
             }
             return (child, parent, catalog_label_lookup, catalog_aliases_lookup)
 
-    async def _load_appearances_for_catalog(
-        self, *, org_id: UUID, catalog_entry_id: UUID,
-    ) -> list[ProductAppearance]:
-        async with self.session_factory() as session:
-            appearance_repo = ProductAppearanceRepository(session)
-            return await appearance_repo.list_active_by_catalog(
-                org_id=org_id, catalog_entry_id=catalog_entry_id,
-            )
-
     async def _try_promote_parent_for_child(
         self,
         *,
@@ -1984,50 +1818,6 @@ class ChildRunner:
             # row is in indeterminate state and the lazy promotion in
             # get_scan_order_status will catch up next user poll.
             await self._try_promote_parent_for_child(child_id=child_id)
-
-
-def _appearance_to_annotated_window(
-    appearance: ProductAppearance,
-) -> "AnnotatedWindow":  # noqa: F821
-    """Adapt a DB-side :class:`ProductAppearance` into the lib-side
-    :class:`AnnotatedWindow` the picker stack consumes.
-
-    Catalog id is dropped on purpose: the runner has already
-    narrowed appearances to one catalog before this conversion
-    runs, and the vendored lib's ``ScoredWindow`` is catalog-blind
-    by design (see ``children/picker.py`` rationale).
-
-    ``peak_confidence`` and ``frame_count`` aren't persisted on
-    ``ProductAppearance`` rows (the worker materializes them only
-    in-flight), so we approximate:
-      * ``peak_confidence`` ← ``avg_confidence`` (best estimate
-        without per-frame data; only used by the worker's
-        :func:`select_subset` overshoot-trim, not the scorer).
-      * ``frame_count`` ← duration_ms / 200ms (5fps SAM2 cadence).
-    These approximations don't affect the scorer's composite score
-    (which uses ``avg_bbox_area_pct`` + duration-fitness only) but
-    keep the dataclass constructor satisfied.
-    """
-    # Lazy import — keep the runner module-level reference graph
-    # small. AnnotatedWindow is only needed in this adapter and in
-    # the type annotation above (string-quoted forward ref).
-    from app.lib.product_track.alignment import AnnotatedWindow
-
-    duration_ms = appearance.window_end_ms - appearance.window_start_ms
-    frame_count_estimate = max(1, duration_ms // 200)
-    return AnnotatedWindow(
-        scene_id=appearance.scene_id,
-        window_start_ms=appearance.window_start_ms,
-        window_end_ms=appearance.window_end_ms,
-        avg_bbox_area_pct=float(appearance.avg_bbox_area_pct),
-        avg_confidence=float(appearance.avg_confidence),
-        peak_confidence=float(appearance.avg_confidence),
-        frame_count=frame_count_estimate,
-        rejected_reason=appearance.rejected_reason,
-        has_narration_mention=bool(appearance.has_narration_mention),
-        has_ocr_overlap=bool(appearance.has_ocr_overlap),
-    )
-
 
 def create_child_runner(
     *,

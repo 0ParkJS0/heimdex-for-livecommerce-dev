@@ -25,7 +25,6 @@ from heimdex_media_contracts.blur import (
 )
 from heimdex_media_contracts.product import (
     ProductEnumerateJob,
-    ProductTrackJob,
 )
 
 from app.config import get_settings
@@ -124,7 +123,6 @@ _QUEUE_URL_ATTRS = {
     "shorts_render": "sqs_shorts_render_queue_url",
     "blur": "sqs_blur_queue_url",
     "product_enumerate": "sqs_product_enumerate_queue_url",
-    "product_track": "sqs_product_track_queue_url",
 }
 
 # ── Internal helpers ───────────────────────────────────────────────────
@@ -1036,71 +1034,3 @@ def publish_product_enumerate_job(
     ).model_dump(mode="json")
     dedup_id = f"{job_id}:product-enum:{now.strftime('%Y%m%dT%H%M')}"
     _publish_required("product_enumerate", body, dedup_id)
-
-
-def publish_product_track_job(
-    *,
-    job_id: UUID,
-    org_id: UUID,
-    video_id: UUID,
-    requested_by_user_id: UUID,
-    tracker_version: str,
-    enumeration_prompt_version: str,
-    callback_base_url: str,
-    # Legacy single-product flow (enqueue_clip) — both required.
-    catalog_entry_id: UUID | None = None,
-    duration_preset_sec: int | None = None,
-    # v0.14.0 wizard fields (mode='scan_order' parents) — all Optional;
-    # body dict omits None entries below so the message stays small for
-    # legacy senders.
-    mode: str = "enumerate",
-    length_seconds: int | None = None,
-    requested_count: int | None = None,
-    time_range_start_ms: int | None = None,
-    time_range_end_ms: int | None = None,
-    product_distribution: str | None = None,
-    language: str | None = None,
-    intent: str | None = None,
-) -> None:
-    """Publish a shorts-auto-product track + assembly job.
-
-    Body shape is owned by
-    ``heimdex_media_contracts.product.ProductTrackJob``.
-
-    Two callers:
-
-    * ``ProductScanService.enqueue_clip`` (legacy single-product flow)
-      → passes ``catalog_entry_id`` + ``duration_preset_sec``, leaves
-      ``mode='enumerate'`` and the wizard fields unset.
-    * ``ProductScanService.enqueue_scan_order`` (Phase 4 wizard parent)
-      → passes ``mode='scan_order'`` + the full wizard field set,
-      leaves ``catalog_entry_id`` unset (parent processes the whole
-      catalog).
-
-    The body omits None-valued fields so a v0.14.0 worker reading a
-    legacy v0.13.0-shaped publish doesn't see noise. Workers parse via
-    the v0.14.0 ProductTrackJob model which accepts both shapes.
-    """
-    now = datetime.now(timezone.utc)
-    body = ProductTrackJob(
-        job_id=job_id,
-        org_id=org_id,
-        video_id=video_id,
-        catalog_entry_id=catalog_entry_id,
-        requested_by_user_id=requested_by_user_id,
-        duration_preset_sec=duration_preset_sec,
-        tracker_version=tracker_version,
-        enumeration_prompt_version=enumeration_prompt_version,
-        callback_base_url=callback_base_url,
-        mode=mode,
-        length_seconds=length_seconds,
-        requested_count=requested_count,
-        time_range_start_ms=time_range_start_ms,
-        time_range_end_ms=time_range_end_ms,
-        product_distribution=product_distribution,
-        language=language,
-        intent=intent,
-    ).model_dump(mode="json", exclude_none=True)
-
-    dedup_id = f"{job_id}:product-track:{now.strftime('%Y%m%dT%H%M')}"
-    _publish_required("product_track", body, dedup_id)

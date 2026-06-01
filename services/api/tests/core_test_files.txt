@@ -8,7 +8,6 @@
 # proven stable in CI and can replace it.
 tests/test_auth_security.py
 tests/test_closed_vocab_startup.py
-tests/test_composition_adapter.py
 tests/test_create_scan_order_video_id_resolution.py
 tests/test_device_heartbeat.py
 tests/test_device_pairing.py
@@ -97,7 +96,6 @@ tests/test_track_stt_storyboard_llm_picker.py
 tests/test_track_stt_storyboard_llm_prompt.py
 tests/test_track_stt_storyboard_llm_schemas.py
 tests/test_v2_router_video_id_resolution.py
-tests/test_vendored_product_track.py
 tests/test_video_people.py
 tests/test_videos_internal_scenes_with_keyframes.py
 tests/test_visual_fusion_semantic.py

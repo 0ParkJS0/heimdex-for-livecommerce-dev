@@ -17,8 +17,6 @@ from pydantic import ValidationError
 
 from app.modules.shorts_auto_product.schemas import (
     CatalogProductSummary,
-    ClipRequest,
-    ClipResponse,
     JobStatusResponse,
     ProductCatalogResponse,
     ProductV2AvailabilityFragment,
@@ -45,17 +43,6 @@ class TestScanRequest:
         for preset in (15, 45, 75, 120, 0, -30):
             with pytest.raises(ValidationError):
                 ScanRequest(duration_preset_sec=preset)
-
-
-class TestClipRequest:
-    def test_same_preset_set_as_scan(self):
-        # Two request types with the same preset constraint — the
-        # locked decision applies to both.
-        for preset in (30, 60, 90):
-            ClipRequest(duration_preset_sec=preset)
-        for preset in (45, 120):
-            with pytest.raises(ValidationError):
-                ClipRequest(duration_preset_sec=preset)
 
 
 class TestProductCatalogResponse:
@@ -177,15 +164,9 @@ class TestJobStatusResponse:
         assert roundtrip.cost_usd_estimate == Decimal("1.2345")
 
 
-class TestScanAndClipResponse:
+class TestScanResponse:
     def test_scan_default_not_deduped(self):
         assert ScanResponse(job_id=uuid4()).deduped is False
-
-    def test_clip_render_job_id_optional(self):
-        # Render job id is None until the track worker enqueues the
-        # render — frontend polls jobs/{job_id} for the transition.
-        r = ClipResponse(job_id=uuid4())
-        assert r.render_job_id is None
 
 
 class TestAvailabilityFragment:

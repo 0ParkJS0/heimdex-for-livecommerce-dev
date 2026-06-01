@@ -319,9 +319,9 @@ async def get_scenes_with_keyframes(
     when transcode hasn't completed for this video; callers should
     treat that as a terminal "not ready" state rather than retry —
     the field only flips populated after a successful transcode.
-    The product-track-worker uses this field to download the full
-    proxy ONCE per job and slice scene windows in-memory, instead
-    of reaching for a per-scene mp4 (which doesn't exist).
+    Internal media consumers use this field to download the full proxy
+    once and slice scene windows in-memory, instead of reaching for a
+    per-scene mp4 (which doesn't exist).
     """
     from app.modules.drive.keys import enrichment_keyframe_s3_key
 
@@ -394,8 +394,8 @@ async def get_scenes_with_keyframes(
         "file_name": drive_file.file_name,
         "total_duration_ms": total_duration_ms,
         # ``DriveFile.proxy_s3_key`` is nullable — None means transcode
-        # hasn't completed. Pass through verbatim; callers (product-
-        # track-worker) decide how to surface that to the user.
+        # hasn't completed. Pass through verbatim; callers decide how
+        # to surface that to the user.
         "proxy_s3_key": drive_file.proxy_s3_key,
         "scenes": enriched,
     }

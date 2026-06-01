@@ -83,6 +83,8 @@ def _build_service(*, settings=None):
     svc.cost_repo.get_today_cost = AsyncMock(return_value=Decimal("0"))
     svc.job_repo.count_active_for_org = AsyncMock(return_value=0)
     svc.job_repo.find_recent_scan_order_duplicate = AsyncMock(return_value=None)
+    svc.job_repo.create_render_children = AsyncMock(return_value=[])
+    svc.job_repo.transition_parent_to_fanned_out_unclaimed = AsyncMock()
     return svc
 
 
@@ -435,6 +437,7 @@ async def test_enqueue_scan_order_happy_path_creates_parent():
 
     parent = MagicMock()
     parent.id = uuid4()
+    parent.requested_count = 5
     svc.job_repo.create_scan_order_parent = AsyncMock(return_value=parent)
 
     body = _scan_order_body(
@@ -552,6 +555,12 @@ async def test_get_scan_order_status_aggregates_children():
     parent.error_code = None
     parent.error_message = None
     parent.cost_usd_estimate = Decimal("0.5")
+    parent.length_seconds = 60
+    parent.requested_count = 3
+    parent.time_range_start_ms = None
+    parent.time_range_end_ms = None
+    parent.product_distribution = "single"
+    parent.intent = "commit"
 
     def _child(idx, *, stage, completed_at=None, failed_at=None):
         c = MagicMock()
@@ -694,10 +703,8 @@ async def test_commit_scan_order_returns_501():
 
 
 def _stt_settings(**overrides):
-    """Settings stub configured for the STT inline fan-out path."""
+    """Settings stub configured for the inline STT fan-out path."""
     return _settings_stub(
-        auto_shorts_product_v2_track_mode="stt",
-        auto_shorts_product_v2_publish_scan_order_enabled=False,
         **overrides,
     )
 
@@ -950,38 +957,11 @@ async def test_enqueue_scan_order_legacy_field_still_propagates_uniformly():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_scan_order_rejects_sam2_track_mode_with_multi_pick():
-    """SAM2 worker doesn't propagate per-child catalog_entry_id; the
-    API rejects multi-select submissions for SAM2 track mode."""
-    svc = _build_service(settings=_settings_stub(
-        auto_shorts_product_v2_track_mode="sam2",
-        auto_shorts_product_v2_multi_select_enabled=True,
-        auto_shorts_product_v2_publish_scan_order_enabled=False,
-    ))
-    svc.catalog_repo.get = AsyncMock(return_value=MagicMock(
-        video_id=None, rejected_at=None,
-    ))
-    body = _scan_order_body(
-        catalog_entry_ids=[uuid4(), uuid4()],
-        requested_count=3,
-    )
-
-    with pytest.raises(HTTPException) as exc:
-        await svc.enqueue_scan_order(
-            org_id=uuid4(), video_id=uuid4(), user_id=uuid4(), body=body,
-        )
-    assert exc.value.status_code == 422
-    assert "STT track mode" in exc.value.detail
-
-
-@pytest.mark.asyncio
 async def test_enqueue_scan_order_rejects_multi_pick_when_flag_disabled():
     """Feature flag emergency disable: multi-select rejected with 422.
     Single-pick still works through either field."""
     svc = _build_service(settings=_settings_stub(
-        auto_shorts_product_v2_track_mode="stt",
         auto_shorts_product_v2_multi_select_enabled=False,
-        auto_shorts_product_v2_publish_scan_order_enabled=False,
     ))
     body = _scan_order_body(
         catalog_entry_ids=[uuid4(), uuid4()],
@@ -997,13 +977,11 @@ async def test_enqueue_scan_order_rejects_multi_pick_when_flag_disabled():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_scan_order_single_pick_via_list_works_under_sam2_and_flag_off():
+async def test_enqueue_scan_order_single_pick_via_list_works_when_multi_flag_off():
     """Edge: K=1 via the new list field is semantically a single-pick.
-    Must NOT trigger the SAM2 or flag-off multi-pick guards."""
+    Must NOT trigger the flag-off multi-pick guard."""
     svc = _build_service(settings=_settings_stub(
-        auto_shorts_product_v2_track_mode="sam2",
         auto_shorts_product_v2_multi_select_enabled=False,
-        auto_shorts_product_v2_publish_scan_order_enabled=False,
     ))
     svc.catalog_repo.list_active_by_video = AsyncMock(return_value=[])
     pick = uuid4()
@@ -1028,10 +1006,9 @@ async def test_enqueue_scan_order_single_pick_via_list_works_under_sam2_and_flag
 
 @pytest.mark.asyncio
 async def test_enqueue_scan_order_multi_pick_parent_catalog_entry_id_is_null():
-    """When K>1 in STT mode, parent.catalog_entry_id is NULL — there's
+    """When K>1, parent.catalog_entry_id is NULL — there's
     no single canonical pick. The per-child assignments carry the
-    distribution. SAM2 callback path won't see this since multi-pick
-    is rejected for SAM2."""
+    distribution."""
     svc = _stt_service()
     a, b = sorted([uuid4(), uuid4()])
     video_id = uuid4()

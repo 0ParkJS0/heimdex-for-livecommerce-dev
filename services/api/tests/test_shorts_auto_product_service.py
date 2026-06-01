@@ -577,64 +577,6 @@ async def test_enqueue_scan_does_not_schedule_stt_enumeration(monkeypatch):
     stt_mock.assert_not_called()
 
 
-# ---------- catalog entry not found ----------
-
-@pytest.mark.asyncio
-async def test_clip_404_when_catalog_entry_missing():
-    svc = _build_service(_settings())
-    svc.catalog_repo.get = AsyncMock(return_value=None)
-    with pytest.raises(HTTPException) as exc:
-        await svc.enqueue_clip(
-            org_id=uuid4(),
-            video_id=uuid4(),
-            catalog_entry_id=uuid4(),
-            user_id=uuid4(),
-            duration_preset_sec=60,
-        )
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_clip_404_when_catalog_entry_in_other_video():
-    """Cross-video catalog access — even within the same org — must
-    not bypass the per-video boundary in v1."""
-    svc = _build_service(_settings())
-    foreign_video = uuid4()
-    request_video = uuid4()
-    entry = MagicMock()
-    entry.video_id = foreign_video
-    entry.rejected_at = None
-    svc.catalog_repo.get = AsyncMock(return_value=entry)
-    with pytest.raises(HTTPException) as exc:
-        await svc.enqueue_clip(
-            org_id=uuid4(),
-            video_id=request_video,
-            catalog_entry_id=uuid4(),
-            user_id=uuid4(),
-            duration_preset_sec=60,
-        )
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_clip_404_when_catalog_entry_rejected():
-    svc = _build_service(_settings())
-    video_id = uuid4()
-    entry = MagicMock()
-    entry.video_id = video_id
-    entry.rejected_at = "2026-04-29T00:00:00Z"  # truthy
-    svc.catalog_repo.get = AsyncMock(return_value=entry)
-    with pytest.raises(HTTPException) as exc:
-        await svc.enqueue_clip(
-            org_id=uuid4(),
-            video_id=video_id,
-            catalog_entry_id=uuid4(),
-            user_id=uuid4(),
-            duration_preset_sec=60,
-        )
-    assert exc.value.status_code == 404
-
-
 # ---------- availability ----------
 
 @pytest.mark.asyncio

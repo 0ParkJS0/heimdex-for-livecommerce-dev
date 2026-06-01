@@ -2,8 +2,8 @@
 shorts-auto-product router endpoints.
 
 PR #130 fixed the wizard's ``create_scan_order``; this file extends
-the same fix to the other five endpoints (``get_product_catalog``,
-``enqueue_scan``, ``enqueue_clip``, ``force_rescan``,
+    the same fix to the active endpoints (``get_product_catalog``,
+    ``enqueue_scan``, ``force_rescan``,
 ``reject_catalog_entry``) which all carried the same latent
 ``video_id: UUID`` typing.
 
@@ -49,7 +49,6 @@ def _build_app(monkeypatch, *, drive_file: Any = None):
     # model_dump lambda fail with `uuid_type` errors. Constructing the
     # actual schemas keeps the test focused on the routing surface.
     from app.modules.shorts_auto_product.schemas import (
-        ClipResponse,
         ProductCatalogResponse,
         RescanResponse,
         ScanResponse,
@@ -64,9 +63,6 @@ def _build_app(monkeypatch, *, drive_file: Any = None):
     ))
     fake_service.enqueue_scan = AsyncMock(return_value=ScanResponse(
         job_id=uuid4(), deduped=False,
-    ))
-    fake_service.enqueue_clip = AsyncMock(return_value=ClipResponse(
-        job_id=uuid4(), deduped=False, render_job_id=None,
     ))
     fake_service.rescan = AsyncMock(return_value=RescanResponse(
         job_id=uuid4(), invalidated_count=0,
@@ -139,21 +135,17 @@ def test_enqueue_scan_resolves_os_video_id(monkeypatch):
     )
 
 
-def test_enqueue_clip_resolves_os_video_id(monkeypatch):
-    drive_file_uuid = uuid4()
+def test_enqueue_clip_returns_410_without_service_call(monkeypatch):
     catalog_entry_id = uuid4()
-    app, _, fake_service, _ = _build_app(
-        monkeypatch, drive_file=MagicMock(id=drive_file_uuid),
-    )
+    app, fake_drive_repo, fake_service, _ = _build_app(monkeypatch)
     resp = TestClient(app).post(
         f"/api/shorts/auto/products/gd_abc123/{catalog_entry_id}/clip",
         json={"duration_preset_sec": 60},
     )
-    assert resp.status_code == 202, resp.text
-    fake_service.enqueue_clip.assert_awaited_once()
-    kwargs = fake_service.enqueue_clip.await_args.kwargs
-    assert kwargs["video_id"] == drive_file_uuid
-    assert kwargs["catalog_entry_id"] == catalog_entry_id
+    assert resp.status_code == 410, resp.text
+    assert "retired" in resp.text
+    fake_drive_repo.get_by_video_id.assert_not_awaited()
+    assert "enqueue_clip" not in [call[0] for call in fake_service.method_calls]
 
 
 def test_force_rescan_resolves_os_video_id(monkeypatch):

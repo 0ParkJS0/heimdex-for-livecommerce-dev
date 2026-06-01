@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: 'Workers to build (comma-separated: caption,stt,ocr,transcode,face,visual-embed,reranker,blur,product-enumerate,product-track or "all")'
+        description: 'Workers to build (comma-separated: caption,stt,ocr,transcode,face,visual-embed,reranker,blur,product-enumerate or "all")'
         required: false
         default: 'all'
       contracts_ref:
@@ -30,7 +30,6 @@ on:
       # shorts-auto product mode v2 workers (Phase 2+).
       # No `drive-` prefix — these workers run after ingest, not during.
       - 'services/product-enumerate-worker/**'
-      - 'services/product-track-worker/**'
 
 env:
   REGISTRY: ghcr.io
@@ -57,7 +56,7 @@ jobs:
       - name: Resolve workers to build
         id: resolve
         run: |
-          ALL_WORKERS='["caption","stt","ocr","transcode","face","visual-embed","reranker","blur","product-enumerate","product-track"]'
+          ALL_WORKERS='["caption","stt","ocr","transcode","face","visual-embed","reranker","blur","product-enumerate"]'
 
           # ── Manual trigger: use input directly ──
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -99,7 +98,6 @@ jobs:
           echo "$CHANGED" | grep -q '^services/drive-blur-worker/'        && WORKERS+=("blur")
           # shorts-auto product mode v2 workers — no `drive-` prefix.
           echo "$CHANGED" | grep -q '^services/product-enumerate-worker/' && WORKERS+=("product-enumerate")
-          echo "$CHANGED" | grep -q '^services/product-track-worker/'     && WORKERS+=("product-track")
 
           if [ ${#WORKERS[@]} -eq 0 ]; then
             echo "workers=[]" >> "$GITHUB_OUTPUT"

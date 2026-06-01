@@ -1,10 +1,4 @@
-"""Tests for the Phase 4 single-product round-robin picker.
-
-Covers the catalog-selection layer ONLY. Window-level picking is
-exercised by the vendored ``app.lib.product_track`` chain's own
-tests upstream (and indirectly by the runner integration tests
-that ship in PR #6 commit 4).
-"""
+"""Tests for the single-product round-robin catalog picker."""
 
 from __future__ import annotations
 

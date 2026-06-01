@@ -12,8 +12,7 @@ Four endpoints, mirroring the contracts message types:
 * ``POST /internal/products/{job_id}/heartbeat`` — extend lease,
   advance progress, accumulate cost.
 * ``POST /internal/products/{job_id}/complete`` — terminal success.
-  Persists catalog entries (enum) or appearances + render_job_id
-  (track).
+  Persists catalog entries from the product-enumerate-worker.
 * ``POST /internal/products/{job_id}/fail`` — terminal failure.
 
 All write paths assert ``claimed_by`` matches the row so a stale
@@ -43,7 +42,6 @@ from app.modules.shorts_auto_product.models import (
     CATALOG_STATUS_READY,
 )
 from app.modules.shorts_auto_product.repositories import (
-    ProductAppearanceRepository,
     ProductCatalogRepository,
     ProductCatalogRunRepository,
     ProductScanDailyCostRepository,
@@ -307,7 +305,6 @@ async def complete(
     job_repo = ProductScanJobRepository(db)
     catalog_repo = ProductCatalogRepository(db)
     catalog_run_repo = ProductCatalogRunRepository(db)
-    appearance_repo = ProductAppearanceRepository(db)
     cost_repo = ProductScanDailyCostRepository(db)
 
     job = await job_repo.get_internal(job_id=job_id)
@@ -324,23 +321,17 @@ async def complete(
     # parent /complete.
     from app.modules.shorts_auto_product.models import (
         SCAN_MODE_ENUMERATE,
-        SCAN_MODE_SCAN_ORDER,
     )
 
-    if job.mode == SCAN_MODE_ENUMERATE and job.catalog_entry_id is None:
-        kind = "enumeration"
-    elif job.mode == SCAN_MODE_ENUMERATE and job.catalog_entry_id is not None:
-        kind = "legacy_tracking"  # deprecated enqueue_clip flow
-    elif job.mode == SCAN_MODE_SCAN_ORDER:
-        kind = "scan_order"
-    else:
-        # ``mode='render_child'`` callers should hit /render then
-        # /complete via a different flow entirely; rejecting here lets
-        # us catch contract drift early.
+    if job.mode != SCAN_MODE_ENUMERATE or job.catalog_entry_id is not None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"/complete does not accept mode={job.mode!r} via this path",
+            status_code=status.HTTP_410_GONE,
+            detail=(
+                "SAM2 product tracking callbacks have been retired; "
+                "scan-order parents fan out render children inline"
+            ),
         )
+    kind = "enumeration"
 
     # Body-shape validation by kind.
     if kind == "enumeration" and not body.catalog_entries:
@@ -348,31 +339,6 @@ async def complete(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="enumeration complete must include catalog_entries",
         )
-    if kind == "legacy_tracking" and not body.appearances:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tracking complete must include appearances",
-        )
-    if kind == "scan_order" and not body.appearances:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="scan_order complete must include appearances",
-        )
-    if kind == "scan_order":
-        # Each appearance must carry its own catalog_entry_id (the
-        # parent processed the whole catalog).
-        missing = [
-            i for i, app in enumerate(body.appearances)
-            if app.catalog_entry_id is None
-        ]
-        if missing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"scan_order appearances must each carry catalog_entry_id "
-                    f"(missing on indices {missing[:5]}{'...' if len(missing) > 5 else ''})"
-                ),
-            )
 
     persisted_catalog = 0
     persisted_appearances = 0
@@ -455,150 +421,6 @@ async def complete(
                 org_id=job.org_id,
                 video_db_id=job.video_id,
             )
-    else:
-        # ``legacy_tracking`` derives catalog_entry_id from the job row;
-        # ``scan_order`` reads it from each appearance's payload.
-        legacy_catalog_entry_id = (
-            job.catalog_entry_id if kind == "legacy_tracking" else None
-        )
-        appearance_dicts: list[dict[str, object]] = []
-        for app in body.appearances:
-            row_catalog_entry_id = (
-                legacy_catalog_entry_id
-                if kind == "legacy_tracking"
-                else app.catalog_entry_id
-            )
-            appearance_dicts.append({
-                "catalog_entry_id": row_catalog_entry_id,
-                "org_id": job.org_id,
-                "scene_id": app.scene_id,
-                "window_start_ms": app.window_start_ms,
-                "window_end_ms": app.window_end_ms,
-                "avg_bbox_area_pct": app.avg_bbox_area_pct,
-                "avg_confidence": app.avg_confidence,
-                "has_narration_mention": app.has_narration_mention,
-                "has_ocr_overlap": app.has_ocr_overlap,
-                "co_appearing_catalog_entry_ids": app.co_appearing_catalog_entry_ids,
-                "raw_bbox_track_s3_key": app.raw_bbox_track_s3_key,
-                "tracker_version": app.tracker_version,
-                "rejected_reason": app.rejected_reason,
-            })
-        rows = await appearance_repo.bulk_insert(appearances=appearance_dicts)
-        persisted_appearances = len(rows)
-        # Q4 codex pushback: scan_order parents NEVER carry render_job_id;
-        # the ck_psj_parent_no_render CHECK enforces this at the DB level
-        # but force NULL here too — defense in depth.
-        if kind == "scan_order":
-            # ── stale-video guard ─────────────────────────────────
-            # Between scan-order submission and worker callback, the
-            # user may have deleted the source video. The worker's
-            # GPU work is already done (appearances are persisted
-            # above) but rendering N shorts against a deleted video
-            # would produce orphan S3 outputs and broken playback in
-            # the wizard's step 4 list view. Fail the parent BEFORE
-            # fan-out so zero children are created.
-            #
-            # Loose-coupling note (plan §15): this is a deliberate
-            # cross-module reach into ``app.modules.drive`` — the
-            # second such carve-out alongside the render-service
-            # call at line 704. Lazy-imported to keep the runner's
-            # module-level import graph small.
-            from app.modules.drive.repository import (
-                DriveFileRepository,
-            )
-            drive_repo = DriveFileRepository(db)
-            drive_file = await drive_repo.get_by_id(
-                file_id=job.video_id, org_id=job.org_id,
-            )
-            if drive_file is None:
-                logger.info(
-                    "product_v2_scan_order_video_no_longer_available",
-                    extra={
-                        "parent_job_id": str(job_id),
-                        "video_id": str(job.video_id),
-                        "org_id": str(job.org_id),
-                        "persisted_appearances": persisted_appearances,
-                    },
-                )
-                # ``persisted_appearances`` upstream stays — the GPU
-                # work is preserved against the catalog, so a future
-                # scan-order on a re-uploaded video could reuse it.
-                # Parent transitions to FAILED with a discrete code
-                # the wizard UI can render as
-                # "Your video was deleted before shorts could be
-                # generated".
-                await job_repo.fail(
-                    job_id=job_id,
-                    claimed_by=body.claimed_by,
-                    error_code="video_no_longer_available",
-                    error_message=(
-                        "DriveFile is missing or soft-deleted; "
-                        "skipping fan-out to avoid orphan renders"
-                    ),
-                    cost_delta_usd=body.cost_delta_usd,
-                )
-                return _CompleteResponse(
-                    persisted_catalog_entries=0,
-                    persisted_appearances=persisted_appearances,
-                )
-            # ──────────────────────────────────────────────────────
-            # Phase 4 fan-out hook: transition parent to FANNED_OUT
-            # (NOT DONE — parent isn't terminal until children
-            # terminate) and atomically insert N children. Both
-            # operations are in the same transaction as the
-            # appearances insert above so a partial fan-out is
-            # impossible: if the children insert fails, the entire
-            # /complete returns 500 and the worker retries (lease
-            # protected against double-fan-out via the claimed_by
-            # check + the parent's stage transition).
-            transitioned = await job_repo.transition_parent_to_fanned_out(
-                job_id=job_id,
-                claimed_by=body.claimed_by,
-                cost_delta_usd=body.cost_delta_usd,
-            )
-            if transitioned is None:
-                # Transition failed — parent must have been
-                # cancelled / re-claimed mid-/complete. Surface as
-                # 409 (lease lost) so the worker treats the message
-                # as terminal and ack-deletes.
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="parent transition failed; lease lost or cancelled",
-                )
-            # PR 1 (multi-product wizard): mirror the STT inline path
-            # in service.py — when the parent has a single
-            # catalog_entry_id, propagate it to every child so the
-            # SAM2 worker (and the api-process runner, after it picks
-            # up child.catalog_entry_id) honors the user's selection.
-            # ``transitioned.catalog_entry_id`` was set on the parent
-            # at scan_order create time. Empty/None preserves legacy
-            # whole-catalog mode.
-            sam2_assignments: list[UUID | None] | None = (
-                [transitioned.catalog_entry_id] * transitioned.requested_count
-                if transitioned.catalog_entry_id is not None
-                else None
-            )
-            children = await job_repo.create_render_children(
-                parent=transitioned,
-                count=transitioned.requested_count,
-                catalog_entry_assignments=sam2_assignments,
-            )
-            logger.info(
-                "product_v2_scan_order_fanned_out",
-                extra={
-                    "parent_job_id": str(job_id),
-                    "children_inserted": len(children),
-                    "requested_count": transitioned.requested_count,
-                },
-            )
-        else:
-            await job_repo.complete_tracking(
-                job_id=job_id,
-                claimed_by=body.claimed_by,
-                cost_delta_usd=body.cost_delta_usd,
-                render_job_id=body.render_job_id,
-            )
-
     if body.cost_delta_usd > Decimal("0"):
         await cost_repo.add_cost(
             org_id=job.org_id, delta_usd=body.cost_delta_usd,
@@ -932,22 +754,18 @@ async def list_catalog_entries_for_video(
 ) -> _CatalogEntryListResponse:
     """List active catalog entries for a video.
 
-    Phase 4 PR #5b — used by ``product-track-worker`` in the wizard
-    parent flow (``mode='scan_order'``) to enumerate which products
-    to track. The worker calls this once per parent job, then loops
-    over the returned entries running the existing per-product
-    track pipeline.
+    Historical internal list shape for catalog resources. The current
+    scan-order path fans out render children in the API process and no
+    longer uses a product-track worker callback.
 
     Auth: Bearer + ``X-Heimdex-Org-Id`` header (Pattern A — list
     queries can't use Pattern B's resource-id resolution since the
     lookup key is the video, not a single entry).
 
     Returns the same ``_CatalogEntryResource`` shape per entry as
-    ``GET /catalog/{catalog_entry_id}`` so the worker's track
-    pipeline takes a uniform input. Embeddings + confidence /
-    prominence scores are deliberately omitted — the per-catalog
-    loop only needs canonical seed data + the llm_label for
-    alignment.
+    ``GET /catalog/{catalog_entry_id}``. Embeddings + confidence /
+    prominence scores are deliberately omitted from this internal
+    projection.
     """
     if x_heimdex_org_id is None:
         raise HTTPException(

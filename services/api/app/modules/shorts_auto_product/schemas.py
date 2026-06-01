@@ -153,25 +153,6 @@ class ScanResponse(BaseModel):
     skipped_reason: Literal["intangible_product"] | None = None
 
 
-# ---------- POST /products/{video_id}/{catalog_entry_id}/clip ----------
-
-class ClipRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    duration_preset_sec: DurationPresetSec = 60
-
-
-class ClipResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    job_id: UUID
-    deduped: bool = False
-    # Render job id is None until tracking + assembly complete and the
-    # render is enqueued. Frontend polls jobs/{job_id} for the
-    # transition.
-    render_job_id: UUID | None = None
-
-
 # ---------- GET /jobs/{job_id} ----------
 
 class JobStatusResponse(BaseModel):

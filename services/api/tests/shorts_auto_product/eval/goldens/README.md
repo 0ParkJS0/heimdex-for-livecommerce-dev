@@ -21,9 +21,8 @@ budget. It runs on demand, gated by:
 
 1. Any bump of `EnumerationPrompt.VERSION` in `heimdex-media-contracts`
    (per plan §9 rule 5; whoever bumps owns the run).
-2. Any change to `enumeration_version` or `tracker_version` constants
-   in `heimdex_media_pipelines.product_enum` /
-   `heimdex_media_pipelines.product_track`.
+2. Any change to `enumeration_version` or product catalog scoring
+   constants in `heimdex_media_pipelines.product_enum`.
 3. The Phase 2 → Phase 3 calibration gate before the prod rollout
    flag `auto_shorts_product_v2_enabled` is allowed to flip on prod
    (plan §11 phase table; §14 risks: SigLIP2 used off-label).

@@ -6,7 +6,6 @@
 # OWLv2 (google/owlv2-base-patch16-ensemble) ships inside transformers
 # — no separate package needed. Pre-downloading the weights at image
 # build time avoids first-boot stall; see Dockerfile.gpu.
-# SAM2 is still reserved for the track worker (Phase 3, separate image).
 #
 # Torch wheels need the cu124 extra index — supplied in Dockerfile.gpu
 # via `pip install --extra-index-url https://download.pytorch.org/whl/cu124`.

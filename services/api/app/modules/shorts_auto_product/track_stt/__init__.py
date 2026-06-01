@@ -16,14 +16,11 @@ Pipeline (orchestrated by ``service.assemble_stt_clip``):
     5. ``composition_builder.build_composition_spec(...)`` → CompositionSpec
     6. (caller) → ``ShortsRenderService.create_render_job(...)``
 
-Loose-coupling: this module imports only from
-``heimdex_media_contracts``, ``heimdex_media_pipelines.product_enum``
-(no — pipelines are forbidden, never use), own module,
-``app.lib.product_track`` (already-vendored pure math),
-``app.dependencies`` (top-level DI), ``app.config``, ``app.storage.s3``,
-``opensearchpy``, ``openai``. NEVER imports from ``app.modules.search.*``,
-``app.modules.shorts_auto.*``, ``app.modules.shorts_render.*``, or
-``app.modules.shorts.*``.
+Loose-coupling: this module imports only from its own package plus
+top-level integration boundaries such as ``app.dependencies``,
+``app.config``, ``app.storage.s3``, ``opensearchpy``, and ``openai``.
+It avoids importing search, shorts-auto, shorts-render, or shorts
+modules directly.
 
 Plan: ``.claude/plans/shorts-auto-product-stt-pivot.md`` PR 2.
 """

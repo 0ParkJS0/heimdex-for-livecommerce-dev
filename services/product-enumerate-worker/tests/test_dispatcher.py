@@ -1,7 +1,6 @@
 """Tests for the dispatcher's routing + last-ditch fail callback.
 
-Mirrors product-track-worker/tests/test_dispatcher.py. Adds explicit
-coverage for:
+Adds explicit coverage for:
 
 * F1 — SDK now passes ``QueueMessage``, not raw dict/string. Pre-fix
   the dispatcher fell through ``isinstance(message, str)`` and would

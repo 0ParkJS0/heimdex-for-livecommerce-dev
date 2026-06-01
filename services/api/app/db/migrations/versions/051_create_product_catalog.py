@@ -145,7 +145,7 @@ def upgrade() -> None:
     """)
     op.execute(
         "COMMENT ON TABLE product_appearances IS "
-        "'Per-product appearance windows. Populated by product-track-worker. "
+        "'Per-product appearance windows. Historical product tracking output. "
         "rejected_reason rows are kept for threshold tuning without re-running tracking.'"
     )
     op.execute("""

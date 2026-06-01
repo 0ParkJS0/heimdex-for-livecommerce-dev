@@ -58,7 +58,6 @@ from app.modules.shorts_auto_product.repositories import (
 from app.modules.shorts_auto_product.schemas import (
     CatalogProductSummary,
     CatalogStatus,
-    ClipResponse,
     DurationPresetSec,
     JobKind,
     JobStatusResponse,
@@ -526,93 +525,6 @@ class ProductScanService:
         return ScanResponse(job_id=job.id, deduped=False)
 
     # ------------------------------------------------------------------
-    # POST /products/{video_id}/{catalog_entry_id}/clip
-    # ------------------------------------------------------------------
-
-    async def enqueue_clip(
-        self,
-        *,
-        org_id: UUID,
-        video_id: UUID,
-        catalog_entry_id: UUID,
-        user_id: UUID,
-        duration_preset_sec: DurationPresetSec,
-    ) -> ClipResponse:
-        self._require_enabled_for_org(org_id)
-        await self._require_budget(org_id)
-
-        # Verify the catalog entry exists and belongs to this org/video.
-        entry = await self.catalog_repo.get(org_id=org_id, entry_id=catalog_entry_id)
-        if entry is None or entry.video_id != video_id or entry.rejected_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="catalog entry not found",
-            )
-
-        existing = await self.job_repo.find_recent_duplicate(
-            org_id=org_id,
-            video_id=video_id,
-            user_id=user_id,
-            catalog_entry_id=catalog_entry_id,
-            within_seconds=self.settings.auto_shorts_product_v2_scan_idempotency_seconds,
-        )
-        if existing is not None:
-            return ClipResponse(
-                job_id=existing.id,
-                deduped=True,
-                render_job_id=existing.render_job_id,
-            )
-
-        await self._require_concurrency_slot(org_id)
-
-        job = await self.job_repo.create_tracking_job(
-            org_id=org_id,
-            video_id=video_id,
-            user_id=user_id,
-            catalog_entry_id=catalog_entry_id,
-            duration_preset_sec=duration_preset_sec,
-        )
-        await self.session.flush()
-        await self.session.commit()
-
-        try:
-            sqs_producer.publish_product_track_job(
-                job_id=job.id,
-                org_id=org_id,
-                video_id=video_id,
-                catalog_entry_id=catalog_entry_id,
-                requested_by_user_id=user_id,
-                duration_preset_sec=duration_preset_sec,
-                tracker_version=self.settings.auto_shorts_product_v2_tracker_version,
-                enumeration_prompt_version=self.settings.auto_shorts_product_v2_enumeration_prompt_version,
-                callback_base_url=self.settings.auto_shorts_product_v2_callback_base_url,
-            )
-        except Exception:
-            logger.exception(
-                "product_v2_track_publish_failed",
-                job_id=str(job.id),
-                catalog_entry_id=str(catalog_entry_id),
-            )
-            await self.job_repo.fail_unclaimed_api_job(
-                job_id=job.id,
-                error_code="internal_error",
-                error_message="failed to enqueue clip; please retry",
-            )
-            await self.session.commit()
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="failed to enqueue clip; please retry",
-            )
-
-        logger.info(
-            "product_v2_clip_enqueued",
-            job_id=str(job.id),
-            catalog_entry_id=str(catalog_entry_id),
-            duration_preset_sec=duration_preset_sec,
-        )
-        return ClipResponse(job_id=job.id, deduped=False)
-
-    # ------------------------------------------------------------------
     # GET /jobs/{job_id}
     # ------------------------------------------------------------------
 
@@ -871,10 +783,9 @@ class ProductScanService:
         # the normalizer rejects bodies that set both.
         selected_ids = _normalize_catalog_selection(body=body)
 
-        # PR 2 guards: multi-select needs the feature flag on AND the
-        # STT track mode (SAM2 worker doesn't propagate per-child
-        # catalog_entry_id). Single-pick (len <= 1) bypasses both
-        # guards and stays back-compat.
+        # PR 2 guards: multi-select still needs the feature flag. Product
+        # tracking is now always the API-process STT path, so there is no
+        # SAM2 mode guard here.
         if len(selected_ids) > 1:
             if not self.settings.auto_shorts_product_v2_multi_select_enabled:
                 raise HTTPException(
@@ -884,24 +795,10 @@ class ProductScanService:
                         "pick a single product"
                     ),
                 )
-            track_mode_for_guard = getattr(
-                self.settings,
-                "auto_shorts_product_v2_track_mode",
-                "sam2",
-            )
-            if track_mode_for_guard == "sam2":
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        "multi-product selection requires STT track mode "
-                        "(set AUTO_SHORTS_PRODUCT_V2_TRACK_MODE=stt)"
-                    ),
-                )
 
         # Membership validation: each selected entry must exist, belong
-        # to (org, video), and not be soft-rejected. Same shape as the
-        # legacy ``enqueue_clip`` 404 (no-info-leak: cross-org, missing,
-        # and rejected all return the same status). Doubles as a
+        # to (org, video), and not be soft-rejected. Cross-org, missing,
+        # and rejected all return the same status. Doubles as a
         # defense against stale catalog ids that survived a rescan
         # invalidation. Validated BEFORE concurrency-slot allocation.
         for entry_id in selected_ids:
@@ -961,26 +858,18 @@ class ProductScanService:
 
         await self._require_concurrency_slot(org_id)
 
-        # PR 2: ``parent.catalog_entry_id`` preserves legacy single-pick
-        # semantics — set when exactly one product was picked, NULL
-        # otherwise. The SAM2 worker callback path reads this column
-        # to filter its catalog fetch; len>1 is rejected for SAM2 by
-        # the guard above, so this code only sees len in {0, 1, >1
-        # via STT}. STT path doesn't read parent.catalog_entry_id; it
-        # uses per-child catalog_entry_assignments via PR 1's plumbing.
+        # PR 2: ``parent.catalog_entry_id`` preserves the user's
+        # single-pick choice for historical rows and diagnostics. The STT
+        # child path uses explicit per-child catalog assignments below.
         parent_legacy_pick: UUID | None = (
             selected_ids[0] if len(selected_ids) == 1 else None
         )
 
-        # Full-STT shared planner: when the STT track + shared-plan flag are
-        # both on, mark the parent so the runner's planner poll claims it and
-        # makes ONE LLM call → N distinct shorts. The marker also gates the
-        # children (find_claimable_render_children) until the plans are
-        # persisted. Off → children are immediately claimable (legacy path).
-        _track_mode = getattr(
-            self.settings, "auto_shorts_product_v2_track_mode", "sam2",
-        )
-        _shared_plan_pending = _track_mode == "stt" and getattr(
+        # Full-STT shared planner: when enabled, mark the parent so the
+        # runner's planner poll claims it and makes ONE LLM call → N
+        # distinct shorts. The marker also gates children until plans are
+        # persisted. Off → children are immediately claimable.
+        _shared_plan_pending = getattr(
             self.settings,
             "auto_shorts_product_v2_full_stt_shared_plan_enabled",
             False,
@@ -1003,120 +892,31 @@ class ProductScanService:
         )
         await self.session.flush()
 
-        # PR 2.6 STT-pivot: when track_mode='stt', skip the SQS
-        # publish entirely (the SAM2 product-track-worker is the
-        # consumer of that queue) and fan out children inline. The
-        # api-process child runner (PR 2.5) picks up the children
-        # via the queued-render_children poll and runs the in-process
-        # STT pipeline.
-        #
-        # Without this branch, a track_mode='stt' scan_order races
-        # the still-deployed SAM2 worker which claims the SQS message
-        # first and runs SAM2 tracking — exactly what the STT pivot
-        # is replacing. See plan §"PR 2.6 — inline fan-out for STT mode"
-        # for the full sequencing.
-        track_mode = getattr(
-            self.settings, "auto_shorts_product_v2_track_mode", "sam2",
+        # Product tracking is now the API-process STT path. Fan out
+        # children inline; the child runner claims them from Postgres and
+        # creates render jobs without product-track SQS or SAM2.
+        assignments: list[UUID | None] | None
+        if selected_ids:
+            assignments = [
+                selected_ids[i % len(selected_ids)]
+                for i in range(body.requested_count)
+            ]
+        else:
+            assignments = None
+        await self.job_repo.create_render_children(
+            parent=parent,
+            count=body.requested_count,
+            catalog_entry_assignments=assignments,
         )
-        if track_mode == "stt":
-            # PR 2 (multi-product wizard): round-robin distribute the
-            # user's picks across ``requested_count`` children. Each
-            # picked product gets at least one short (validation
-            # enforced 1 <= len(selected_ids) <= requested_count); the
-            # remaining shorts cycle through the same set in sorted
-            # order so the assignment is deterministic. Empty list →
-            # legacy whole-catalog mode (children stay NULL → runner
-            # round-robins via the picker).
-            assignments: list[UUID | None] | None
-            if selected_ids:
-                assignments = [
-                    selected_ids[i % len(selected_ids)]
-                    for i in range(body.requested_count)
-                ]
-            else:
-                assignments = None
-            await self.job_repo.create_render_children(
-                parent=parent,
-                count=body.requested_count,
-                catalog_entry_assignments=assignments,
-            )
-            await self.job_repo.transition_parent_to_fanned_out_unclaimed(
-                job_id=parent.id,
-            )
-            logger.info(
-                "product_v2_scan_order_stt_fanout",
-                parent_job_id=str(parent.id),
-                org_id=str(org_id),
-                child_count=body.requested_count,
-            )
-        # Phase 4 PR — publish the parent track job to SQS so the
-        # product-track-worker picks it up and runs the per-catalog
-        # tracking loop. Gated on
-        # ``auto_shorts_product_v2_publish_scan_order_enabled`` so we
-        # can deploy the API code BEFORE the worker is rebuilt with
-        # v0.14.0 contracts. Flipping the flag without the worker
-        # ready would fill the worker DLQ with unparseable messages
-        # (extra='forbid' rejects the new wizard fields on a v0.13.0
-        # contracts pin).
-        elif self.settings.auto_shorts_product_v2_publish_scan_order_enabled:
-            try:
-                sqs_producer.publish_product_track_job(
-                    job_id=parent.id,
-                    org_id=org_id,
-                    video_id=video_id,
-                    requested_by_user_id=user_id,
-                    tracker_version=(
-                        self.settings.auto_shorts_product_v2_tracker_version
-                    ),
-                    enumeration_prompt_version=(
-                        self.settings
-                        .auto_shorts_product_v2_enumeration_prompt_version
-                    ),
-                    callback_base_url=(
-                        self.settings.auto_shorts_product_v2_callback_base_url
-                    ),
-                    mode="scan_order",
-                    length_seconds=body.length_seconds,
-                    requested_count=body.requested_count,
-                    time_range_start_ms=body.time_range_start_ms,
-                    time_range_end_ms=body.time_range_end_ms,
-                    product_distribution=body.product_distribution,
-                    language=body.language,
-                    intent=body.intent,
-                    # Optional pre-tracking pick. None = whole-catalog
-                    # round-robin (legacy scan_order behavior). Set =
-                    # worker filters its catalog fetch to this single
-                    # entry. ``duration_preset_sec`` stays omitted —
-                    # scan_order uses ``length_seconds`` not the legacy
-                    # preset.
-                    #
-                    # PR 2: ``parent_legacy_pick`` is the user's single
-                    # catalog id (or None). Multi-select submissions
-                    # are rejected at the guard above for SAM2 mode,
-                    # so len(selected_ids) is in {0, 1} here.
-                    catalog_entry_id=parent_legacy_pick,
-                )
-            except Exception:
-                logger.exception(
-                    "product_v2_scan_order_publish_failed",
-                    parent_job_id=str(parent.id),
-                    org_id=str(org_id),
-                )
-                # Mark the parent failed so the wizard UI can render a
-                # retry affordance. The DB row already exists; failing
-                # here matches the legacy enqueue_scan / enqueue_clip
-                # error-handling shape.
-                await self.job_repo.fail(
-                    job_id=parent.id,
-                    claimed_by="api",
-                    error_code="internal_error",
-                    error_message="failed to enqueue scan order; please retry",
-                    cost_delta_usd=Decimal("0"),
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="failed to enqueue scan order; please retry",
-                )
+        await self.job_repo.transition_parent_to_fanned_out_unclaimed(
+            job_id=parent.id,
+        )
+        logger.info(
+            "product_v2_scan_order_stt_fanout",
+            parent_job_id=str(parent.id),
+            org_id=str(org_id),
+            child_count=body.requested_count,
+        )
 
         logger.info(
             "product_v2_scan_order_created",
@@ -1130,11 +930,8 @@ class ProductScanService:
             language=body.language,
             intent=body.intent,
             settings_hash=settings_hash,
-            published=(
-                track_mode != "stt"
-                and self.settings.auto_shorts_product_v2_publish_scan_order_enabled
-            ),
-            track_mode=track_mode,
+            published=False,
+            track_mode="stt",
         )
         return ScanOrderResponse(parent_job_id=parent.id, deduped=False)
 
@@ -1158,9 +955,7 @@ class ProductScanService:
 
         # Lazy parent → committed transition.
         #
-        # In the SAM2 SQS flow the worker's terminal callback could
-        # carry the parent transition along; the STT inline path
-        # (PR 2.6) has no such callback — children terminate via the
+        # Children terminate via the
         # api-process runner and there is no follow-up that promotes
         # the parent to ``committed``. Without this lazy check the
         # parent stays at ``fanned_out`` forever and the wizard's

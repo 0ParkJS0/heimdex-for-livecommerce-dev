@@ -353,7 +353,7 @@ class Settings(BaseSettings):
     auto_shorts_llm_prompt_version: str = "2026-04-24-v1"
 
     # --- Auto-shorts product mode v2 (per-video product catalog +
-    # SAM2/SigLIP2 tracking + product-anchored clip output). All flags
+    # STT/overlay-driven product-anchored clip output). All flags
     # off by default; product-mode requests fall back to the v1
     # heuristic+LLM path when ``auto_shorts_product_v2_enabled`` is
     # False or the org is outside the rollout bucket. Plan:
@@ -361,8 +361,8 @@ class Settings(BaseSettings):
     #
     # Cost cap is a SEPARATE bucket from auto_shorts_llm /
     # image_caption / video_summary — this pipeline burns Aircloud GPU
-    # minutes (SAM2 + SigLIP2) plus gpt-4o-mini for enumeration and
-    # subset picking, and we want the per-feature ledger to be
+    # minutes for enumeration plus gpt-4o-mini for catalog/chunk scoring,
+    # and we want the per-feature ledger to be
     # interpretable.
     auto_shorts_product_v2_enabled: bool = False
     auto_shorts_product_v2_rollout_pct: int = 0  # 0-100; hashed on org_id
@@ -422,42 +422,21 @@ class Settings(BaseSettings):
     # banner; never auto-rescans). Kept in sync with:
     #   * heimdex_media_contracts.product.EnumerationPrompt.VERSION
     #   * heimdex_media_pipelines.product_enum.ENUMERATION_VERSION
-    #   * heimdex_media_pipelines.product_track.TRACKER_VERSION
     auto_shorts_product_v2_enumeration_prompt_version: str = "v1.0"
     auto_shorts_product_v2_enumeration_version: str = "v1.0"
     auto_shorts_product_v2_tracker_version: str = "v1.0"
-
-    # ---------- v0.15.0 STT-pivot track mode ----------
-    #
-    # ``"sam2"`` (default) preserves existing behavior — the
-    # ``shorts_auto_product`` orchestrator fans out to
-    # ``product-track-worker`` via SQS for per-scene SAM2 mask
-    # propagation. ``"stt"`` swaps in the in-process STT pipeline at
-    # ``shorts_auto_product/track_stt``: BM25 mention extraction over
-    # OpenSearch, gpt-4o-mini chunk scoring, no GPU. Flip to ``"stt"``
-    # only after the catalog backfill of ``spoken_aliases`` is complete
-    # for the org (PR 1b).
-    #
-    # See ``.claude/plans/shorts-auto-product-stt-pivot.md`` for the
-    # full migration plan, including the prod rollback path which
-    # requires keeping the SAM2 worker deployable for at least 30 days
-    # post-flip.
-    auto_shorts_product_v2_track_mode: str = "sam2"
 
     # Idempotency window for the scan endpoint — same (video_id,
     # user_id) within this window returns the existing job_id.
     auto_shorts_product_v2_scan_idempotency_seconds: int = 60
 
-    # Worker queues. Empty strings disable enqueue (workers can be
-    # provisioned ahead of being wired up).
+    # Worker queues. Empty strings disable enqueue.
     sqs_product_enumerate_queue_url: str = ""
-    sqs_product_track_queue_url: str = ""
 
     # Aircloud container UUIDs (from infra provisioning). drive-worker's
     # gpu_orchestrator extends to monitor these so first message wakes
     # the endpoint within ~5 min and 15 min idle stops it.
     aircloud_endpoint_product_enumerate: str = ""
-    aircloud_endpoint_product_track: str = ""
 
     # SigLIP2 variant pinned to the deployed drive-visual-embed-worker
     # model. Used by the workers, but mirrored here so the API can
@@ -475,7 +454,6 @@ class Settings(BaseSettings):
     # lease by this amount on every progress callback. Match the SQS
     # visibility timeouts on the corresponding queues.
     auto_shorts_product_v2_enumerate_lease_seconds: int = 600
-    auto_shorts_product_v2_track_lease_seconds: int = 1800
 
     # --- Phase 4 wizard / child runner ---
     #
@@ -534,17 +512,6 @@ class Settings(BaseSettings):
     # the canonical-JSON ``settings_hash`` so two different sets of
     # wizard inputs don't collide.
     auto_shorts_product_v2_scan_order_idempotency_seconds: int = 60
-
-    # Master flag for the wizard's SQS publish step. Default OFF: the
-    # service creates parent rows in DB but does NOT publish to
-    # ``heimdex-product-track-queue`` until this flips. Required so
-    # we can roll out the API code that knows about scan_order
-    # BEFORE the worker on Aircloud is rebuilt with v0.14.0
-    # contracts. Flipping early would fill the worker's DLQ with
-    # messages it can't parse. Once the worker image is bumped +
-    # redeployed, flip this to True (per-env via Aircloud config or
-    # docker-compose .env override).
-    auto_shorts_product_v2_publish_scan_order_enabled: bool = False
 
     # ---------- v0.16.0 STT-first enumeration (parallel to vision) ----------
     #

@@ -285,19 +285,14 @@ async def test_render_enqueue_skipped_when_child_lease_lost(monkeypatch):
         AsyncMock(return_value=(child, parent, {catalog_id: "Product"}, {catalog_id: ["Product"]})),
     )
 
-    appearance = MagicMock()
-    appearance.scene_id = "gd_video_1_scene_001"
-    appearance.window_start_ms = 0
-    appearance.window_end_ms = 5000
-    appearance.avg_bbox_area_pct = 0.2
-    appearance.avg_confidence = 0.9
-    appearance.rejected_reason = None
-    appearance.has_narration_mention = False
-    appearance.has_ocr_overlap = False
+    async def fake_process_child_stt(**kwargs):
+        kwargs["lease"].set_stage("rendering", progress_pct=60)
+        await kwargs["lease"].heartbeat_now()
+
     monkeypatch.setattr(
         runner,
-        "_load_appearances_for_catalog",
-        AsyncMock(return_value=[appearance]),
+        "_process_child_stt",
+        AsyncMock(side_effect=fake_process_child_stt),
     )
     create_render = AsyncMock()
     monkeypatch.setattr(runner, "_create_render_job", create_render)
@@ -881,9 +876,7 @@ class TestPreAssignedCatalogEntryId:
         """Wizard single-pick: child has catalog_entry_id=X, the active
         catalog contains X. Runner uses X directly and does NOT
         round-robin via the picker."""
-        s = _settings_stub()
-        s.auto_shorts_product_v2_track_mode = "sam2"  # exercise SAM2 picker path
-        runner, fake_repo = _build_runner(monkeypatch, settings=s)
+        runner, fake_repo = _build_runner(monkeypatch)
 
         target_id = uuid4()
         other_id = uuid4()
@@ -901,15 +894,12 @@ class TestPreAssignedCatalogEntryId:
             AsyncMock(return_value=(child, parent, lookup, {k: [v] for k, v in lookup.items()})),
         )
 
-        # Capture which catalog_entry_id reaches _load_appearances_for_catalog.
-        # Empty appearances → clean exit via _complete_no_render.
         captured = {}
 
-        async def fake_load(*, org_id, catalog_entry_id):
-            captured["catalog_entry_id"] = catalog_entry_id
-            return []
+        async def fake_process_child_stt(**kwargs):
+            captured["catalog_entry_id"] = kwargs["chosen_catalog_id"]
         monkeypatch.setattr(
-            runner, "_load_appearances_for_catalog", AsyncMock(side_effect=fake_load),
+            runner, "_process_child_stt", AsyncMock(side_effect=fake_process_child_stt),
         )
 
         await runner._process_child_payload(child.id)
@@ -929,9 +919,7 @@ class TestPreAssignedCatalogEntryId:
         gets *some* short instead of stalling."""
         import logging
 
-        s = _settings_stub()
-        s.auto_shorts_product_v2_track_mode = "sam2"
-        runner, fake_repo = _build_runner(monkeypatch, settings=s)
+        runner, fake_repo = _build_runner(monkeypatch)
 
         stale_id = uuid4()  # was assigned at fan-out
         other_id = uuid4()  # only this one is in the active catalog now
@@ -949,11 +937,10 @@ class TestPreAssignedCatalogEntryId:
 
         captured = {}
 
-        async def fake_load(*, org_id, catalog_entry_id):
-            captured["catalog_entry_id"] = catalog_entry_id
-            return []
+        async def fake_process_child_stt(**kwargs):
+            captured["catalog_entry_id"] = kwargs["chosen_catalog_id"]
         monkeypatch.setattr(
-            runner, "_load_appearances_for_catalog", AsyncMock(side_effect=fake_load),
+            runner, "_process_child_stt", AsyncMock(side_effect=fake_process_child_stt),
         )
 
         with caplog.at_level(
@@ -978,9 +965,7 @@ class TestPreAssignedCatalogEntryId:
         """Whole-catalog mode (legacy default): child.catalog_entry_id
         is None → runner uses the picker round-robin. No regression
         for existing wizards that didn't pick a product."""
-        s = _settings_stub()
-        s.auto_shorts_product_v2_track_mode = "sam2"
-        runner, fake_repo = _build_runner(monkeypatch, settings=s)
+        runner, fake_repo = _build_runner(monkeypatch)
 
         a, b = uuid4(), uuid4()
         lookup = {a: "A", b: "B"}
@@ -998,11 +983,10 @@ class TestPreAssignedCatalogEntryId:
 
         captured = {}
 
-        async def fake_load(*, org_id, catalog_entry_id):
-            captured["catalog_entry_id"] = catalog_entry_id
-            return []
+        async def fake_process_child_stt(**kwargs):
+            captured["catalog_entry_id"] = kwargs["chosen_catalog_id"]
         monkeypatch.setattr(
-            runner, "_load_appearances_for_catalog", AsyncMock(side_effect=fake_load),
+            runner, "_process_child_stt", AsyncMock(side_effect=fake_process_child_stt),
         )
 
         await runner._process_child_payload(child.id)

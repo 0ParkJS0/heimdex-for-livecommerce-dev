@@ -5,34 +5,12 @@ one catalog entry. Across the N shorts, products are distributed
 round-robin so 5 shorts of 3 products map to ``[c1, c2, c3, c1, c2]``
 (plan §7.1).
 
-## Why this lives in the API, not the vendored ``app.lib.product_track``
+## Why this lives in the API
 
-The vendored lib is a frozen snapshot of pure upstream pure-math
-(see ``app/lib/product_track/__init__.py`` for the sync ritual). It
-intentionally does not know about ``catalog_entry_id`` — that is a
-server-side identifier the worker tags appearances with on the
-``/complete`` callback, never visible to the lib's pickers. Adding
-catalog-awareness inside the lib would either:
-
-  * Pollute ``ScoredWindow`` with a ``catalog_entry_id`` field that
-    the upstream lib doesn't need (and can't populate — it doesn't
-    see UUIDs), forcing a permanent vendor divergence.
-  * Or smuggle the catalog ID via a parallel structure that
-    duplicates the chronological ordering work ``select_subset``
-    already does.
-
-Both options tightly couple the lib to API-side concerns. Instead,
-the runner does a two-step pick:
-
-  1. ``SingleProductSubsetPicker.pick_catalog`` — choose ONE catalog
-     by round-robin on ``shorts_index``.
-  2. Filter ``ProductAppearance`` rows to that catalog, score them,
-     hand the result to the vendored ``select_subset`` with a vanilla
-     :class:`GreedyPicker` (or LLM picker, when one ships for the
-     wizard).
-
-This keeps the lib pure-math + catalog-blind, while the API owns
-the orchestration layer that knows about UUIDs and DB rows.
+Catalog IDs are API-owned database identifiers. Keeping the picker here
+avoids coupling shared media packages to wizard row semantics while
+still giving the child runner one deterministic owner for catalog
+selection.
 
 ## Phase 5 (multi-product picker)
 
@@ -91,8 +69,7 @@ class CatalogPick:
     {3 candidate products}" without redundantly recomputing.
 
     The runner uses ``catalog_entry_id`` to:
-      * Filter ``ProductAppearance`` rows down to that catalog before
-        scoring.
+      * Scope STT/overlay selection to that catalog.
       * Persist on the child ``ProductScanJob`` row so the user-facing
         per-short rollup (Phase 6 wizard step 4) can show "Short 2:
         Cleanser" without an extra DB join.
@@ -112,12 +89,9 @@ class SingleProductSubsetPicker:
     follow the same shape (DI for an inner picker, version stamps,
     etc.) when they ship.
 
-    Loose-coupling: this class does NOT implement the lib's
-    :class:`SubsetPicker` protocol. It returns a
-    :class:`CatalogPick` (catalog choice), not a window subset, so
-    its surface is intentionally different from the picker the
-    vendored ``select_subset`` consumes. After choosing a catalog,
-    the runner narrows the windows and hands them to a separate
+    Loose-coupling: this class returns a :class:`CatalogPick` (catalog
+    choice), not a window subset. After choosing a catalog, the runner
+    hands the catalog to the STT/overlay selection path.
     lib-level picker (default :class:`GreedyPicker`, future LLM
     picker).
     """
