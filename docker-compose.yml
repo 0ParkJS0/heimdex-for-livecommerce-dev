@@ -146,7 +146,9 @@ services:
       # stages). Default 10. Operators raised this from 3 to 10 on
       # 2026-05-06 after the cap was paper-cutting iteration cycles.
       - AUTO_SHORTS_PRODUCT_V2_MAX_CONCURRENT_PER_ORG=${AUTO_SHORTS_PRODUCT_V2_MAX_CONCURRENT_PER_ORG:-10}
+      - AUTO_SHORTS_PRODUCT_V2_MAX_KEYFRAMES_PER_VIDEO=${AUTO_SHORTS_PRODUCT_V2_MAX_KEYFRAMES_PER_VIDEO:-60}
       - AUTO_SHORTS_PRODUCT_V2_PUBLISH_SCAN_ORDER_ENABLED=${AUTO_SHORTS_PRODUCT_V2_PUBLISH_SCAN_ORDER_ENABLED:-false}
+      - AUTO_SHORTS_PRODUCT_V2_CALLBACK_BASE_URL=${AUTO_SHORTS_PRODUCT_V2_CALLBACK_BASE_URL:-http://api:8000}
       # PR 2.5 STT-pivot: track_mode flag. ``"sam2"`` (default) preserves
       # SAM2 visual tracking. ``"stt"`` swaps in the in-process STT
       # pipeline at shorts_auto_product/track_stt — see
