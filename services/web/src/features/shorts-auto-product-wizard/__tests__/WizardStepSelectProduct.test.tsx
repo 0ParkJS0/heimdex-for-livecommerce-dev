@@ -52,9 +52,6 @@ const SAMPLE_ENTRY = {
   canonical_crop_url: "https://example/crop.jpg",
   enumeration_confidence: 0.9,
   prominence_score: 0.8,
-  has_track_data: false,
-  appearance_count: null,
-  total_appearance_seconds: null,
 };
 
 describe("WizardStepSelectProduct", () => {

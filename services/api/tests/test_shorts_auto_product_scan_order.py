@@ -10,7 +10,6 @@ Covers the wizard's parent-job orchestration plumbing:
 * ``ProductScanService.get_scan_order_status`` — aggregate shape
   with rollup counters.
 * ``ProductScanService.cancel_scan_order`` — cascading cancel.
-* ``ProductScanService.commit_scan_order`` — Phase 6 stub.
 
 NOT in CI allowlist (consistent with the rest of the
 test_shorts_auto_product_*.py suite).
@@ -54,7 +53,6 @@ def _settings_stub(**overrides):
     s.auto_shorts_product_v2_daily_budget_usd = 50.0
     s.auto_shorts_product_v2_max_concurrent_per_org = 3
     s.auto_shorts_product_v2_scan_order_idempotency_seconds = 60
-    s.auto_shorts_product_v2_tracker_version = "v1.0"
     s.auto_shorts_product_v2_enumeration_prompt_version = "v1.0"
     for k, v in overrides.items():
         setattr(s, k, v)
@@ -77,7 +75,6 @@ def _build_service(*, settings=None):
     svc.session.execute = AsyncMock(return_value=_empty_result)
     svc.catalog_repo = MagicMock()
     svc.catalog_repo.list_active_by_video = AsyncMock(return_value=[])
-    svc.appearance_repo = MagicMock()
     svc.job_repo = MagicMock()
     svc.cost_repo = MagicMock()
     svc.cost_repo.get_today_cost = AsyncMock(return_value=Decimal("0"))
@@ -120,7 +117,6 @@ def test_settings_hash_is_deterministic():
         "language": "ko",
         "intent": "commit",
         "active_catalog_entry_ids": ["aaa", "bbb", "ccc"],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h1 = compute_settings_hash(**args)
@@ -144,7 +140,6 @@ def test_settings_hash_intent_separates_preview_from_commit():
         "product_distribution": "single",
         "language": "ko",
         "active_catalog_entry_ids": [],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     preview_hash = compute_settings_hash(intent="preview", **args)
@@ -167,34 +162,11 @@ def test_settings_hash_catalog_set_changes_hash():
         "product_distribution": "single",
         "language": "ko",
         "intent": "commit",
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h_a = compute_settings_hash(active_catalog_entry_ids=["e1", "e2"], **base)
     h_b = compute_settings_hash(active_catalog_entry_ids=["e1", "e2", "e3"], **base)
     assert h_a != h_b
-
-
-def test_settings_hash_tracker_version_changes_hash():
-    """Codex Q3: model bumps invalidate dedupe so re-running after
-    a deploy gets fresh output instead of stale cached results.
-    """
-    base = {
-        "video_id": uuid4(),
-        "user_id": uuid4(),
-        "length_seconds": 60,
-        "requested_count": 5,
-        "time_range_start_ms": None,
-        "time_range_end_ms": None,
-        "product_distribution": "single",
-        "language": "ko",
-        "intent": "commit",
-        "active_catalog_entry_ids": [],
-        "enumeration_prompt_version": "v1.0",
-    }
-    h_old = compute_settings_hash(tracker_version="v1.0", **base)
-    h_new = compute_settings_hash(tracker_version="v2.0", **base)
-    assert h_old != h_new
 
 
 def test_settings_hash_canonical_json_is_key_order_insensitive():
@@ -214,7 +186,6 @@ def test_settings_hash_canonical_json_is_key_order_insensitive():
         "language": "ko",
         "intent": "commit",
         "active_catalog_entry_ids": [],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h1 = compute_settings_hash(**args_1)
@@ -240,7 +211,6 @@ def test_settings_hash_omits_selected_entry_when_none():
         "language": "ko",
         "intent": "commit",
         "active_catalog_entry_ids": ["aaa"],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h_no_kwarg = compute_settings_hash(**base)
@@ -266,7 +236,6 @@ def test_settings_hash_changes_when_user_picks_a_product():
         "language": "ko",
         "intent": "commit",
         "active_catalog_entry_ids": ["aaa", "bbb"],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h_unpicked = compute_settings_hash(**base)
@@ -291,7 +260,6 @@ def test_settings_hash_stable_across_input_order_for_multi_pick():
         "language": "ko",
         "intent": "commit",
         "active_catalog_entry_ids": ["aaa", "bbb", "ccc"],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h_abc = compute_settings_hash(
@@ -321,7 +289,6 @@ def test_settings_hash_distinguishes_different_product_sets():
         "language": "ko",
         "intent": "commit",
         "active_catalog_entry_ids": ["aaa", "bbb", "ccc"],
-        "tracker_version": "v1.0",
         "enumeration_prompt_version": "v1.0",
     }
     h_ab = compute_settings_hash(selected_catalog_entry_ids=["aaa", "bbb"], **base)
@@ -668,24 +635,6 @@ async def test_cancel_scan_order_404_when_wrong_mode():
     with pytest.raises(HTTPException) as exc:
         await svc.cancel_scan_order(org_id=uuid4(), parent_job_id=uuid4())
     assert exc.value.status_code == 404
-
-
-# ======================================================================
-# ProductScanService.commit_scan_order — Phase 6 stub
-# ======================================================================
-
-
-@pytest.mark.asyncio
-async def test_commit_scan_order_returns_501():
-    svc = _build_service()
-    with pytest.raises(HTTPException) as exc:
-        await svc.commit_scan_order(
-            org_id=uuid4(),
-            parent_job_id=uuid4(),
-            selected_window_ids=None,
-        )
-    assert exc.value.status_code == 501
-    assert "Phase 6" in exc.value.detail
 
 
 # ======================================================================

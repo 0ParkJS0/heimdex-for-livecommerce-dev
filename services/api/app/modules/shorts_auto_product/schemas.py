@@ -48,7 +48,7 @@ ScanStage = Literal[
     "assembling",
     "rendering",
     # Phase 4 wizard stages.
-    "preview_ready",   # parent waiting on user commit (Phase 6)
+    "preview_ready",   # historical preview-stage value
     "fanned_out",      # parent waiting on N children to terminate
     "committed",       # parent terminal once all children terminate
     "done",
@@ -56,12 +56,12 @@ ScanStage = Literal[
     "cancelled",
 ]
 
-# Job kind discriminator (Phase 4). Mirrors the ``mode`` column on
-# ``ProductScanJob`` plus the legacy "tracking" value for the deprecated
-# single-product (``enqueue_clip``) flow.
+# Job kind discriminator. Mirrors the ``mode`` column on
+# ``ProductScanJob`` plus the historical "tracking" value for old
+# single-product rows.
 #   ``enumeration``    → mode='enumerate' AND catalog_entry_id IS NULL
 #   ``tracking``       → mode='enumerate' AND catalog_entry_id IS NOT NULL
-#                        (legacy single-product, sunset +4wk after Phase 4 ship)
+#                        (historical single-product flow)
 #   ``scan_order``     → mode='scan_order' (wizard parent)
 #   ``render_child``   → mode='render_child' (wizard child)
 JobKind = Literal["enumeration", "tracking", "scan_order", "render_child"]
@@ -84,11 +84,6 @@ ScanErrorCode = Literal[
 class CatalogProductSummary(BaseModel):
     """One product card in the gallery view.
 
-    ``has_track_data`` flips true when the user picks this product and
-    the track worker writes appearances; until then,
-    ``appearance_count`` and ``total_appearance_seconds`` are ``None``
-    so the UI can show a "track to see appearances" affordance.
-
     v0.16.0 — STT-source rows have NO canonical crop (no frame to
     crop) and NO prominence score (vision-only concept). The frontend
     falls back to a generic icon when ``canonical_crop_url`` is null;
@@ -102,9 +97,6 @@ class CatalogProductSummary(BaseModel):
     canonical_crop_url: str | None = None
     enumeration_confidence: float = Field(..., ge=0.0, le=1.0)
     prominence_score: float | None = Field(default=None, ge=0.0, le=1.0)
-    has_track_data: bool
-    appearance_count: int | None = Field(default=None, ge=0)
-    total_appearance_seconds: float | None = Field(default=None, ge=0.0)
     # v0.16.0 — STT-first enumeration provenance fields.
     enumeration_source: str = "vision"
     first_mention_ms: int | None = Field(default=None, ge=0)
@@ -133,9 +125,8 @@ class ScanRequest(BaseModel):
     """Body for ``POST /api/shorts/auto/products/{video_id}/scan``.
 
     The duration preset is captured at scan time even though
-    enumeration doesn't use it — it's the user's intent for the
-    eventual clip and we propagate it to the tracking job so the
-    user doesn't have to re-pick.
+    enumeration doesn't use it directly. It preserves the user's
+    intended output duration for downstream scan-order flows.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -293,8 +284,6 @@ class ScanOrderCreateRequest(BaseModel):
     #   * each entry exists, belongs to (org, video), and isn't soft-rejected
     #   * no duplicates
     #   * mutually exclusive with the legacy ``catalog_entry_id`` field
-    #   * SAM2 track mode rejects ``len > 1`` (multi-select requires STT mode)
-    #
     # Children get a round-robin distribution at fan-out: child[i]
     # receives ``sorted(ids)[i % len(ids)]``. With requested_count=N
     # and len=K, the first K children get one product each; remaining
@@ -356,17 +345,3 @@ class ScanOrderStatusResponse(BaseModel):
     # job directly. Null on legacy parents that predate the wizard
     # schema.
     criteria: CriteriaSummary | None = None
-
-
-class ScanOrderCommitRequest(BaseModel):
-    """Body for ``POST /api/shorts/auto/scan-orders/{parent_job_id}/commit``.
-
-    Phase 6 endpoint — currently returns 501. Body shape locked now
-    so the frontend wizard can be built against a stable contract.
-    Optional ``selected_window_ids`` lets the user drop preview
-    windows before SAM2 + render-enqueue runs in commit mode.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    selected_window_ids: list[UUID] | None = None

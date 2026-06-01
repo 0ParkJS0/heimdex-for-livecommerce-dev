@@ -343,7 +343,7 @@ class ShortsRenderService:
         double-clicks without blocking intentional re-renders.
 
         ``dedupe_within_seconds`` lets server-side retry paths widen the
-        window past their lease horizon. Two concrete consumers:
+        window past their lease horizon. One concrete consumer:
 
         * The wizard child runner (``shorts_auto_product.children.runner``)
           claims a child for ``lease_seconds`` (default 300s); a crashed
@@ -351,9 +351,6 @@ class ShortsRenderService:
           replica re-claims and retries the render. With the default 30s
           window the retry would fire AFTER the dedupe closed → duplicate
           render row. The runner passes ``lease_seconds + 60``.
-        * The track-worker's ``/internal/products/{id}/render`` callback
-          has the same lease-expiry retry shape (separate PR).
-
         HTTP-initiated callers (``POST /api/shorts/render`` from the web
         client, the highlight-reel router, the v1 auto-shorts service)
         leave ``dedupe_within_seconds=None`` to keep the user-visible

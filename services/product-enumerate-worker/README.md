@@ -47,10 +47,9 @@ The pipeline scaffolding is wired end-to-end **except** for the two
 I/O placeholders in ``src/tasks/enumerate.py`` marked
 ``[PHASE-2-IO]``:
 
-1. ``_fetch_keyframes`` — needs a new internal API endpoint
+1. ``_fetch_keyframes`` — uses the internal API endpoint
    ``GET /internal/videos/{video_id}/scenes-with-keyframes`` that
-   returns ``[(scene_id, frame_idx, keyframe_s3_key), ...]``. Both the
-   enumerate and (Phase 3) track workers will consume this.
+   returns ``[(scene_id, frame_idx, keyframe_s3_key), ...]``.
 2. ``_upload_crops_and_build_payload`` — worker-side S3 client +
    payload assembly for the API ``complete`` callback.
 
@@ -67,5 +66,4 @@ in-flight UX assumptions.
 - **VLM client is behind a Protocol** (``heimdex_media_pipelines.product_enum.vlm_client.VlmClient``)
   so unit tests can inject a stub without an OpenAI key.
 - **SigLIP2 lives in pipelines** (``heimdex_media_pipelines.siglip2``),
-  not in the worker, so the Phase 3 track worker can reuse the same
-  shared loader without duplicating model code.
+  not in the worker, so model loading stays shared rather than duplicated.

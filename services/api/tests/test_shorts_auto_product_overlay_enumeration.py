@@ -45,7 +45,6 @@ def _settings(**overrides) -> Settings:
         "auto_shorts_product_v2_duration_presets_sec": "30,60,90",
         "auto_shorts_product_v2_enumeration_prompt_version": "v1.0",
         "auto_shorts_product_v2_enumeration_version": "v1.0",
-        "auto_shorts_product_v2_tracker_version": "v1.0",
         "auto_shorts_product_v2_scan_idempotency_seconds": 60,
         "auto_shorts_product_v2_callback_base_url": "http://api:8000",
     }
@@ -58,7 +57,6 @@ def _build_service(settings: Settings) -> ProductScanService:
     svc = ProductScanService(session=session, settings=settings)
     svc.catalog_repo = MagicMock()
     svc.catalog_run_repo = MagicMock()
-    svc.appearance_repo = MagicMock()
     svc.job_repo = MagicMock()
     svc.cost_repo = MagicMock()
     svc.cost_repo.get_today_cost = AsyncMock(return_value=Decimal("0"))

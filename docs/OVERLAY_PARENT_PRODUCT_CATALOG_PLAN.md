@@ -572,7 +572,6 @@ cd services/api
   tests/test_shorts_auto_product_schemas.py \
   tests/test_shorts_auto_product_service.py \
   tests/test_shorts_auto_product_phase4_foundation.py \
-  tests/test_shorts_auto_product_internal_by_video.py \
   -q --tb=short
 
 Result: 83 passed, 1 existing Pydantic deprecation warning
@@ -645,7 +644,6 @@ cd services/api
   tests/test_shorts_auto_product_schemas.py \
   tests/test_shorts_auto_product_service.py \
   tests/test_shorts_auto_product_phase4_foundation.py \
-  tests/test_shorts_auto_product_internal_by_video.py \
   -q --tb=short
 
 Result: 102 passed, 1 existing Pydantic deprecation warning
@@ -1094,7 +1092,7 @@ Implementation update:
 
 ```text
 API:
-  ProductScanService.enqueue_scan(), rescan(), and enqueue_clip() now commit the
+  ProductScanService.enqueue_scan() and rescan() now commit the
   user-visible job row before publishing the required SQS message. This prevents
   Aircloud from consuming a message before the worker can see the row.
 

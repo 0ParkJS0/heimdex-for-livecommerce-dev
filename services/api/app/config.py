@@ -417,14 +417,13 @@ class Settings(BaseSettings):
     # CHECK constraint and the contracts ``DurationPresetSec`` literal.
     auto_shorts_product_v2_duration_presets_sec: str = "30,60,90"
 
-    # Pipeline + prompt versions. Bumping any of these invalidates
+    # Pipeline + prompt versions. Bumping either of these invalidates
     # cached catalog entries (the API surfaces a "newer scan available"
     # banner; never auto-rescans). Kept in sync with:
     #   * heimdex_media_contracts.product.EnumerationPrompt.VERSION
     #   * heimdex_media_pipelines.product_enum.ENUMERATION_VERSION
     auto_shorts_product_v2_enumeration_prompt_version: str = "v1.0"
     auto_shorts_product_v2_enumeration_version: str = "v1.0"
-    auto_shorts_product_v2_tracker_version: str = "v1.0"
 
     # Idempotency window for the scan endpoint — same (video_id,
     # user_id) within this window returns the existing job_id.
@@ -449,11 +448,6 @@ class Settings(BaseSettings):
     # Local dev: ``http://api:8000``. Staging:
     # ``https://devorg.app.heimdexdemo.dev``. Production: per-tenant.
     auto_shorts_product_v2_callback_base_url: str = ""
-
-    # Per-stage worker lease lengths (seconds). Heartbeats extend the
-    # lease by this amount on every progress callback. Match the SQS
-    # visibility timeouts on the corresponding queues.
-    auto_shorts_product_v2_enumerate_lease_seconds: int = 600
 
     # --- Phase 4 wizard / child runner ---
     #
@@ -567,9 +561,6 @@ class Settings(BaseSettings):
     # Module: ``app.modules.shorts_auto_product.overlay_shorts``.
     # Status: dormant -- not called from any production path yet.
     auto_shorts_product_v2_overlay_shorts_enabled: bool = False
-    auto_shorts_product_v2_overlay_shorts_default_duration_s: int = 60
-    auto_shorts_product_v2_overlay_shorts_silence_db: int = -28
-    auto_shorts_product_v2_overlay_shorts_silence_min_dur_s: float = 0.18
 
     # --- Auto-shorts: post-enumeration catalog consolidation ---
     #

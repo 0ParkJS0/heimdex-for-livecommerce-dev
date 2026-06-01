@@ -76,9 +76,6 @@ class TestProductCatalogResponse:
             canonical_crop_url="https://s3.example/products/abc/canonical.jpg",
             enumeration_confidence=0.87,
             prominence_score=0.42,
-            has_track_data=True,
-            appearance_count=4,
-            total_appearance_seconds=28.5,
         )
         r = ProductCatalogResponse(
             video_id=uuid4(),
@@ -92,30 +89,14 @@ class TestProductCatalogResponse:
 
 
 class TestCatalogProductSummary:
-    def test_no_track_data_implies_null_counts(self):
-        # has_track_data=False → counts/seconds should be None;
-        # there's no zero-vs-null ambiguity in the UI this way.
-        p = CatalogProductSummary(
-            catalog_entry_id=uuid4(),
-            label="x",
-            canonical_crop_url="https://x",
-            enumeration_confidence=0.5,
-            prominence_score=0.5,
-            has_track_data=False,
-        )
-        assert p.appearance_count is None
-        assert p.total_appearance_seconds is None
-
-    def test_negative_appearance_count_rejected(self):
+    def test_negative_prominence_score_rejected(self):
         with pytest.raises(ValidationError):
             CatalogProductSummary(
                 catalog_entry_id=uuid4(),
                 label="x",
                 canonical_crop_url="https://x",
                 enumeration_confidence=0.5,
-                prominence_score=0.5,
-                has_track_data=True,
-                appearance_count=-1,
+                prominence_score=-0.1,
             )
 
 

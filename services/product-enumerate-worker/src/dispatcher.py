@@ -1,8 +1,7 @@
 """Per-message dispatcher.
 
-Routes by the message ``type`` field. v1 only handles
-``product.enumerate_job``; the track worker handles
-``product.track_job`` independently.
+Routes by the message ``type`` field. The worker handles
+``product.enumerate_job`` messages.
 
 Wraps :func:`handle_enumerate_job` with structured logging + a
 top-level catch so an unhandled exception is reported back to the

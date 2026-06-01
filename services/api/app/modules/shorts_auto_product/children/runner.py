@@ -388,7 +388,7 @@ class ChildRunner:
 
             # Full-STT shared planner poll. Only runs when the flag is on —
             # the marker is never set otherwise, so this is a pure no-op for
-            # every other path (SAM2 / storyboard / per-child full-STT).
+            # the storyboard and per-child full-STT paths.
             if getattr(
                 self.settings,
                 "auto_shorts_product_v2_full_stt_shared_plan_enabled",
@@ -1031,7 +1031,7 @@ class ChildRunner:
         catalog_aliases_lookup: dict[UUID, list[str]],
         lease: _ChildLeaseRenewer,
     ) -> None:
-        """STT product-track implementation for one render child.
+        """STT product-selection implementation for one render child.
 
         Loads the full catalog entry (we already have its label, but
         not ``llm_label`` + ``spoken_aliases``), resolves the
@@ -1045,9 +1045,9 @@ class ChildRunner:
         * :class:`NoMentionsFoundError` and
           :class:`TranscriptUnavailableError` → ``_complete_no_render``
           (terminal stage=done with ``render_job_id=None``). The wizard
-          UI already surfaces "no render produced" friendly-error-style
-          for the SAM2 ``no_appearances_for_catalog`` path; STT reuses
-          that same DB shape so the frontend doesn't need a new branch.
+          UI already surfaces "no render produced" friendly-error-style;
+          STT reuses that same DB shape so the frontend doesn't need a
+          new branch.
         * :class:`SttPipelineError` (base / OS unreachable / render
           enqueue failed) → ``_mark_child_failed`` with descriptive
           message. Distinct from no-render because the user CAN retry.
@@ -1116,9 +1116,8 @@ class ChildRunner:
 
         # ── 3. Build the enqueue_render closure ────────────────────
         # Captures parent + child + os_video_id by closure so
-        # track_stt itself never sees DB-row internals. Mirrors the
-        # existing ``_create_render_job`` call in the SAM2 path —
-        # both paths must forward ``scan_job_id`` so render dedupe
+        # track_stt itself never sees DB-row internals. The runner must
+        # forward ``scan_job_id`` so render dedupe
         # is scoped per scan_job (migration 057).
         async def _enqueue_render(spec) -> UUID:
             # Planner contribution complete → entering render (60%).
@@ -1147,7 +1146,7 @@ class ChildRunner:
                     False,
                 ):
                     # ── Full-STT product explainer path ──────────────
-                    # Lazy imports — not loaded on the storyboard/SAM2 path.
+                    # Lazy imports — not loaded on the storyboard/chunk path.
                     from app.lib.whisper_transcribe.budget import (
                         InMemoryBudgetTracker as _FullSttBudgetTracker,
                     )
@@ -1209,10 +1208,10 @@ class ChildRunner:
                         ),
                     )
                 else:
-                    # ── Storyboard / legacy path ──────────────────────
+                    # ── Storyboard / chunk-selection path ──────────────
                     # Lazy import to avoid loading the storyboard
                     # submodule (and its enum + Protocol machinery)
-                    # on the hot SAM2 path where it's not used.
+                    # on the non-storyboard path where it's not used.
                     from app.modules.shorts_auto_product.track_stt.storyboard import (
                         build_storyboard_picker_from_settings,
                     )
@@ -1410,7 +1409,7 @@ class ChildRunner:
                 "matched_alias_count": len(result.matched_aliases),
             },
         )
-        # PR 2: eager parent promotion (same shape as SAM2 path).
+        # Eagerly promote the parent if this was the last active child.
         await self._try_promote_parent_for_child(
             child_id=child.id, parent_id_hint=parent.id,
         )
@@ -1471,8 +1470,8 @@ class ChildRunner:
 
         os_video_id = os_video_id_from_scene_id(plan.segments[0].scene_id)
 
-        # Guard against a lost lease creating an orphan render (mirrors the
-        # SAM2 + legacy STT paths: heartbeat immediately before enqueue).
+        # Guard against a lost lease creating an orphan render: heartbeat
+        # immediately before enqueue.
         # Planner contribution complete → entering render (60%).
         lease.set_stage(
             stage=SCAN_STAGE_RENDERING, progress_pct=60, progress_label="rendering",
@@ -1824,8 +1823,6 @@ class ChildRunner:
             # without a commit rolls it back. The subsequent
             # ``complete_tracking(render_job_id=…)`` would then reference
             # a non-existent FK and IntegrityError-fail the child path.
-            # Mirrors the explicit commit in
-            # ``internal_router.enqueue_render_for_scan_job`` (line 709).
             # Codex review caught this — see PR #6 review notes.
             await session.commit()
         return response.id

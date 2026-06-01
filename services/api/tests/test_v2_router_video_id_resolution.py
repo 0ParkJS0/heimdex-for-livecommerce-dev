@@ -4,7 +4,7 @@ shorts-auto-product router endpoints.
 PR #130 fixed the wizard's ``create_scan_order``; this file extends
     the same fix to the active endpoints (``get_product_catalog``,
     ``enqueue_scan``, ``force_rescan``,
-``reject_catalog_entry``) which all carried the same latent
+    ``reject_catalog_entry``) which all carried the same latent
 ``video_id: UUID`` typing.
 
 All endpoints now share a single ``_resolve_video_uuid`` helper.
@@ -133,19 +133,6 @@ def test_enqueue_scan_resolves_os_video_id(monkeypatch):
         fake_service.enqueue_scan.await_args.kwargs["video_id"]
         == drive_file_uuid
     )
-
-
-def test_enqueue_clip_returns_410_without_service_call(monkeypatch):
-    catalog_entry_id = uuid4()
-    app, fake_drive_repo, fake_service, _ = _build_app(monkeypatch)
-    resp = TestClient(app).post(
-        f"/api/shorts/auto/products/gd_abc123/{catalog_entry_id}/clip",
-        json={"duration_preset_sec": 60},
-    )
-    assert resp.status_code == 410, resp.text
-    assert "retired" in resp.text
-    fake_drive_repo.get_by_video_id.assert_not_awaited()
-    assert "enqueue_clip" not in [call[0] for call in fake_service.method_calls]
 
 
 def test_force_rescan_resolves_os_video_id(monkeypatch):

@@ -59,7 +59,7 @@ SCAN_STAGE_TRACKING = "tracking"
 SCAN_STAGE_ASSEMBLING = "assembling"
 SCAN_STAGE_RENDERING = "rendering"
 # Phase 4 wizard stages — added in migration 052 via ALTER TYPE ADD VALUE.
-SCAN_STAGE_PREVIEW_READY = "preview_ready"   # parent waiting on user commit (Phase 6)
+SCAN_STAGE_PREVIEW_READY = "preview_ready"   # historical preview-stage value
 SCAN_STAGE_FANNED_OUT = "fanned_out"         # parent waiting on N children to terminate
 SCAN_STAGE_COMMITTED = "committed"           # parent terminal once all children terminate
 SCAN_STAGE_DONE = "done"
@@ -475,8 +475,7 @@ class ProductScanJob(Base, UUIDMixin):
     * ``mode='enumerate'`` AND ``catalog_entry_id IS NULL`` →
       enumeration job (output: ``catalog_entries`` populated).
     * ``mode='enumerate'`` AND ``catalog_entry_id IS NOT NULL`` →
-      legacy single-product tracking (deprecated; ``enqueue_clip``
-      sunsets after the +4wk window post-Phase-4 ship).
+      historical single-product tracking row.
     * ``mode='scan_order'`` (parent) → wizard submission. Holds wizard
       criteria (``length_seconds``, ``time_range_*``, ``requested_count``,
       ``product_distribution``, ``language``, ``intent``,
@@ -511,7 +510,8 @@ class ProductScanJob(Base, UUIDMixin):
         nullable=False,
     )
 
-    # Enumeration job vs tracking job.
+    # Enumeration job; catalog_entry_id remains for historical tracking rows
+    # and scan-order product selection.
     catalog_entry_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("product_catalog_entries.id", ondelete="SET NULL"),
@@ -639,7 +639,7 @@ class ProductScanJob(Base, UUIDMixin):
         # Active-only — drives the per-org concurrency cap. Mirrors the
         # ENUM list in ACTIVE_SCAN_STAGES; keep both in sync. Excludes
         # ``mode='render_child'`` so children don't take a slot — only
-        # parents (and pre-Phase-4 enumerate / legacy tracking jobs)
+        # parents and enumerate jobs
         # count toward the cap.
         Index(
             "ix_product_scan_jobs_active",

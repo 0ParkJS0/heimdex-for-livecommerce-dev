@@ -37,9 +37,6 @@ const SAMPLE_ENTRIES = [
     canonical_crop_url: "https://example/crop1.jpg",
     enumeration_confidence: 0.9,
     prominence_score: 0.8,
-    has_track_data: false,
-    appearance_count: null,
-    total_appearance_seconds: null,
   },
   {
     catalog_entry_id: "00000000-0000-0000-0000-000000000bbb",
@@ -47,9 +44,6 @@ const SAMPLE_ENTRIES = [
     canonical_crop_url: "https://example/crop2.jpg",
     enumeration_confidence: 0.8,
     prominence_score: 0.7,
-    has_track_data: false,
-    appearance_count: null,
-    total_appearance_seconds: null,
   },
 ];
 
@@ -161,9 +155,6 @@ describe("InlineWizardProductPanel", () => {
         canonical_crop_url: null,
         enumeration_confidence: 0.7,
         prominence_score: null,
-        has_track_data: false,
-        appearance_count: null,
-        total_appearance_seconds: null,
         enumeration_source: "vision",
         first_mention_ms: null,
         example_quote: null,

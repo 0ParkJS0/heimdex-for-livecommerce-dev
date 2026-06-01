@@ -120,11 +120,6 @@ export interface CatalogProductSummary {
   enumeration_confidence: number;
   // v0.16.0: nullable — vision-only metric, NULL for STT-source rows.
   prominence_score: number | null;
-  /** True after the user picked this product and tracking ran. */
-  has_track_data: boolean;
-  /** Populated only AFTER tracking — null during enumeration polling. */
-  appearance_count: number | null;
-  total_appearance_seconds: number | null;
   // v0.16.0 — STT-first enumeration provenance fields.
   /** ``"vision"`` (default) | ``"overlay"`` | ``"stt"`` | ``"stt_xref"`` | ``"manifest"`` | ``"hybrid"``. */
   enumeration_source: string;

@@ -49,7 +49,6 @@ from app.modules.shorts_auto_product.models import (
     ProductScanJob,
 )
 from app.modules.shorts_auto_product.repositories import (
-    ProductAppearanceRepository,
     ProductCatalogRepository,
     ProductCatalogRunRepository,
     ProductScanDailyCostRepository,
@@ -102,7 +101,6 @@ class ProductScanService:
         self.settings: Settings = settings
         self.catalog_repo = ProductCatalogRepository(session)
         self.catalog_run_repo = ProductCatalogRunRepository(session)
-        self.appearance_repo = ProductAppearanceRepository(session)
         self.job_repo = ProductScanJobRepository(session)
         self.cost_repo = ProductScanDailyCostRepository(session)
 
@@ -233,18 +231,6 @@ class ProductScanService:
                     entry.canonical_crop_s3_key,
                     expires_in=_CROP_URL_TTL_SECONDS,
                 )
-            appearance_count = await self.appearance_repo.count_active(
-                org_id=org_id, catalog_entry_id=entry.id,
-            )
-            total_seconds: float | None = None
-            if appearance_count > 0:
-                appearances = await self.appearance_repo.list_active_by_catalog(
-                    org_id=org_id, catalog_entry_id=entry.id,
-                )
-                total_seconds = sum(
-                    (a.window_end_ms - a.window_start_ms) / 1000.0
-                    for a in appearances
-                )
             products.append(
                 CatalogProductSummary(
                     catalog_entry_id=entry.id,
@@ -252,9 +238,6 @@ class ProductScanService:
                     canonical_crop_url=crop_url,
                     enumeration_confidence=entry.enumeration_confidence,
                     prominence_score=entry.prominence_score,
-                    has_track_data=appearance_count > 0,
-                    appearance_count=appearance_count if appearance_count > 0 else None,
-                    total_appearance_seconds=total_seconds,
                     enumeration_source=entry.enumeration_source,
                     first_mention_ms=entry.first_mention_ms,
                     example_quote=entry.example_quote,
@@ -834,7 +817,6 @@ class ProductScanService:
             language=body.language,
             intent=body.intent,
             active_catalog_entry_ids=active_entry_ids,
-            tracker_version=self.settings.auto_shorts_product_v2_tracker_version,
             enumeration_prompt_version=(
                 self.settings.auto_shorts_product_v2_enumeration_prompt_version
             ),
@@ -1118,24 +1100,6 @@ class ProductScanService:
                 detail="scan order not found or already terminal",
             )
 
-    async def commit_scan_order(
-        self,
-        *,
-        org_id: UUID,
-        parent_job_id: UUID,
-        selected_window_ids: list[UUID] | None,
-    ) -> None:
-        """Phase 6 endpoint — preview → commit transition. Stubbed
-        until the preview flow lands. Body shape locked now so the
-        frontend wizard can be built against a stable contract.
-        """
-        self._require_enabled_for_org(org_id)
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="scan order commit is a Phase 6 deliverable",
-        )
-
-
 # ---------- helpers ----------
 
 
@@ -1151,7 +1115,6 @@ def compute_settings_hash(
     language: str,
     intent: str,
     active_catalog_entry_ids: list[str],
-    tracker_version: str,
     enumeration_prompt_version: str,
     selected_catalog_entry_ids: list[str] | None = None,
 ) -> str:
@@ -1171,10 +1134,10 @@ def compute_settings_hash(
     * ``active_catalog_entry_ids``: rescan that produces new entries
       naturally changes the hash → new parent. No catalog-version
       column needed.
-    * ``tracker_version`` + ``enumeration_prompt_version``: model
-      bumps invalidate dedupe correctly, so the user re-running with
-      the same wizard inputs after a model deploy gets fresh output
-      (otherwise the cached parent would be stuck on the old model).
+    * ``enumeration_prompt_version``: prompt/model bumps invalidate
+      dedupe correctly, so the user re-running with the same wizard
+      inputs after a deploy gets fresh output (otherwise the cached
+      parent would be stuck on the old prompt/model behavior).
 
     Canonical-JSON via ``sort_keys=True`` + tightest separators so
     the hash is stable across Python versions / dict ordering /
@@ -1201,7 +1164,6 @@ def compute_settings_hash(
         "product_distribution": product_distribution,
         "language": language,
         "catalog_entry_ids": list(active_catalog_entry_ids),
-        "tracker_version": tracker_version,
         "enumeration_prompt_version": enumeration_prompt_version,
     }
     # Only include the user's pick when populated — preserves the
@@ -1381,9 +1343,8 @@ def _job_to_status_response(
         kind = "render_child"
         render_job_id_response = job.render_job_id
     elif job.mode == SCAN_MODE_ENUMERATE:
-        # Backward compat: the dispatch from ``mode='enumerate'`` to
-        # the user-facing kind still depends on ``catalog_entry_id``
-        # during the +4wk legacy ``enqueue_clip`` deprecation window.
+        # Backward compat: historical ``mode='enumerate'`` rows with
+        # ``catalog_entry_id`` still project as tracking on read.
         if job.catalog_entry_id is not None:
             kind = "tracking"  # legacy single-product flow
         else:

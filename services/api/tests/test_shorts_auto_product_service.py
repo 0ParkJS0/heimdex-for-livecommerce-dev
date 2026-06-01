@@ -44,7 +44,6 @@ def _settings(**overrides) -> Settings:
         auto_shorts_product_v2_duration_presets_sec="30,60,90",
         auto_shorts_product_v2_enumeration_prompt_version="v1.0",
         auto_shorts_product_v2_enumeration_version="v1.0",
-        auto_shorts_product_v2_tracker_version="v1.0",
         auto_shorts_product_v2_scan_idempotency_seconds=60,
         auto_shorts_product_v2_callback_base_url="http://api:8000",
     )
@@ -59,7 +58,6 @@ def _build_service(settings: Settings) -> ProductScanService:
     # assert against them without a real DB.
     svc.catalog_repo = MagicMock()
     svc.catalog_run_repo = MagicMock()
-    svc.appearance_repo = MagicMock()
     svc.job_repo = MagicMock()
     svc.cost_repo = MagicMock()
     # Default async-method behaviors — tests override per case.
@@ -193,7 +191,6 @@ async def test_list_products_uses_overlay_parent_visibility_when_ready():
             finalized_at=None,
         ),
     )
-    svc.appearance_repo.count_active = AsyncMock(return_value=0)
     import app.storage.s3 as s3_mod
     s3_mod.S3Client = MagicMock()
 

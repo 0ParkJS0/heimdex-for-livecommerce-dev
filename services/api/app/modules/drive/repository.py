@@ -98,9 +98,8 @@ class DriveFileRepository:
     async def get_by_id(self, file_id: UUID, org_id: UUID) -> Optional[DriveFile]:
         # Filters out soft-deleted files to match the repository's
         # other lookup methods (get_by_video_id at L107, list_by_org,
-        # etc.) Callers are all internal endpoints serving GPU workers
-        # (Phase 2.5a scenes-with-keyframes + Phase 3b
-        # scenes-by-visual-similarity / scenes-content) — none should
+        # etc.) Callers include internal endpoints serving GPU workers
+        # (for example scenes-with-keyframes) — none should
         # resolve deleted files. Resolving them would let workers
         # continue processing a file the user already retired (race
         # window between delete + worker picking up an in-flight job).

@@ -6,9 +6,6 @@ ID-only methods (no user scope, but org guard is preserved through
 the job row's ``org_id``).
 """
 
-from app.modules.shorts_auto_product.repositories.appearance import (
-    ProductAppearanceRepository,
-)
 from app.modules.shorts_auto_product.repositories.catalog import (
     ProductCatalogRepository,
 )
@@ -23,7 +20,6 @@ from app.modules.shorts_auto_product.repositories.job import (
 )
 
 __all__ = [
-    "ProductAppearanceRepository",
     "ProductCatalogRepository",
     "ProductCatalogRunRepository",
     "ProductScanDailyCostRepository",

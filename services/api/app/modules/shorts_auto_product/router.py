@@ -27,7 +27,6 @@ from app.modules.shorts_auto_product.schemas import (
     ProductCatalogResponse,
     ProductV2AvailabilityFragment,
     RescanResponse,
-    ScanOrderCommitRequest,
     ScanOrderCreateRequest,
     ScanOrderResponse,
     ScanOrderStatusResponse,
@@ -164,39 +163,6 @@ async def enqueue_scan(
         video_id=video_uuid,
         user_id=user.id,
         duration_preset_sec=body.duration_preset_sec,
-    )
-
-
-# ----------------------------------------------------------------------
-# POST /api/shorts/auto/products/{video_id}/{catalog_entry_id}/clip
-# ----------------------------------------------------------------------
-
-@router.post(
-    "/products/{video_id}/{catalog_entry_id}/clip",
-    status_code=status.HTTP_410_GONE,
-)
-async def enqueue_clip(
-    video_id: str,
-    catalog_entry_id: UUID,
-    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> None:
-    """Retired legacy single-product SAM2 tracking endpoint.
-
-    The product wizard now creates scan orders and the API-process STT
-    child runner performs composition/rendering. This endpoint used to
-    publish ``product.track_job`` messages for the SAM2 product-track
-    worker, which has been removed from the active product scope.
-    """
-    _ = (video_id, catalog_entry_id, org_ctx, user, db, settings)
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail=(
-            "single-product SAM2 clipping has been retired; create a "
-            "scan order instead"
-        ),
     )
 
 
@@ -443,30 +409,4 @@ async def cancel_scan_order(
     service = _build_service(db, settings)
     await service.cancel_scan_order(
         org_id=org_ctx.org_id, parent_job_id=parent_job_id,
-    )
-
-
-@router.post(
-    "/scan-orders/{parent_job_id}/commit",
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def commit_scan_order(
-    parent_job_id: UUID,
-    body: ScanOrderCommitRequest,
-    org_ctx: Annotated[OrgContext, Depends(get_current_org)],
-    _user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db_session)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> None:
-    """Phase 6 endpoint — preview → commit transition.
-
-    Currently returns 501. The body shape is locked now so the
-    frontend wizard can be built against a stable contract; Phase 6
-    will wire the SAM2 + render-enqueue commit path.
-    """
-    service = _build_service(db, settings)
-    await service.commit_scan_order(
-        org_id=org_ctx.org_id,
-        parent_job_id=parent_job_id,
-        selected_window_ids=body.selected_window_ids,
     )
