@@ -675,6 +675,19 @@ class ChildRunner:
         )
 
         try:
+            first_mention_ms: int | None = None
+            example_quote: str | None = None
+            if getattr(
+                self.settings,
+                "auto_shorts_product_v2_purchase_planner_enabled",
+                False,
+            ):
+                first_mention_ms, example_quote = (
+                    await self._load_product_narrative_hints(
+                        org_id=parent.org_id,
+                        catalog_entry_id=catalog_entry_id,
+                    )
+                )
             plans = await stt_service.plan_full_stt_clips(
                 org_id=parent.org_id,
                 catalog_entry_id=catalog_entry_id,
@@ -695,6 +708,13 @@ class ChildRunner:
                     "auto_shorts_product_v2_full_stt_max_scenes",
                     300,
                 ),
+                purchase_planner_enabled=getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_purchase_planner_enabled",
+                    False,
+                ),
+                first_mention_ms=first_mention_ms,
+                example_quote=example_quote,
             )
         except (TranscriptUnavailableError, LiveBlockTooShortError) as e:
             logger.info(
@@ -722,6 +742,11 @@ class ChildRunner:
                 "catalog_entry_id": str(catalog_entry_id),
                 "video_id": os_video_id,
                 "shorts": len(group),
+                "purchase_planner_enabled": getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_purchase_planner_enabled",
+                    False,
+                ),
                 "llm_shorts": sum(1 for p in plans if not p.fallback_used),
                 "fallback_shorts": sum(1 for p in plans if p.fallback_used),
             },
@@ -1550,6 +1575,22 @@ class ChildRunner:
                 entry.llm_label,
                 list(entry.spoken_aliases or []),
             )
+
+    async def _load_product_narrative_hints(
+        self,
+        *,
+        org_id: UUID,
+        catalog_entry_id: UUID,
+    ) -> tuple[int | None, str | None]:
+        """Load optional catalog fields that improve deterministic planning."""
+        async with self.session_factory() as session:
+            catalog_repo = ProductCatalogRepository(session)
+            entry = await catalog_repo.get(
+                org_id=org_id, entry_id=catalog_entry_id,
+            )
+            if entry is None:
+                return None, None
+            return entry.first_mention_ms, entry.example_quote
 
     def _build_os_client(self):
         """Construct an AsyncOpenSearch client for one STT pipeline call.

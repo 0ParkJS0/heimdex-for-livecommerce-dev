@@ -782,6 +782,11 @@ class Settings(BaseSettings):
     # now the default; the OFF path is retained only as an emergency
     # rollback. See ``.claude/plans/full-stt-shared-planner-2026-05-20.md``.
     auto_shorts_product_v2_full_stt_shared_plan_enabled: bool = True
+    # When True, the shared product planner uses the deterministic
+    # purchase-focused planner validated on livecommerce sources. It scores
+    # transcript + OCR + scene captions for product-specific buying signals
+    # and persists the same FullSttClipPlan shape as the OpenAI planner.
+    auto_shorts_product_v2_purchase_planner_enabled: bool = False
 
     # --- Auto-shorts: Phase 1 live-only segmentation filter ---
     # When True, the STT pipeline partitions a video's scenes into

@@ -333,3 +333,61 @@ class TestLiveBlockAllowlistRespected:
         assert "sc_3" not in scene_ids
         assert "sc_1" in scene_ids
         assert "sc_2" in scene_ids
+
+
+class TestPurchasePlannerSwitch:
+    @pytest.mark.asyncio
+    async def test_purchase_planner_uses_ocr_caption_and_bypasses_picker(self):
+        hits = [
+            {
+                "scene_id": "sc_0",
+                "start_ms": 0,
+                "end_ms": 15_000,
+                "transcript_raw": "",
+                "speaker_transcript": "",
+                "ocr_text_raw": "fwee Smoothie Lip Balm",
+                "scene_caption": "host applies lip balm color texture",
+                "speech_segment_count": 0,
+            },
+            {
+                "scene_id": "sc_1",
+                "start_ms": 15_000,
+                "end_ms": 30_000,
+                "transcript_raw": "",
+                "speaker_transcript": "",
+                "ocr_text_raw": "Smoothie Lip Balm color chart",
+                "scene_caption": "soft lip balm application demo",
+                "speech_segment_count": 0,
+            },
+            {
+                "scene_id": "sc_2",
+                "start_ms": 30_000,
+                "end_ms": 45_000,
+                "transcript_raw": "",
+                "speaker_transcript": "",
+                "ocr_text_raw": "fwee limited sale",
+                "scene_caption": "product package and color benefit",
+                "speech_segment_count": 0,
+            },
+        ]
+        os_client = _FakeOSClient(hits)
+        picker = AsyncMock()
+        picker.pick_many = AsyncMock(side_effect=AssertionError("picker should not run"))
+
+        plans = await service.plan_full_stt_clips(
+            org_id=uuid4(),
+            catalog_entry_id=uuid4(),
+            llm_label="fwee Smoothie Lip Balm",
+            spoken_aliases=["fwee", "Smoothie", "Lip Balm"],
+            os_video_id="gd_test",
+            target_duration_ms=45_000,
+            os_client=os_client,
+            picker=picker,
+            n=1,
+            purchase_planner_enabled=True,
+        )
+
+        assert len(plans) == 1
+        assert plans[0].fallback_used is False
+        assert [s.scene_id for s in plans[0].segments] == ["sc_0", "sc_1", "sc_2"]
+        picker.pick_many.assert_not_called()

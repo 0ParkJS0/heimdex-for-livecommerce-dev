@@ -107,6 +107,8 @@ async def _fetch_scenes_for_segmentation(
             "end_ms",
             "speaker_transcript",
             "transcript_raw",
+            "ocr_text_raw",
+            "scene_caption",
             "speech_segment_count",
         ],
         "sort": [{"start_ms": "asc"}],
@@ -699,6 +701,9 @@ async def plan_full_stt_clips(
     index_alias: str = "heimdex_scenes",
     live_only: bool = True,
     max_scenes: int = 300,
+    purchase_planner_enabled: bool = False,
+    first_mention_ms: int | None = None,
+    example_quote: str | None = None,
 ) -> list[Any]:
     """Planner side of the shared-plan path: fetch transcript once, then ONE
     LLM call returning ``n`` distinct ``FullSttClipPlan``.
@@ -711,6 +716,33 @@ async def plan_full_stt_clips(
         TranscriptUnavailableError: all fetched scenes have empty transcript text.
         LiveBlockTooShortError: live_only=True and live-block duration < target.
     """
+    if purchase_planner_enabled:
+        scenes = await _load_purchase_planner_scenes(
+            org_id=org_id,
+            catalog_entry_id=catalog_entry_id,
+            os_video_id=os_video_id,
+            target_duration_ms=target_duration_ms,
+            os_client=os_client,
+            index_alias=index_alias,
+            max_scenes=max_scenes,
+        )
+        from app.modules.shorts_auto_product.track_stt.purchase_planner import (
+            ProductNarrativeContext,
+            plan_purchase_focused_shorts,
+        )
+
+        return plan_purchase_focused_shorts(
+            scenes=scenes,
+            product=ProductNarrativeContext(
+                label=llm_label,
+                aliases=tuple(spoken_aliases or []),
+                first_mention_ms=first_mention_ms,
+                example_quote=example_quote,
+            ),
+            target_duration_ms=target_duration_ms,
+            n=n,
+        )
+
     active_scenes = await _load_active_full_stt_scenes(
         org_id=org_id,
         catalog_entry_id=catalog_entry_id,
@@ -729,6 +761,81 @@ async def plan_full_stt_clips(
         n=n,
         org_id=org_id,
     )
+
+
+async def _load_purchase_planner_scenes(
+    *,
+    org_id: UUID,
+    catalog_entry_id: UUID,
+    os_video_id: str,
+    target_duration_ms: int,
+    os_client: Any,
+    index_alias: str,
+    max_scenes: int,
+) -> list[Any]:
+    """Fetch transcript/OCR/caption scenes for the purchase planner.
+
+    The accepted experiment intentionally did not require transcript-only
+    availability. OCR/caption-only product demonstrations should still be
+    eligible, especially for videos where the product is visually clear but STT
+    is sparse or absent.
+    """
+    from app.modules.shorts_auto_product.track_stt.full_stt.prompt import (
+        select_scenes_for_prompt,
+    )
+    from app.modules.shorts_auto_product.track_stt.purchase_planner import (
+        PurchaseNarrativeScene,
+    )
+
+    raw_scenes = await _fetch_scenes_for_segmentation(
+        os_client=os_client,
+        index_alias=index_alias,
+        org_id=org_id,
+        video_id=os_video_id,
+    )
+    scenes: list[PurchaseNarrativeScene] = []
+    for hit in raw_scenes:
+        sid = str(hit.get("scene_id") or "")
+        if not sid:
+            continue
+        transcript = str(
+            hit.get("transcript_raw") or hit.get("speaker_transcript") or ""
+        )
+        ocr = str(hit.get("ocr_text_raw") or "")
+        caption = str(hit.get("scene_caption") or "")
+        if not (transcript or ocr or caption):
+            continue
+        scenes.append(
+            PurchaseNarrativeScene(
+                scene_id=sid,
+                start_ms=int(hit.get("start_ms", 0)),
+                end_ms=int(hit.get("end_ms", 0)),
+                transcript=transcript,
+                ocr=ocr,
+                caption=caption,
+            )
+        )
+    scenes.sort(key=lambda s: s.start_ms)
+    if not scenes:
+        raise TranscriptUnavailableError(
+            f"video {os_video_id} has no transcript, OCR, or caption text "
+            "for purchase planner"
+        )
+
+    capped = select_scenes_for_prompt(scenes, max_scenes=max_scenes)
+    logger.info(
+        "purchase_planner_scenes_ready",
+        extra={
+            "org_id": str(org_id),
+            "catalog_entry_id": str(catalog_entry_id),
+            "video_id": os_video_id,
+            "total_scenes": len(scenes),
+            "active_scenes": len(capped),
+            "target_duration_ms": target_duration_ms,
+            "max_scenes": max_scenes,
+        },
+    )
+    return capped
 
 
 async def render_full_stt_clip(
