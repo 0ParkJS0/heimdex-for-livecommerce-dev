@@ -240,6 +240,7 @@ services:
       # (plan: full-stt-shared-planner-2026-05-20.md). Default off.
       - AUTO_SHORTS_PRODUCT_V2_FULL_STT_SHARED_PLAN_ENABLED=${AUTO_SHORTS_PRODUCT_V2_FULL_STT_SHARED_PLAN_ENABLED:-false}
       - AUTO_SHORTS_PRODUCT_V2_PURCHASE_PLANNER_ENABLED=${AUTO_SHORTS_PRODUCT_V2_PURCHASE_PLANNER_ENABLED:-false}
+      - AUTO_SHORTS_PRODUCT_V2_PURCHASE_PLANNER_MODE=${AUTO_SHORTS_PRODUCT_V2_PURCHASE_PLANNER_MODE:-contiguous}
       # L1 label-gated post-merge — dedupes same-product entries that
       # SigLIP2 cosine clustering split within ONE enumeration scan
       # (OWLv2 same-frame dup boxes / cross-keyframe visual variance).

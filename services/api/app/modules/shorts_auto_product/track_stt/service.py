@@ -29,7 +29,8 @@ ssh-ing into anything (mirrors PR F's pattern from the SAM2 v5 chain).
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 from heimdex_media_contracts.composition.schemas import CompositionSpec
@@ -114,10 +115,7 @@ async def _fetch_scenes_for_segmentation(
         "sort": [{"start_ms": "asc"}],
     }
     response = await os_client.search(index=index_alias, body=body)
-    return [
-        hit.get("_source", {})
-        for hit in response.get("hits", {}).get("hits", [])
-    ]
+    return [hit.get("_source", {}) for hit in response.get("hits", {}).get("hits", [])]
 
 
 async def assemble_stt_clip(
@@ -281,20 +279,16 @@ async def assemble_stt_clip(
             },
         )
         raise NoMentionsFoundError(
-            f"no scenes match catalog entry {catalog_entry_id} "
-            f"on video {os_video_id}"
+            f"no scenes match catalog entry {catalog_entry_id} on video {os_video_id}"
         )
-    
+
     # ---- 1.5 Mention strength gate ----
     # mentioned is BM25 _score-desc; mentioned[0].score is the max.
     # When the catalog's STT mention is too weak, refuse to build a
     # short rather than padding it with other products' scenes
     # (decision 2026-05-17). Both thresholds default 0 = OFF.
     max_score = mentioned[0].score if mentioned else 0.0
-    if (
-        len(mentioned) < min_mention_scenes
-        or max_score < min_mention_score
-    ):
+    if len(mentioned) < min_mention_scenes or max_score < min_mention_score:
         logger.info(
             "stt_pipeline_mention_too_weak "
             "org_id=%s catalog_entry_id=%s video_id=%s "
@@ -318,13 +312,10 @@ async def assemble_stt_clip(
     # AND empty scene_caption. This shouldn't normally happen given
     # the BM25 boost ratios (we only match against those two fields),
     # but is a safety belt for malformed OS docs.
-    has_any_text = any(
-        (m.transcript_text or m.caption_text) for m in mentioned
-    )
+    has_any_text = any((m.transcript_text or m.caption_text) for m in mentioned)
     if not has_any_text:
         raise TranscriptUnavailableError(
-            f"video {os_video_id} has no transcript or caption text "
-            f"on any matching scene"
+            f"video {os_video_id} has no transcript or caption text on any matching scene"
         )
 
     # ---- 2. Segment assembly ----
@@ -371,7 +362,8 @@ async def assemble_stt_clip(
     # storyboard fallback path AND the shadow-mode comparison
     # baseline. Cheap (pure function over already-scored chunks).
     selected = clip_selector.select_top_chunks(
-        chunks=all_chunks, target_duration_ms=target_duration_ms,
+        chunks=all_chunks,
+        target_duration_ms=target_duration_ms,
     )
 
     storyboard_plan: StoryboardPlan | None = None
@@ -407,11 +399,7 @@ async def assemble_stt_clip(
     # Shadow-mode telemetry: emit a one-shot diff event so we can
     # see what storyboard WOULD have produced before flipping the
     # actual switch. Render still goes out using the legacy plan.
-    if (
-        storyboard_picker is not None
-        and storyboard_shadow_mode
-        and storyboard_plan is not None
-    ):
+    if storyboard_picker is not None and storyboard_shadow_mode and storyboard_plan is not None:
         logger.info(
             "stt_storyboard_shadow_diff",
             extra={
@@ -419,9 +407,7 @@ async def assemble_stt_clip(
                 "catalog_entry_id": str(catalog_entry_id),
                 "legacy_chunk_count": len(selected),
                 "storyboard_fragment_count": len(storyboard_plan.fragments),
-                "storyboard_slots_filled": sorted(
-                    s.value for s in storyboard_plan.slots_filled
-                ),
+                "storyboard_slots_filled": sorted(s.value for s in storyboard_plan.slots_filled),
                 "storyboard_fallbacks_used": storyboard_plan.fallbacks_used,
             },
         )
@@ -586,8 +572,7 @@ async def _load_active_full_stt_scenes(
 
     if not any(s.text for s in all_scenes):
         raise TranscriptUnavailableError(
-            f"video {os_video_id} has no transcript text in any scene "
-            f"(live_only={live_only})"
+            f"video {os_video_id} has no transcript text in any scene (live_only={live_only})"
         )
 
     # ---- 2. Temporal-coverage cap ----
@@ -702,8 +687,10 @@ async def plan_full_stt_clips(
     live_only: bool = True,
     max_scenes: int = 300,
     purchase_planner_enabled: bool = False,
+    purchase_planner_mode: str = "contiguous",
     first_mention_ms: int | None = None,
     example_quote: str | None = None,
+    sibling_products: list[dict[str, Any]] | None = None,
 ) -> list[Any]:
     """Planner side of the shared-plan path: fetch transcript once, then ONE
     LLM call returning ``n`` distinct ``FullSttClipPlan``.
@@ -726,6 +713,41 @@ async def plan_full_stt_clips(
             index_alias=index_alias,
             max_scenes=max_scenes,
         )
+        mode = (purchase_planner_mode or "contiguous").strip().casefold()
+        if mode == "story":
+            from app.modules.shorts_auto_product.track_stt.purchase_planner import (
+                ProductNarrativeContext,
+            )
+            from app.modules.shorts_auto_product.track_stt.purchase_story_planner import (
+                plan_purchase_story_shorts,
+            )
+
+            return plan_purchase_story_shorts(
+                scenes=scenes,
+                product=ProductNarrativeContext(
+                    label=llm_label,
+                    aliases=tuple(spoken_aliases or []),
+                    first_mention_ms=first_mention_ms,
+                    example_quote=example_quote,
+                ),
+                sibling_products=[
+                    ProductNarrativeContext(
+                        label=str(raw.get("label") or ""),
+                        aliases=tuple(raw.get("aliases") or []),
+                        first_mention_ms=raw.get("first_mention_ms"),
+                        example_quote=raw.get("example_quote"),
+                    )
+                    for raw in sibling_products or []
+                    if raw.get("label")
+                ],
+                target_duration_ms=target_duration_ms,
+                n=n,
+            )
+        if mode != "contiguous":
+            logger.warning(
+                "purchase_planner_unknown_mode_using_contiguous",
+                extra={"purchase_planner_mode": purchase_planner_mode},
+            )
         from app.modules.shorts_auto_product.track_stt.purchase_planner import (
             ProductNarrativeContext,
             plan_purchase_focused_shorts,
@@ -798,9 +820,7 @@ async def _load_purchase_planner_scenes(
         sid = str(hit.get("scene_id") or "")
         if not sid:
             continue
-        transcript = str(
-            hit.get("transcript_raw") or hit.get("speaker_transcript") or ""
-        )
+        transcript = str(hit.get("transcript_raw") or hit.get("speaker_transcript") or "")
         ocr = str(hit.get("ocr_text_raw") or "")
         caption = str(hit.get("scene_caption") or "")
         if not (transcript or ocr or caption):
@@ -818,8 +838,7 @@ async def _load_purchase_planner_scenes(
     scenes.sort(key=lambda s: s.start_ms)
     if not scenes:
         raise TranscriptUnavailableError(
-            f"video {os_video_id} has no transcript, OCR, or caption text "
-            "for purchase planner"
+            f"video {os_video_id} has no transcript, OCR, or caption text for purchase planner"
         )
 
     capped = select_scenes_for_prompt(scenes, max_scenes=max_scenes)

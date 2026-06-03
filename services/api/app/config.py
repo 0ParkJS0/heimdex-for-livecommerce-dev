@@ -21,7 +21,7 @@ class ProductionGuardError(SystemExit):
 class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
     log_level: str = "INFO"
-    
+
     database_url: str = "postgresql+asyncpg://heimdex:heimdex_dev_password@localhost:5432/heimdex"
     database_url_sync: str = "postgresql://heimdex:heimdex_dev_password@localhost:5432/heimdex"
 
@@ -30,22 +30,22 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800  # seconds; recycle connections after 30 minutes
-    
+
     opensearch_url: str = "http://localhost:9200"
     opensearch_index_prefix: str = "heimdex"
-    
+
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "heimdex"
     minio_secret_key: str = "heimdex_dev_password"
     minio_secure: bool = False
     s3_region: str = "ap-northeast-2"  # Used in AWS S3 mode (when minio_endpoint is empty)
-    
+
     jwt_secret_key: str = "dev-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
-    
+
     allowed_hosts: str = "*.app.heimdex.local,localhost"
-    
+
     auth0_enabled: bool = False
     auth0_domain: str = ""
     auth0_audience: str = ""
@@ -57,10 +57,12 @@ class Settings(BaseSettings):
     # remains the master switch for "external OIDC is active".
     # If oidc_issuer is set, JWKS URI and issuer validation use it
     # instead of deriving from auth0_domain.
-    oidc_issuer: str = ""       # e.g. "https://keycloak.company.local/realms/heimdex"
-    oidc_jwks_uri: str = ""     # auto-discovered from {oidc_issuer}/.well-known/openid-configuration if empty
-    oidc_org_claim: str = ""    # claim path for org_id — falls back to auth0_org_claim if empty
-    
+    oidc_issuer: str = ""  # e.g. "https://keycloak.company.local/realms/heimdex"
+    oidc_jwks_uri: str = (
+        ""  # auto-discovered from {oidc_issuer}/.well-known/openid-configuration if empty
+    )
+    oidc_org_claim: str = ""  # claim path for org_id — falls back to auth0_org_claim if empty
+
     # Embedding model configuration
     embedding_model: str = "intfloat/multilingual-e5-large"
     embedding_dimension: int = 1024  # multilingual-e5-large uses 1024 dimensions
@@ -71,7 +73,7 @@ class Settings(BaseSettings):
     visual_embedding_enabled: bool = False  # Enable SigLIP2 visual search at query time
     visual_embedding_model: str = "google/siglip2-base-patch16-256"
     visual_embedding_dimension: int = 768
-    
+
     # Cross-encoder reranker (GPU service)
     reranker_enabled: bool = False
     reranker_service_url: str = ""
@@ -99,16 +101,15 @@ class Settings(BaseSettings):
     ocr_bm25_boost: float = 0.6
     opensearch_facet_size: int = 500
 
-    
     # OpenSearch bulk refresh policy: "true" (default, sync), "false" (async), or "wait_for".
     # Set OPENSEARCH_BULK_REFRESH="false" for higher ingest throughput at the cost of search latency.
     opensearch_bulk_refresh: str = "true"
-    
+
     # Search mode: "segments" (default, backward-compatible) or "scenes"
     # Controls which index POST /api/search queries.
     # Rollback: flip back to "segments" — no code revert needed.
     search_default_mode: Literal["segments", "scenes"] = "segments"
-    
+
     # Agent ingestion settings
     # Controls whether the agent scene ingest endpoint is active.
     agent_ingest_enabled: bool = True
@@ -159,7 +160,9 @@ class Settings(BaseSettings):
     drive_proxy_audio_bitrate: str = "128k"
     drive_proxy_max_bitrate: str = "2500k"
     drive_proxy_bufsize: str = "5000k"
-    drive_transcode_mode: str = "cpu"  # "cpu" (drive-worker transcodes) or "gpu" (Aircloud+ transcode-worker)
+    drive_transcode_mode: str = (
+        "cpu"  # "cpu" (drive-worker transcodes) or "gpu" (Aircloud+ transcode-worker)
+    )
     drive_download_chunk_size: int = 10 * 1024 * 1024
     drive_download_max_retries: int = 3
     drive_s3_bucket: str = "heimdex-drive"
@@ -183,7 +186,9 @@ class Settings(BaseSettings):
     # --- Google Drive OAuth (folder-scoped sync) ---
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
-    google_oauth_redirect_uri: str = ""  # e.g., https://devorg.app.heimdexdemo.dev/api/drive/oauth/callback
+    google_oauth_redirect_uri: str = (
+        ""  # e.g., https://devorg.app.heimdexdemo.dev/api/drive/oauth/callback
+    )
 
     # --- OCR enrichment worker ---
     drive_ocr_enabled: bool = False
@@ -214,7 +219,9 @@ class Settings(BaseSettings):
     youtube_reference_library_name: str = "유튜브 레퍼런스"
     youtube_s3_bucket: str = ""  # Defaults to drive_s3_bucket if empty
     youtube_sync_interval_seconds: int = 21600  # 6 hours
-    youtube_download_format: str = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"
+    youtube_download_format: str = (
+        "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]"
+    )
     youtube_rate_limit_sleep: int = 3  # seconds between downloads
     youtube_rate_limit_max_sleep: int = 8
     youtube_max_concurrent_downloads: int = 2
@@ -258,8 +265,8 @@ class Settings(BaseSettings):
     aircloud_endpoint_face: str = ""
     aircloud_endpoint_visual_embed: str = ""
     aircloud_endpoint_blur: str = ""
-    aircloud_wake_debounce_seconds: int = 300   # 5 min between wake-up calls per worker
-    aircloud_cooldown_checks: int = 3           # 3 × 5 min = 15 min idle before stop
+    aircloud_wake_debounce_seconds: int = 300  # 5 min between wake-up calls per worker
+    aircloud_cooldown_checks: int = 3  # 3 × 5 min = 15 min idle before stop
 
     # --- Closed-vocabulary VMD search (sidecar container) ---
     # Service URL is wired via the compose env-passthrough fallback
@@ -282,8 +289,8 @@ class Settings(BaseSettings):
     # feature dark in envs where drive-blur-worker hasn't been
     # upgraded to the dispatcher version yet.
     blur_export_enabled: bool = False
-    blur_max_active_per_org: int = 5       # queued+running cap per org
-    blur_lease_seconds: int = 1800         # 30 min worker lease (matches SQS visibility)
+    blur_max_active_per_org: int = 5  # queued+running cap per org
+    blur_lease_seconds: int = 1800  # 30 min worker lease (matches SQS visibility)
     blur_daily_budget_usd_per_org: float = 50.0  # reserved for a later circuit breaker
 
     # --- Video summary (OpenAI) ---
@@ -381,7 +388,7 @@ class Settings(BaseSettings):
     auto_shorts_product_v2_alias_auto_hook_enabled: bool = False
     auto_shorts_product_v2_alias_daily_budget_usd: float = 5.0
 
-    # STT mention gate (accuracy first) 
+    # STT mention gate (accuracy first)
     auto_shorts_product_v2_stt_min_mention_scenes: int = 0
     auto_shorts_product_v2_stt_min_mention_score: float = 0.0
 
@@ -668,7 +675,7 @@ class Settings(BaseSettings):
     tangibility_classifier_version: str = "v1"
     # if LR confidence is in 0.5±threshold -> LLM (gap < 0.15 ≡ max(p) < 0.65)
     tangibility_lr_gap_threshold: float = 0.15
-    # if classified as intangible but p_intangible is below this threshold, 
+    # if classified as intangible but p_intangible is below this threshold,
     # do not block — false positive mitigation
     tangibility_min_confidence_to_block: float = 0.7
     tangibility_llm_model: str = "gpt-4o-mini"
@@ -778,6 +785,11 @@ class Settings(BaseSettings):
     # transcript + OCR + scene captions for product-specific buying signals
     # and persists the same FullSttClipPlan shape as the OpenAI planner.
     auto_shorts_product_v2_purchase_planner_enabled: bool = False
+    # Strategy used when the deterministic purchase planner is enabled.
+    # ``contiguous`` preserves the original single-window planner; ``story``
+    # uses the productionized story-mode experiment: intro -> proof -> offer
+    # with gift/giveaway rejection and no required price mention.
+    auto_shorts_product_v2_purchase_planner_mode: str = "contiguous"
 
     # --- Auto-shorts: Phase 1 live-only segmentation filter ---
     # When True, the STT pipeline partitions a video's scenes into
@@ -842,7 +854,7 @@ class Settings(BaseSettings):
     # at the feature level. Drives BOTH the refinement-write path AND
     # the rerender-link skip — single switch, both behaviors cohere.
     auto_shorts_product_v2_overlay_mode_enabled: bool = False
-    
+
     # --- Shorts render: per-short summary generation ---
     # 1-2 sentence Korean summary for a completed render. Uses existing
     # multi-worker signals (STT + scene_caption + OCR + speaker) via
@@ -934,11 +946,11 @@ class Settings(BaseSettings):
 
         if errors:
             msg = (
-                f"\n{'='*60}\n"
+                f"\n{'=' * 60}\n"
                 + f"FATAL: Refusing to start in '{self.environment}' mode.\n\n"
-                + "\n".join(f"  [{i+1}] {e}" for i, e in enumerate(errors))
+                + "\n".join(f"  [{i + 1}] {e}" for i, e in enumerate(errors))
                 + f"\n\nFix all {len(errors)} issue(s) above before starting.\n"
-                + f"{'='*60}"
+                + f"{'=' * 60}"
             )
             logging.critical(msg)
             raise ProductionGuardError(msg)

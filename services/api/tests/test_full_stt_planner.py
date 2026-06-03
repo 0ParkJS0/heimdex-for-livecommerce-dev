@@ -45,6 +45,8 @@ def _settings_stub():
     s.auto_shorts_product_v2_full_stt_model = "gpt-4o-mini"
     s.auto_shorts_product_v2_full_stt_max_scenes = 300
     s.auto_shorts_product_v2_full_stt_live_only = True
+    s.auto_shorts_product_v2_purchase_planner_enabled = False
+    s.auto_shorts_product_v2_purchase_planner_mode = "contiguous"
     s.openai_api_key = "sk-test"
     s.opensearch_url = "http://localhost:9200"
     return s
@@ -113,18 +115,22 @@ class TestRenderChildFromSharedPlan:
         fake_repo = MagicMock()
         fake_repo.complete_tracking = AsyncMock(return_value=MagicMock())
         monkeypatch.setattr(
-            runner_module, "ProductScanJobRepository",
+            runner_module,
+            "ProductScanJobRepository",
             MagicMock(return_value=fake_repo),
         )
 
         child = MagicMock(
-            id=uuid4(), shorts_index=1,
+            id=uuid4(),
+            shorts_index=1,
             full_stt_plan=serialize_plan(_plan("gd_abc")),
         )
         parent = MagicMock(org_id=uuid4(), requested_by_user_id=uuid4())
 
         await runner._render_child_from_shared_plan(
-            child=child, parent=parent, catalog_label="My product",
+            child=child,
+            parent=parent,
+            catalog_label="My product",
             lease=_lease_stub(),
         )
 
@@ -132,10 +138,7 @@ class TestRenderChildFromSharedPlan:
         assert create_mock.await_args.kwargs["scan_job_id"] == child.id
         assert create_mock.await_args.kwargs["title"] == "My product"
         fake_repo.complete_tracking.assert_awaited_once()
-        assert (
-            fake_repo.complete_tracking.await_args.kwargs["render_job_id"]
-            == render_id
-        )
+        assert fake_repo.complete_tracking.await_args.kwargs["render_job_id"] == render_id
         promote_mock.assert_awaited_once()
         os_guard.assert_not_called()
 
@@ -151,7 +154,10 @@ class TestRenderChildFromSharedPlan:
         parent = MagicMock(org_id=uuid4(), requested_by_user_id=uuid4())
 
         await runner._render_child_from_shared_plan(
-            child=child, parent=parent, catalog_label="X", lease=_lease_stub(),
+            child=child,
+            parent=parent,
+            catalog_label="X",
+            lease=_lease_stub(),
         )
         no_render.assert_awaited_once()
         assert no_render.await_args.kwargs["reason"] == "stt_no_plan"
@@ -171,12 +177,13 @@ class TestRenderChildFromSharedPlan:
         parent = MagicMock(org_id=uuid4(), requested_by_user_id=uuid4())
 
         await runner._render_child_from_shared_plan(
-            child=child, parent=parent, catalog_label="X", lease=_lease_stub(),
+            child=child,
+            parent=parent,
+            catalog_label="X",
+            lease=_lease_stub(),
         )
         no_render.assert_awaited_once()
-        assert (
-            no_render.await_args.kwargs["reason"] == "stt_plan_version_unsupported"
-        )
+        assert no_render.await_args.kwargs["reason"] == "stt_plan_version_unsupported"
         create_mock.assert_not_called()
 
 
@@ -190,7 +197,8 @@ class TestPlanParentMarkerSemantics:
             return_value=MagicMock() if claimed else None,
         )
         monkeypatch.setattr(
-            runner_module, "ProductScanJobRepository",
+            runner_module,
+            "ProductScanJobRepository",
             MagicMock(return_value=fake_repo),
         )
         return fake_repo
@@ -200,6 +208,7 @@ class TestPlanParentMarkerSemantics:
         fake_os.close = AsyncMock()
         monkeypatch.setattr(runner, "_build_os_client", lambda: fake_os)
         import openai
+
         fake_openai = MagicMock()
         fake_openai.close = AsyncMock()
         monkeypatch.setattr(openai, "AsyncOpenAI", MagicMock(return_value=fake_openai))
@@ -211,18 +220,24 @@ class TestPlanParentMarkerSemantics:
         self._patch_clients(runner, monkeypatch)
 
         parent = MagicMock(
-            id=uuid4(), org_id=uuid4(), video_id=uuid4(),
-            length_seconds=60, duration_preset_sec=None,
+            id=uuid4(),
+            org_id=uuid4(),
+            video_id=uuid4(),
+            length_seconds=60,
+            duration_preset_sec=None,
             requested_by_user_id=uuid4(),
         )
         cat = uuid4()
         children = [MagicMock(id=uuid4(), shorts_index=i, catalog_entry_id=cat) for i in range(3)]
         monkeypatch.setattr(
-            runner, "_load_planning_context",
+            runner,
+            "_load_planning_context",
             AsyncMock(return_value=(parent, children, {cat: "Prod"})),
         )
         monkeypatch.setattr(
-            runner, "_resolve_catalog_for_child", MagicMock(return_value=cat),
+            runner,
+            "_resolve_catalog_for_child",
+            MagicMock(return_value=cat),
         )
         group_mock = AsyncMock()
         monkeypatch.setattr(runner, "_plan_one_group", group_mock)
@@ -240,18 +255,24 @@ class TestPlanParentMarkerSemantics:
         self._patch_clients(runner, monkeypatch)
 
         parent = MagicMock(
-            id=uuid4(), org_id=uuid4(), video_id=uuid4(),
-            length_seconds=60, duration_preset_sec=None,
+            id=uuid4(),
+            org_id=uuid4(),
+            video_id=uuid4(),
+            length_seconds=60,
+            duration_preset_sec=None,
             requested_by_user_id=uuid4(),
         )
         cat = uuid4()
         children = [MagicMock(id=uuid4(), shorts_index=i, catalog_entry_id=cat) for i in range(3)]
         monkeypatch.setattr(
-            runner, "_load_planning_context",
+            runner,
+            "_load_planning_context",
             AsyncMock(return_value=(parent, children, {cat: "Prod"})),
         )
         monkeypatch.setattr(
-            runner, "_resolve_catalog_for_child", MagicMock(return_value=cat),
+            runner,
+            "_resolve_catalog_for_child",
+            MagicMock(return_value=cat),
         )
         group_mock = AsyncMock()
         monkeypatch.setattr(runner, "_plan_one_group", group_mock)
@@ -288,21 +309,28 @@ class TestPlanParentMarkerSemantics:
         self._patch_clients(runner, monkeypatch)
 
         parent = MagicMock(
-            id=uuid4(), org_id=uuid4(), video_id=uuid4(),
-            length_seconds=60, duration_preset_sec=None,
+            id=uuid4(),
+            org_id=uuid4(),
+            video_id=uuid4(),
+            length_seconds=60,
+            duration_preset_sec=None,
             requested_by_user_id=uuid4(),
         )
         cat = uuid4()
         children = [MagicMock(id=uuid4(), shorts_index=0, catalog_entry_id=cat)]
         monkeypatch.setattr(
-            runner, "_load_planning_context",
+            runner,
+            "_load_planning_context",
             AsyncMock(return_value=(parent, children, {cat: "Prod"})),
         )
         monkeypatch.setattr(
-            runner, "_resolve_catalog_for_child", MagicMock(return_value=cat),
+            runner,
+            "_resolve_catalog_for_child",
+            MagicMock(return_value=cat),
         )
         monkeypatch.setattr(
-            runner, "_plan_one_group",
+            runner,
+            "_plan_one_group",
             AsyncMock(side_effect=RuntimeError("OS down")),
         )
         clear_mock = AsyncMock()
@@ -320,7 +348,8 @@ class TestPlanParentMarkerSemantics:
         clear_mock = AsyncMock()
         monkeypatch.setattr(runner, "_clear_planning_marker", clear_mock)
         monkeypatch.setattr(
-            runner, "_plan_parent",
+            runner,
+            "_plan_parent",
             AsyncMock(side_effect=RuntimeError("boom")),
         )
         # Must NOT raise out of the wrapper.
@@ -336,18 +365,23 @@ class TestPlanOneGroup:
     async def test_persists_one_plan_per_child(self, monkeypatch):
         runner = _build_runner()
         monkeypatch.setattr(
-            runner, "_load_stt_inputs",
+            runner,
+            "_load_stt_inputs",
             AsyncMock(return_value=("gd_abc", "달심", ["이 주스"])),
         )
         plans = [_plan("gd_abc"), _plan("gd_abc", n_segments=4)]
         import app.modules.shorts_auto_product.track_stt.service as stt_service
+
         monkeypatch.setattr(
-            stt_service, "plan_full_stt_clips", AsyncMock(return_value=plans),
+            stt_service,
+            "plan_full_stt_clips",
+            AsyncMock(return_value=plans),
         )
         fake_repo = MagicMock()
         fake_repo.set_child_full_stt_plan = AsyncMock()
         monkeypatch.setattr(
-            runner_module, "ProductScanJobRepository",
+            runner_module,
+            "ProductScanJobRepository",
             MagicMock(return_value=fake_repo),
         )
 
@@ -355,8 +389,11 @@ class TestPlanOneGroup:
         group = [MagicMock(id=uuid4()), MagicMock(id=uuid4())]
 
         await runner._plan_one_group(
-            parent=parent, catalog_entry_id=uuid4(), group=group,
-            target_duration_ms=60_000, os_client=AsyncMock(),
+            parent=parent,
+            catalog_entry_id=uuid4(),
+            group=group,
+            target_duration_ms=60_000,
+            os_client=AsyncMock(),
             openai_client=MagicMock(),
         )
         assert fake_repo.set_child_full_stt_plan.await_count == 2
@@ -365,18 +402,22 @@ class TestPlanOneGroup:
     async def test_domain_error_persists_nothing(self, monkeypatch):
         runner = _build_runner()
         monkeypatch.setattr(
-            runner, "_load_stt_inputs",
+            runner,
+            "_load_stt_inputs",
             AsyncMock(return_value=("gd_abc", "달심", [])),
         )
         import app.modules.shorts_auto_product.track_stt.service as stt_service
+
         monkeypatch.setattr(
-            stt_service, "plan_full_stt_clips",
+            stt_service,
+            "plan_full_stt_clips",
             AsyncMock(side_effect=TranscriptUnavailableError("no transcript")),
         )
         fake_repo = MagicMock()
         fake_repo.set_child_full_stt_plan = AsyncMock()
         monkeypatch.setattr(
-            runner_module, "ProductScanJobRepository",
+            runner_module,
+            "ProductScanJobRepository",
             MagicMock(return_value=fake_repo),
         )
 
@@ -385,8 +426,11 @@ class TestPlanOneGroup:
 
         # Must not raise — domain error is swallowed (children left NULL).
         await runner._plan_one_group(
-            parent=parent, catalog_entry_id=uuid4(), group=group,
-            target_duration_ms=60_000, os_client=AsyncMock(),
+            parent=parent,
+            catalog_entry_id=uuid4(),
+            group=group,
+            target_duration_ms=60_000,
+            os_client=AsyncMock(),
             openai_client=MagicMock(),
         )
         fake_repo.set_child_full_stt_plan.assert_not_called()

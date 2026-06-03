@@ -35,7 +35,6 @@ from app.modules.shorts_auto_product.track_stt.full_stt.types import (
     FullSttSegment,
 )
 
-
 # ----- fake OS client -----
 
 
@@ -68,10 +67,7 @@ def _scene_hit(
 
 
 def _five_hits() -> list[dict[str, Any]]:
-    return [
-        _scene_hit(f"sc_{i}", start_ms=i * 20_000, end_ms=(i + 1) * 20_000)
-        for i in range(5)
-    ]
+    return [_scene_hit(f"sc_{i}", start_ms=i * 20_000, end_ms=(i + 1) * 20_000) for i in range(5)]
 
 
 def _make_plan(n: int = 3) -> FullSttClipPlan:
@@ -175,12 +171,14 @@ class TestSkipsMentionExtraction:
         os_client = _FakeOSClient(_five_hits())
         picker = _make_picker(_make_plan())
 
-        with patch.object(mention_extractor, "find_mentioned_scenes") as mock_find, \
-             patch.object(
-                 service.composition_builder,
-                 "build_composition_spec_from_full_stt",
-                 return_value=MagicMock(),
-             ):
+        with (
+            patch.object(mention_extractor, "find_mentioned_scenes") as mock_find,
+            patch.object(
+                service.composition_builder,
+                "build_composition_spec_from_full_stt",
+                return_value=MagicMock(),
+            ),
+        ):
             await service.assemble_full_stt_clip(
                 org_id=uuid4(),
                 catalog_entry_id=uuid4(),
@@ -205,12 +203,14 @@ class TestSkipsChunkScoring:
         os_client = _FakeOSClient(_five_hits())
         picker = _make_picker(_make_plan())
 
-        with patch.object(chunk_scorer, "score_segment_chunks", MagicMock()) as mock_score, \
-             patch.object(
-                 service.composition_builder,
-                 "build_composition_spec_from_full_stt",
-                 return_value=MagicMock(),
-             ):
+        with (
+            patch.object(chunk_scorer, "score_segment_chunks", MagicMock()) as mock_score,
+            patch.object(
+                service.composition_builder,
+                "build_composition_spec_from_full_stt",
+                return_value=MagicMock(),
+            ),
+        ):
             await service.assemble_full_stt_clip(
                 org_id=uuid4(),
                 catalog_entry_id=uuid4(),
@@ -235,12 +235,14 @@ class TestSkipsSegmentAssembly:
         os_client = _FakeOSClient(_five_hits())
         picker = _make_picker(_make_plan())
 
-        with patch.object(segment_assembler, "group_into_segments", MagicMock()) as mock_group, \
-             patch.object(
-                 service.composition_builder,
-                 "build_composition_spec_from_full_stt",
-                 return_value=MagicMock(),
-             ):
+        with (
+            patch.object(segment_assembler, "group_into_segments", MagicMock()) as mock_group,
+            patch.object(
+                service.composition_builder,
+                "build_composition_spec_from_full_stt",
+                return_value=MagicMock(),
+            ),
+        ):
             await service.assemble_full_stt_clip(
                 org_id=uuid4(),
                 catalog_entry_id=uuid4(),
@@ -293,8 +295,12 @@ class TestLiveBlockAllowlistRespected:
         # live_only=True should filter out sc_0 and sc_3
         hits = [
             _scene_hit("sc_0", start_ms=0, end_ms=10_000, text="", speech_segment_count=0),
-            _scene_hit("sc_1", start_ms=10_000, end_ms=30_000, text="live content", speech_segment_count=5),
-            _scene_hit("sc_2", start_ms=30_000, end_ms=60_000, text="more live", speech_segment_count=3),
+            _scene_hit(
+                "sc_1", start_ms=10_000, end_ms=30_000, text="live content", speech_segment_count=5
+            ),
+            _scene_hit(
+                "sc_2", start_ms=30_000, end_ms=60_000, text="more live", speech_segment_count=3
+            ),
             _scene_hit("sc_3", start_ms=60_000, end_ms=70_000, text="", speech_segment_count=0),
         ]
         os_client = _FakeOSClient(hits)
@@ -390,4 +396,78 @@ class TestPurchasePlannerSwitch:
         assert len(plans) == 1
         assert plans[0].fallback_used is False
         assert [s.scene_id for s in plans[0].segments] == ["sc_0", "sc_1", "sc_2"]
+        picker.pick_many.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_purchase_story_mode_uses_story_planner_and_bypasses_picker(self):
+        hits = [
+            {
+                "scene_id": "sc_0",
+                "start_ms": 0,
+                "end_ms": 15_000,
+                "transcript_raw": "립밤 컬러 립밤 오늘 보여드릴게요 컬러가 예뻐요",
+                "ocr_text_raw": "",
+                "scene_caption": "",
+                "speech_segment_count": 1,
+            },
+            {
+                "scene_id": "sc_1",
+                "start_ms": 15_000,
+                "end_ms": 30_000,
+                "transcript_raw": "사은품 선물 이벤트 드려요",
+                "ocr_text_raw": "",
+                "scene_caption": "",
+                "speech_segment_count": 1,
+            },
+            {
+                "scene_id": "sc_2",
+                "start_ms": 30_000,
+                "end_ms": 45_000,
+                "transcript_raw": "립밤 컬러 립밤 발림이 부드럽고 촉촉합니다",
+                "ocr_text_raw": "",
+                "scene_caption": "",
+                "speech_segment_count": 1,
+            },
+            {
+                "scene_id": "sc_3",
+                "start_ms": 45_000,
+                "end_ms": 60_000,
+                "transcript_raw": "가디건도 가격이 좋습니다",
+                "ocr_text_raw": "",
+                "scene_caption": "",
+                "speech_segment_count": 1,
+            },
+            {
+                "scene_id": "sc_4",
+                "start_ms": 60_000,
+                "end_ms": 75_000,
+                "transcript_raw": "립밤 컬러 립밤 데일리로 쓰기 좋아서 추천드려요",
+                "ocr_text_raw": "",
+                "scene_caption": "",
+                "speech_segment_count": 1,
+            },
+        ]
+        os_client = _FakeOSClient(hits)
+        picker = AsyncMock()
+        picker.pick_many = AsyncMock(side_effect=AssertionError("picker should not run"))
+
+        plans = await service.plan_full_stt_clips(
+            org_id=uuid4(),
+            catalog_entry_id=uuid4(),
+            llm_label="립밤",
+            spoken_aliases=["컬러 립밤"],
+            os_video_id="gd_test",
+            target_duration_ms=45_000,
+            os_client=os_client,
+            picker=picker,
+            n=1,
+            purchase_planner_enabled=True,
+            purchase_planner_mode="story",
+            sibling_products=[{"label": "가디건", "aliases": ["니트 가디건"]}],
+        )
+
+        assert len(plans) == 1
+        assert plans[0].fallback_used is False
+        assert [s.scene_id for s in plans[0].segments] == ["sc_0", "sc_2", "sc_4"]
+        assert "Story purchase plan" in plans[0].global_rationale
         picker.pick_many.assert_not_called()

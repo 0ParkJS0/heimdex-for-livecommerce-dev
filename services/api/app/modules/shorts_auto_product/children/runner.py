@@ -310,9 +310,7 @@ class ChildRunner:
                 progress_pct=progress_pct,
                 progress_label=progress_label,
                 cost_delta_usd=Decimal("0"),
-                lease_seconds=(
-                    self.settings.auto_shorts_product_v2_child_lease_seconds
-                ),
+                lease_seconds=(self.settings.auto_shorts_product_v2_child_lease_seconds),
             )
             if updated is None:
                 return False
@@ -404,7 +402,8 @@ class ChildRunner:
 
             try:
                 await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=poll_seconds,
+                    self._stop_event.wait(),
+                    timeout=poll_seconds,
                 )
             except asyncio.TimeoutError:
                 # Normal poll-interval expiry — continue.
@@ -438,9 +437,7 @@ class ChildRunner:
         ``assembling``/``rendering`` forever. Flag-off reverts to
         the queued-only legacy poll.
         """
-        max_concurrency = (
-            self.settings.auto_shorts_product_v2_child_runner_max_concurrency
-        )
+        max_concurrency = self.settings.auto_shorts_product_v2_child_runner_max_concurrency
         async with self.session_factory() as session:
             repo = ProductScanJobRepository(session)
             if self.settings.auto_shorts_product_v2_self_heal_enabled:
@@ -492,9 +489,7 @@ class ChildRunner:
         never set otherwise, so this would no-op anyway — but skipping the
         query keeps the flag-off hot path clean).
         """
-        max_concurrency = (
-            self.settings.auto_shorts_product_v2_child_runner_max_concurrency
-        )
+        max_concurrency = self.settings.auto_shorts_product_v2_child_runner_max_concurrency
         async with self.session_factory() as session:
             repo = ProductScanJobRepository(session)
             parent_ids = await repo.find_claimable_planning_parents(
@@ -556,16 +551,15 @@ class ChildRunner:
         groups: dict[UUID, list[ProductScanJob]] = {}
         for child in children:
             cat_id = self._resolve_catalog_for_child(
-                child=child, catalog_label_lookup=catalog_label_lookup,
+                child=child,
+                catalog_label_lookup=catalog_label_lookup,
             )
             if cat_id is None:
                 continue  # unresolvable → leave NULL plan → no_render
             groups.setdefault(cat_id, []).append(child)
 
         # ── 4. Plan each group ───────────────────────────────────────
-        length_seconds = (
-            parent.length_seconds or parent.duration_preset_sec or 60
-        )
+        length_seconds = parent.length_seconds or parent.duration_preset_sec or 60
         target_duration_ms = int(length_seconds) * 1000
 
         from openai import AsyncOpenAI
@@ -661,33 +655,51 @@ class ChildRunner:
                 ),
             ),
             model=getattr(
-                self.settings, "auto_shorts_product_v2_full_stt_model", "gpt-4o-mini",
+                self.settings,
+                "auto_shorts_product_v2_full_stt_model",
+                "gpt-4o-mini",
             ),
             # The multi-short prompt version is code-intrinsic (a bump is a
             # deploy), so read it from the module, not env.
             prompt_version=MULTI_PROMPT_VERSION,
             timeout_s=getattr(
-                self.settings, "auto_shorts_product_v2_full_stt_timeout_s", 30.0,
+                self.settings,
+                "auto_shorts_product_v2_full_stt_timeout_s",
+                30.0,
             ),
             max_scenes=getattr(
-                self.settings, "auto_shorts_product_v2_full_stt_max_scenes", 300,
+                self.settings,
+                "auto_shorts_product_v2_full_stt_max_scenes",
+                300,
             ),
         )
 
         try:
             first_mention_ms: int | None = None
             example_quote: str | None = None
+            sibling_products: list[dict[str, Any]] | None = None
             if getattr(
                 self.settings,
                 "auto_shorts_product_v2_purchase_planner_enabled",
                 False,
             ):
-                first_mention_ms, example_quote = (
-                    await self._load_product_narrative_hints(
-                        org_id=parent.org_id,
-                        catalog_entry_id=catalog_entry_id,
-                    )
+                first_mention_ms, example_quote = await self._load_product_narrative_hints(
+                    org_id=parent.org_id,
+                    catalog_entry_id=catalog_entry_id,
                 )
+                if (
+                    getattr(
+                        self.settings,
+                        "auto_shorts_product_v2_purchase_planner_mode",
+                        "contiguous",
+                    )
+                    == "story"
+                ):
+                    sibling_products = await self._load_story_sibling_products(
+                        org_id=parent.org_id,
+                        drive_file_id=parent.video_id,
+                        exclude_catalog_entry_id=catalog_entry_id,
+                    )
             plans = await stt_service.plan_full_stt_clips(
                 org_id=parent.org_id,
                 catalog_entry_id=catalog_entry_id,
@@ -713,8 +725,14 @@ class ChildRunner:
                     "auto_shorts_product_v2_purchase_planner_enabled",
                     False,
                 ),
+                purchase_planner_mode=getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_purchase_planner_mode",
+                    "contiguous",
+                ),
                 first_mention_ms=first_mention_ms,
                 example_quote=example_quote,
+                sibling_products=sibling_products,
             )
         except (TranscriptUnavailableError, LiveBlockTooShortError) as e:
             logger.info(
@@ -732,7 +750,8 @@ class ChildRunner:
             repo = ProductScanJobRepository(session)
             for child, plan in zip(group, plans, strict=False):
                 await repo.set_child_full_stt_plan(
-                    child_id=child.id, plan=serialize_plan(plan),
+                    child_id=child.id,
+                    plan=serialize_plan(plan),
                 )
             await session.commit()
         logger.info(
@@ -747,13 +766,19 @@ class ChildRunner:
                     "auto_shorts_product_v2_purchase_planner_enabled",
                     False,
                 ),
+                "purchase_planner_mode": getattr(
+                    self.settings,
+                    "auto_shorts_product_v2_purchase_planner_mode",
+                    "contiguous",
+                ),
                 "llm_shorts": sum(1 for p in plans if not p.fallback_used),
                 "fallback_shorts": sum(1 for p in plans if p.fallback_used),
             },
         )
 
     async def _load_planning_context(
-        self, parent_id: UUID,
+        self,
+        parent_id: UUID,
     ) -> tuple[ProductScanJob, list[ProductScanJob], dict[UUID, str]] | None:
         """Read parent + its render children + catalog (id → label) for the
         planner. Returns None when parent/children/catalog is missing.
@@ -764,19 +789,19 @@ class ChildRunner:
             if parent is None:
                 return None
             children = await job_repo.find_children_for_parent(
-                org_id=parent.org_id, parent_job_id=parent_id,
+                org_id=parent.org_id,
+                parent_job_id=parent_id,
             )
             if not children:
                 return None
             catalog_repo = ProductCatalogRepository(session)
             catalog_entries = await catalog_repo.list_active_by_video(
-                org_id=parent.org_id, video_id=parent.video_id,
+                org_id=parent.org_id,
+                video_id=parent.video_id,
             )
             if not catalog_entries:
                 return None
-            catalog_label_lookup = {
-                c.id: (c.user_label or c.llm_label) for c in catalog_entries
-            }
+            catalog_label_lookup = {c.id: (c.user_label or c.llm_label) for c in catalog_entries}
             return parent, children, catalog_label_lookup
 
     async def _clear_planning_marker(self, parent_id: UUID) -> None:
@@ -787,7 +812,8 @@ class ChildRunner:
         async with self.session_factory() as session:
             repo = ProductScanJobRepository(session)
             cleared = await repo.clear_shared_plan_pending(
-                job_id=parent_id, claimed_by=self.claimed_by,
+                job_id=parent_id,
+                claimed_by=self.claimed_by,
             )
             if cleared is None:
                 logger.warning(
@@ -846,9 +872,7 @@ class ChildRunner:
             claimed = await repo.claim(
                 job_id=child_id,
                 claimed_by=self.claimed_by,
-                lease_seconds=(
-                    self.settings.auto_shorts_product_v2_child_lease_seconds
-                ),
+                lease_seconds=(self.settings.auto_shorts_product_v2_child_lease_seconds),
                 next_stage=SCAN_STAGE_ASSEMBLING,
             )
             if claimed is None:
@@ -882,12 +906,10 @@ class ChildRunner:
                     extra={
                         "child_id": str(child_id),
                         "instance_id": self.instance_id,
-                        "originally_started_at": (
-                            claimed.started_at.isoformat()
-                        ),
+                        "originally_started_at": (claimed.started_at.isoformat()),
                         "re_claimed_at": claimed.claimed_at.isoformat(),
                     },
-            )
+                )
             await session.commit()
 
         # Weighted progress: STT 0–40, planner (assembling) 40–60,
@@ -928,17 +950,14 @@ class ChildRunner:
         # Phase 4 single-mode is the only path live; Phase 5
         # multi-mode lands a different orchestration that selects
         # catalogs differently.
-        distribution = (
-            parent.product_distribution or PRODUCT_DISTRIBUTION_SINGLE
-        )
+        distribution = parent.product_distribution or PRODUCT_DISTRIBUTION_SINGLE
         if distribution != PRODUCT_DISTRIBUTION_SINGLE:
             # Defensive: the public router gates wizard submissions
             # to PRODUCT_DISTRIBUTION_SINGLE for now. If a multi-mode
             # row sneaks through, fail loudly so the operator sees
             # it rather than silently producing a single-mode short.
             raise NotImplementedError(
-                f"product_distribution={distribution!r} not yet "
-                f"implemented (Phase 5 deliverable)"
+                f"product_distribution={distribution!r} not yet implemented (Phase 5 deliverable)"
             )
 
         # PR 1 (multi-product wizard): when the wizard's product-select
@@ -955,7 +974,8 @@ class ChildRunner:
         #     gets *some* short instead of no_render.
         # See ``.claude/plans/wizard-multi-product-select.md`` (PR 1 of 3).
         chosen_catalog_id = self._resolve_catalog_for_child(
-            child=child, catalog_label_lookup=catalog_label_lookup,
+            child=child,
+            catalog_label_lookup=catalog_label_lookup,
         )
         if chosen_catalog_id is None:
             await self._complete_no_render(
@@ -991,10 +1011,7 @@ class ChildRunner:
         Shared by the legacy child path and the shared-plan planner so
         catalog resolution has one owner.
         """
-        if (
-            child.catalog_entry_id is not None
-            and child.catalog_entry_id in catalog_label_lookup
-        ):
+        if child.catalog_entry_id is not None and child.catalog_entry_id in catalog_label_lookup:
             return child.catalog_entry_id
         if (
             child.catalog_entry_id is not None
@@ -1100,11 +1117,7 @@ class ChildRunner:
             )
             return
 
-        length_seconds = (
-            parent.length_seconds
-            or parent.duration_preset_sec
-            or 60
-        )
+        length_seconds = parent.length_seconds or parent.duration_preset_sec or 60
         target_duration_ms = int(length_seconds) * 1000
 
         # ── 2. Construct per-call clients ──────────────────────────
@@ -1226,80 +1239,80 @@ class ChildRunner:
                         if ce_id != chosen_catalog_id and aliases
                     ]
                     result = await stt_service.assemble_stt_clip(
-                    org_id=parent.org_id,
-                    catalog_entry_id=chosen_catalog_id,
-                    llm_label=llm_label,
-                    spoken_aliases=list(spoken_aliases or []),
-                    os_video_id=os_video_id,
-                    target_duration_ms=target_duration_ms,
-                    title=catalog_label,
-                    os_client=os_client,
-                    openai_client=openai_client,
-                    enqueue_render=_enqueue_render,
-                    legacy_os_subtitles_enabled=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_legacy_os_subtitles_enabled",
-                        False,
-                    ),
-                    storyboard_picker=storyboard_picker,
-                    storyboard_shadow_mode=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_storyboard_shadow_mode",
-                        False,
-                    ),
-                    # OCR re-rank (per
-                    # ``.claude/plans/ocr-mention-extractor-rerank.md``).
-                    # Default-OFF; flip per-org once the OCR backfill
-                    # has populated v5 for that org's videos.
-                    ocr_rerank_enabled=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_ocr_rerank_enabled",
-                        False,
-                    ),
-                    ocr_boost=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_ocr_boost",
-                        0.6,
-                    ),
-                    # Phase 1 live-block filter (only source clips
-                    # from scenes where the host was actively talking).
-                    # Default OFF for back-compat; staging flips this
-                    # in ``.env`` once the Phase 0 numbers are
-                    # validated. See ``segmentation.py``.
-                    live_only=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_live_only_enabled",
-                        False,
-                    ),
-                    # dominance filter
-                    other_aliases_groups=[
-                        aliases
-                        for ce_id, aliases in catalog_aliases_lookup.items()
-                        if ce_id != chosen_catalog_id
-                    ],
-                    mention_dominance_threshold=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_mention_dominance_threshold",
-                        0.0,
-                    ),
-                    min_mention_scenes=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_stt_min_mention_scenes",
-                        0,
-                    ),
-                    min_mention_score=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_stt_min_mention_score",
-                        0.0,
-                    ),
-                    # chunk-level LLM catalog match
-                    other_catalog_names=other_catalog_names,
-                    chunk_catalog_match_threshold=getattr(
-                        self.settings,
-                        "auto_shorts_product_v2_chunk_catalog_match_threshold",
-                        0.0,
-                    ),
-                )
+                        org_id=parent.org_id,
+                        catalog_entry_id=chosen_catalog_id,
+                        llm_label=llm_label,
+                        spoken_aliases=list(spoken_aliases or []),
+                        os_video_id=os_video_id,
+                        target_duration_ms=target_duration_ms,
+                        title=catalog_label,
+                        os_client=os_client,
+                        openai_client=openai_client,
+                        enqueue_render=_enqueue_render,
+                        legacy_os_subtitles_enabled=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_legacy_os_subtitles_enabled",
+                            False,
+                        ),
+                        storyboard_picker=storyboard_picker,
+                        storyboard_shadow_mode=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_storyboard_shadow_mode",
+                            False,
+                        ),
+                        # OCR re-rank (per
+                        # ``.claude/plans/ocr-mention-extractor-rerank.md``).
+                        # Default-OFF; flip per-org once the OCR backfill
+                        # has populated v5 for that org's videos.
+                        ocr_rerank_enabled=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_ocr_rerank_enabled",
+                            False,
+                        ),
+                        ocr_boost=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_ocr_boost",
+                            0.6,
+                        ),
+                        # Phase 1 live-block filter (only source clips
+                        # from scenes where the host was actively talking).
+                        # Default OFF for back-compat; staging flips this
+                        # in ``.env`` once the Phase 0 numbers are
+                        # validated. See ``segmentation.py``.
+                        live_only=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_live_only_enabled",
+                            False,
+                        ),
+                        # dominance filter
+                        other_aliases_groups=[
+                            aliases
+                            for ce_id, aliases in catalog_aliases_lookup.items()
+                            if ce_id != chosen_catalog_id
+                        ],
+                        mention_dominance_threshold=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_mention_dominance_threshold",
+                            0.0,
+                        ),
+                        min_mention_scenes=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_stt_min_mention_scenes",
+                            0,
+                        ),
+                        min_mention_score=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_stt_min_mention_score",
+                            0.0,
+                        ),
+                        # chunk-level LLM catalog match
+                        other_catalog_names=other_catalog_names,
+                        chunk_catalog_match_threshold=getattr(
+                            self.settings,
+                            "auto_shorts_product_v2_chunk_catalog_match_threshold",
+                            0.0,
+                        ),
+                    )
             except NoMentionsFoundError as e:
                 logger.info(
                     "stt_runner_no_mentions",
@@ -1411,7 +1424,8 @@ class ChildRunner:
         )
         # Eagerly promote the parent if this was the last active child.
         await self._try_promote_parent_for_child(
-            child_id=child.id, parent_id_hint=parent.id,
+            child_id=child.id,
+            parent_id_hint=parent.id,
         )
 
     async def _render_child_from_shared_plan(
@@ -1444,7 +1458,8 @@ class ChildRunner:
         raw_plan = child.full_stt_plan
         if not raw_plan:
             await self._complete_no_render(
-                child_id=child.id, reason="stt_no_plan",
+                child_id=child.id,
+                reason="stt_no_plan",
             )
             return
         try:
@@ -1459,12 +1474,14 @@ class ChildRunner:
                 },
             )
             await self._complete_no_render(
-                child_id=child.id, reason="stt_plan_version_unsupported",
+                child_id=child.id,
+                reason="stt_plan_version_unsupported",
             )
             return
         if not plan.segments:
             await self._complete_no_render(
-                child_id=child.id, reason="stt_no_plan",
+                child_id=child.id,
+                reason="stt_no_plan",
             )
             return
 
@@ -1474,7 +1491,9 @@ class ChildRunner:
         # immediately before enqueue.
         # Planner contribution complete → entering render (60%).
         lease.set_stage(
-            stage=SCAN_STAGE_RENDERING, progress_pct=60, progress_label="rendering",
+            stage=SCAN_STAGE_RENDERING,
+            progress_pct=60,
+            progress_label="rendering",
         )
         if not await lease.heartbeat_now():
             logger.warning(
@@ -1533,7 +1552,8 @@ class ChildRunner:
             },
         )
         await self._try_promote_parent_for_child(
-            child_id=child.id, parent_id_hint=parent.id,
+            child_id=child.id,
+            parent_id_hint=parent.id,
         )
 
     async def _load_stt_inputs(
@@ -1559,7 +1579,8 @@ class ChildRunner:
         async with self.session_factory() as session:
             catalog_repo = ProductCatalogRepository(session)
             entry = await catalog_repo.get(
-                org_id=org_id, entry_id=catalog_entry_id,
+                org_id=org_id,
+                entry_id=catalog_entry_id,
             )
             if entry is None:
                 return None, None, []
@@ -1585,11 +1606,48 @@ class ChildRunner:
         async with self.session_factory() as session:
             catalog_repo = ProductCatalogRepository(session)
             entry = await catalog_repo.get(
-                org_id=org_id, entry_id=catalog_entry_id,
+                org_id=org_id,
+                entry_id=catalog_entry_id,
             )
             if entry is None:
                 return None, None
             return entry.first_mention_ms, entry.example_quote
+
+    async def _load_story_sibling_products(
+        self,
+        *,
+        org_id: UUID,
+        drive_file_id: UUID,
+        exclude_catalog_entry_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Load lightweight sibling product context for story-mode scoring.
+
+        The pure story planner uses sibling labels/aliases to avoid mixed-
+        product clips. Keep this helper in the runner/service boundary as plain
+        dictionaries so the runner does not import planner dataclasses.
+        """
+        async with self.session_factory() as session:
+            catalog_repo = ProductCatalogRepository(session)
+            entries = await catalog_repo.list_active_by_video(
+                org_id=org_id,
+                video_id=drive_file_id,
+            )
+        siblings: list[dict[str, Any]] = []
+        for entry in entries:
+            if entry.id == exclude_catalog_entry_id:
+                continue
+            label = entry.user_label or entry.llm_label
+            if not label:
+                continue
+            siblings.append(
+                {
+                    "label": label,
+                    "aliases": list(entry.spoken_aliases or []),
+                    "first_mention_ms": entry.first_mention_ms,
+                    "example_quote": entry.example_quote,
+                }
+            )
+        return siblings
 
     def _build_os_client(self):
         """Construct an AsyncOpenSearch client for one STT pipeline call.
@@ -1617,7 +1675,9 @@ class ChildRunner:
     # ── helpers (private; tests patch via process_child_fn) ──────────
 
     async def _load_child_context(
-        self, *, child_id: UUID,
+        self,
+        *,
+        child_id: UUID,
     ) -> tuple[ProductScanJob, ProductScanJob, dict[UUID, str], dict[UUID, list[str]]] | None:
         """Read child + parent + catalog (id → label) in one
         read-only session.
@@ -1642,17 +1702,14 @@ class ChildRunner:
                 return None
             catalog_repo = ProductCatalogRepository(session)
             catalog_entries = await catalog_repo.list_active_by_video(
-                org_id=parent.org_id, video_id=parent.video_id,
+                org_id=parent.org_id,
+                video_id=parent.video_id,
             )
             if not catalog_entries:
                 return None
-            catalog_label_lookup = {
-                c.id: (c.user_label or c.llm_label)
-                for c in catalog_entries
-            }
+            catalog_label_lookup = {c.id: (c.user_label or c.llm_label) for c in catalog_entries}
             catalog_aliases_lookup = {
-                c.id: [c.llm_label, *(c.spoken_aliases or [])]
-                for c in catalog_entries
+                c.id: [c.llm_label, *(c.spoken_aliases or [])] for c in catalog_entries
             }
             return (child, parent, catalog_label_lookup, catalog_aliases_lookup)
 
@@ -1717,15 +1774,16 @@ class ChildRunner:
                 "parent_promotion_attempt_failed",
                 extra={
                     "child_id": str(child_id),
-                    "parent_id_hint": (
-                        str(parent_id_hint) if parent_id_hint else None
-                    ),
+                    "parent_id_hint": (str(parent_id_hint) if parent_id_hint else None),
                     "instance_id": self.instance_id,
                 },
             )
 
     async def _complete_no_render(
-        self, *, child_id: UUID, reason: str,
+        self,
+        *,
+        child_id: UUID,
+        reason: str,
     ) -> None:
         """Mark the child terminal with no render — analogous to the
         worker's ``_terminate_no_render``. Reaches the same DB shape
@@ -1794,9 +1852,7 @@ class ChildRunner:
         # service's default 30s window would have closed by then →
         # duplicate render row + orphan S3 output. Adding a 60s buffer
         # covers small clock skew and DB write latency.
-        retry_safe_dedupe_seconds = (
-            self.settings.auto_shorts_product_v2_child_lease_seconds + 60
-        )
+        retry_safe_dedupe_seconds = self.settings.auto_shorts_product_v2_child_lease_seconds + 60
         async with self.session_factory() as session:
             render_repo = ShortsRenderJobRepository(session)
             render_service = ShortsRenderService(
@@ -1856,6 +1912,7 @@ class ChildRunner:
             # row is in indeterminate state and the lazy promotion in
             # get_scan_order_status will catch up next user poll.
             await self._try_promote_parent_for_child(child_id=child_id)
+
 
 def create_child_runner(
     *,
