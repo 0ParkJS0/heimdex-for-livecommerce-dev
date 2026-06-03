@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -78,6 +79,7 @@ logger = get_logger(__name__)
 # frontend gallery. Short — the gallery is browsed in seconds, not
 # hours, and a long TTL widens the leak surface if the URL is shared.
 _CROP_URL_TTL_SECONDS = 300
+_STALE_CONSOLIDATION_AGE = timedelta(minutes=30)
 
 
 def _stable_org_bucket(org_id: UUID) -> int:
@@ -88,6 +90,15 @@ def _stable_org_bucket(org_id: UUID) -> int:
     """
     h = hashlib.sha256(str(org_id).encode("utf-8")).hexdigest()
     return int(h[:8], 16) % 100
+
+
+def _is_stale_consolidating_run(run: ProductCatalogRun) -> bool:
+    if run.status != CATALOG_STATUS_CONSOLIDATING:
+        return False
+    updated_at = run.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return datetime.now(UTC) - updated_at > _STALE_CONSOLIDATION_AGE
 
 
 class ProductScanService:
@@ -282,6 +293,17 @@ class ProductScanService:
             catalog_status, scan_status = status_map.get(
                 run.status, ("failed", "failed"),
             )
+            if entries and _is_stale_consolidating_run(run):
+                logger.warning(
+                    "product_catalog_stale_consolidation_fallback",
+                    org_id=str(org_id),
+                    video_id=str(video_id),
+                    catalog_run_id=str(run.id),
+                    scan_job_id=str(run.scan_job_id) if run.scan_job_id else None,
+                    entry_count=len(entries),
+                    updated_at=run.updated_at.isoformat(),
+                )
+                return "ready", "complete", run.scan_job_id, run
             return catalog_status, scan_status, run.scan_job_id, run
 
         # Back-compat for catalogs created before product_catalog_runs.

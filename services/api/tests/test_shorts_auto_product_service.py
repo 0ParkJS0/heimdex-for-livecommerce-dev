@@ -8,6 +8,7 @@ integration test.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -144,6 +145,7 @@ async def test_list_products_hides_entries_until_catalog_ready():
             scan_job_id=scan_job_id,
             status=CATALOG_STATUS_CONSOLIDATING,
             finalized_at=None,
+            updated_at=datetime.now(UTC),
         ),
     )
     import app.storage.s3 as s3_mod
@@ -156,6 +158,51 @@ async def test_list_products_hides_entries_until_catalog_ready():
     assert response.scan_job_id == scan_job_id
     assert response.products == []
     svc.catalog_repo.list_visible_for_product_selection.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_list_products_surfaces_entries_when_consolidation_is_stale():
+    svc = _build_service(_settings(
+        auto_shorts_product_v2_overlay_track_enabled=True,
+        auto_shorts_product_v2_overlay_parent_enabled=True,
+    ))
+    org_id = uuid4()
+    video_id = uuid4()
+    scan_job_id = uuid4()
+    entry_id = uuid4()
+    entry = MagicMock(
+        id=entry_id,
+        user_label=None,
+        llm_label="Recovered Product",
+        canonical_crop_s3_key=None,
+        enumeration_confidence=0.91,
+        prominence_score=0.83,
+        enumeration_source="overlay",
+        first_mention_ms=1000,
+        example_quote=None,
+        enumeration_version="v1.0",
+        enumeration_prompt_version="v1.0",
+    )
+    svc.catalog_repo.list_active_by_video = AsyncMock(return_value=[entry])
+    svc.catalog_repo.list_visible_for_product_selection = AsyncMock(return_value=[entry])
+    svc.catalog_run_repo.latest_for_video = AsyncMock(
+        return_value=MagicMock(
+            id=uuid4(),
+            scan_job_id=scan_job_id,
+            status=CATALOG_STATUS_CONSOLIDATING,
+            finalized_at=None,
+            updated_at=datetime.now(UTC) - timedelta(hours=1),
+        ),
+    )
+    import app.storage.s3 as s3_mod
+    s3_mod.S3Client = MagicMock()
+
+    response = await svc.list_products(org_id=org_id, video_id=video_id)
+
+    assert response.catalog_status == "ready"
+    assert response.scan_status == "complete"
+    assert response.scan_job_id == scan_job_id
+    assert [product.catalog_entry_id for product in response.products] == [entry_id]
 
 
 @pytest.mark.asyncio
