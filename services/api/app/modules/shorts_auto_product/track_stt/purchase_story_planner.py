@@ -140,6 +140,9 @@ _INTRO_PATTERNS = (
 )
 
 _ROLES = ("intro", "proof", "offer")
+_STRICT_MAX_SPAN_EXTRA_MS = 60_000
+_FIRST_PLAN_RESCUE_MAX_SPAN_MS = 12 * 60_000
+_FIRST_PLAN_RESCUE_MAX_GAP_PENALTY = 35.0
 
 
 @dataclass(frozen=True)
@@ -175,6 +178,7 @@ def plan_purchase_story_shorts(
     target_duration_ms: int,
     n: int,
     min_combo_score: float = 140.0,
+    first_plan_rescue_min_combo_score: float = 120.0,
 ) -> list[FullSttClipPlan]:
     """Return up to ``n`` product-story plans.
 
@@ -232,7 +236,8 @@ def plan_purchase_story_shorts(
         for role, candidates in scored_by_role.items()
     }
 
-    combos: list[tuple[float, tuple[ProductStoryCandidate, ...]]] = []
+    strict_combos: list[tuple[float, tuple[ProductStoryCandidate, ...]]] = []
+    first_plan_rescue_combos: list[tuple[float, tuple[ProductStoryCandidate, ...]]] = []
     for intro in filtered_by_role["intro"][:10]:
         for proof1 in filtered_by_role["proof"][:12]:
             if _overlaps(intro, proof1):
@@ -256,18 +261,36 @@ def plan_purchase_story_shorts(
                 if duration_ms < 32_000 or duration_ms > target_duration_ms + 10_000:
                     continue
                 span_ms = max(c.end_ms for c in combo) - min(c.start_ms for c in combo)
-                if span_ms > target_duration_ms + 60_000:
-                    continue
                 gap_penalty = max(0.0, (span_ms - duration_ms) / 1000.0)
-                combo_score = (
+                base_score = (
                     sum(c.score for c in combo)
                     + min(15.0, duration_ms / 4000.0)
                     + (20.0 if len({s for c in combo for s in c.signals}) >= 4 else 0.0)
-                    - gap_penalty
                 )
-                if combo_score >= min_combo_score:
-                    combos.append((combo_score, tuple(combo)))
+                strict_score = base_score - gap_penalty
+                if (
+                    span_ms <= target_duration_ms + _STRICT_MAX_SPAN_EXTRA_MS
+                    and strict_score >= min_combo_score
+                ):
+                    strict_combos.append((strict_score, tuple(combo)))
+                    continue
 
+                # Rescue only the first requested short. The experiment showed
+                # that high-quality product stories sometimes come from
+                # non-adjacent live-commerce moments. Keep the strict lane for
+                # normal/multi-short selection, but avoid a zero-render result
+                # when a coherent story exists across a wider source span.
+                rescue_score = base_score - min(
+                    _FIRST_PLAN_RESCUE_MAX_GAP_PENALTY,
+                    gap_penalty,
+                )
+                if (
+                    span_ms <= _FIRST_PLAN_RESCUE_MAX_SPAN_MS
+                    and rescue_score >= first_plan_rescue_min_combo_score
+                ):
+                    first_plan_rescue_combos.append((rescue_score, tuple(combo)))
+
+    combos = strict_combos or first_plan_rescue_combos
     combos.sort(key=lambda item: (-item[0], item[1][0].start_ms))
     plans: list[FullSttClipPlan] = []
     used_ranges: list[tuple[int, int]] = []
@@ -279,6 +302,8 @@ def plan_purchase_story_shorts(
         ):
             continue
         plans.append(_plan_from_combo(product=product, combo=combo, combo_score=combo_score))
+        if not strict_combos:
+            break
         used_ranges.append(combo_range)
         if len(plans) >= n:
             break

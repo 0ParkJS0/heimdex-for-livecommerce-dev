@@ -113,6 +113,53 @@ def test_story_planner_returns_distinct_non_overlapping_plans_when_available():
     assert first_ids.isdisjoint(second_ids)
 
 
+def test_story_planner_rescues_first_short_when_good_story_is_spread_out():
+    scenes = [
+        PurchaseNarrativeScene(
+            scene_id="gd_story_scene_000",
+            start_ms=0,
+            end_ms=15_000,
+            transcript="스트라이프 와이드 팬츠 오늘 보여드릴게요 이 바지 핏이 예뻐요",
+            ocr="스트라이프 와이드 팬츠",
+            caption="host shows striped wide pants",
+        ),
+        PurchaseNarrativeScene(
+            scene_id="gd_story_scene_001",
+            start_ms=300_000,
+            end_ms=315_000,
+            transcript="와이드 팬츠 다리가 길어 보이고 하체 고민 있으신 분께 좋아요",
+            ocr="와이드 팬츠",
+            caption="pants fit demonstration",
+        ),
+        PurchaseNarrativeScene(
+            scene_id="gd_story_scene_002",
+            start_ms=330_000,
+            end_ms=345_000,
+            transcript="스트라이프 와이드 팬츠 데일리로 입기 좋아서 추천드려요",
+            ocr="스트라이프 팬츠",
+            caption="model wearing pants",
+        ),
+    ]
+
+    plans = plan_purchase_story_shorts(
+        scenes=scenes,
+        product=ProductNarrativeContext(
+            label="스트라이프 와이드 팬츠",
+            aliases=("와이드 팬츠", "스트라이프 팬츠", "팬츠", "이 바지"),
+        ),
+        target_duration_ms=60_000,
+        n=2,
+    )
+
+    assert len(plans) == 1
+    assert plans[0].fallback_used is False
+    assert [segment.scene_id for segment in plans[0].segments] == [
+        "gd_story_scene_000",
+        "gd_story_scene_001",
+        "gd_story_scene_002",
+    ]
+
+
 def test_story_planner_uses_visual_text_for_product_grounding():
     scenes = [
         PurchaseNarrativeScene(
