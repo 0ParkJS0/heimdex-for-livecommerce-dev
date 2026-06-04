@@ -824,6 +824,7 @@ export function PreviewPanel({
           surface so the editor center is the 9:16 stage with no padding. */}
       <div
         ref={containerRef}
+        data-testid="preview-canvas"
         // ``container-type: size`` opts this surface into CSS
         // container queries so overlays inside can size themselves
         // with ``cqw`` / ``cqh`` units relative to the actual preview
@@ -1367,8 +1368,7 @@ export function PreviewPanel({
             in fullscreen; the inline editor keeps its own transport bar. */}
         {fullscreen && (
           <div
-            className="absolute inset-0 z-20 flex flex-col items-start justify-end gap-3 p-2.5"
-            onClick={(e) => e.stopPropagation()}
+            className="pointer-events-none absolute inset-0 z-20 flex flex-col items-start justify-end gap-3 p-2.5"
           >
             <div
               role="slider"
@@ -1378,19 +1378,23 @@ export function PreviewPanel({
               aria-valuenow={Math.round(playheadMs / 1000)}
               aria-label="재생 진행"
               onClick={(e) => {
+                e.stopPropagation();
                 if (totalDurationMs <= 0) return;
                 const rect = e.currentTarget.getBoundingClientRect();
                 const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
                 onPlayheadChange(ratio * totalDurationMs);
               }}
-              className="relative h-1 w-full cursor-pointer overflow-hidden bg-white"
+              className="pointer-events-auto relative h-1 w-full cursor-pointer overflow-hidden bg-white"
             >
               <div
                 className="absolute left-0 top-0 h-full bg-heimdex-navy-500"
                 style={{ width: `${Math.min(100, progressPct)}%` }}
               />
             </div>
-            <div className="flex items-center gap-2.5">
+            <div
+              className="pointer-events-auto flex items-center gap-2.5"
+              onClick={(e) => e.stopPropagation()}
+            >
               <button
                 type="button"
                 onClick={togglePlay}

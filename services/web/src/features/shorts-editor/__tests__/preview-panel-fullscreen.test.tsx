@@ -26,31 +26,49 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 
 import { PreviewPanel } from "../components/PreviewPanel";
-import type { Playback } from "../lib/types";
+import type { EditorClip, Playback, PlaybackEvent } from "../lib/types";
 
 const NOOP = () => {};
 const IDLE: Playback = { kind: "idle" };
+const CLIP: EditorClip = {
+  id: "clip-1",
+  sceneId: "scene-1",
+  videoId: "video-1",
+  sourceType: "drive",
+  originalStartMs: 0,
+  originalEndMs: 10_000,
+  trimStartMs: 0,
+  trimEndMs: 10_000,
+  timelineStartMs: 0,
+  volume: 1,
+};
 
 interface RenderOptions {
   fullscreen?: boolean;
   onCloseFullscreen?: () => void;
   filename?: string;
+  onClearSelections?: () => void;
+  onPlayheadChange?: (ms: number) => void;
+  dispatchPlaybackEvent?: (event: PlaybackEvent) => void;
+  totalDurationMs?: number;
+  clips?: EditorClip[];
 }
 
 function renderPanel(opts: RenderOptions = {}) {
   return render(
     <PreviewPanel
-      clips={[]}
+      clips={opts.clips ?? []}
       subtitles={[]}
       playheadMs={0}
       playback={IDLE}
-      totalDurationMs={0}
+      totalDurationMs={opts.totalDurationMs ?? 0}
       selectedSubtitleIndex={null}
-      onPlayheadChange={NOOP}
-      dispatchPlaybackEvent={NOOP}
+      onPlayheadChange={opts.onPlayheadChange ?? NOOP}
+      dispatchPlaybackEvent={opts.dispatchPlaybackEvent ?? NOOP}
       onSelectSubtitle={NOOP}
       onUpdateSubtitlePosition={NOOP}
       onUpdateSubtitleFontSize={NOOP}
+      onClearSelections={opts.onClearSelections}
       fullscreen={opts.fullscreen}
       onCloseFullscreen={opts.onCloseFullscreen}
       filename={opts.filename}
@@ -108,6 +126,66 @@ describe("PreviewPanel — fullscreen chrome", () => {
     renderPanel({ fullscreen: false, onCloseFullscreen: onClose });
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("lets fullscreen canvas clicks pass through transport chrome to clear selections", () => {
+    const onClearSelections = vi.fn();
+    const { getByTestId } = renderPanel({
+      fullscreen: true,
+      onCloseFullscreen: NOOP,
+      onClearSelections,
+    });
+
+    fireEvent.click(getByTestId("preview-canvas"));
+
+    expect(onClearSelections).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps fullscreen transport control clicks from clearing selections", () => {
+    const onClearSelections = vi.fn();
+    const dispatchPlaybackEvent = vi.fn();
+    const { getByRole } = renderPanel({
+      fullscreen: true,
+      onCloseFullscreen: NOOP,
+      onClearSelections,
+      dispatchPlaybackEvent,
+      clips: [CLIP],
+    });
+
+    fireEvent.click(getByRole("button", { name: "재생" }));
+
+    expect(dispatchPlaybackEvent).toHaveBeenCalledWith({ kind: "TOGGLE" });
+    expect(onClearSelections).not.toHaveBeenCalled();
+  });
+
+  it("seeks from the fullscreen progress control without clearing selections", () => {
+    const onClearSelections = vi.fn();
+    const onPlayheadChange = vi.fn();
+    const { getByRole } = renderPanel({
+      fullscreen: true,
+      onCloseFullscreen: NOOP,
+      onClearSelections,
+      onPlayheadChange,
+      totalDurationMs: 100_000,
+    });
+    const progress = getByRole("slider", { name: "재생 진행" });
+    progress.getBoundingClientRect = () =>
+      ({
+        left: 0,
+        width: 200,
+        top: 0,
+        bottom: 4,
+        right: 200,
+        height: 4,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    fireEvent.click(progress, { clientX: 50 });
+
+    expect(onPlayheadChange).toHaveBeenCalledWith(25_000);
+    expect(onClearSelections).not.toHaveBeenCalled();
   });
 });
 
