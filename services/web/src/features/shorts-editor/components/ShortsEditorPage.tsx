@@ -388,13 +388,18 @@ export function ShortsEditorPage() {
   }, [renderJob]);
 
   // When the render finishes:
-  //   * 내보내기 (submitMode === "export") — MP4 다운로드 + 즉시
-  //     /export/shorts 로 이동 (기존 동작 유지).
-  //   * 저장하기 (submitMode === "save") — RenderCompleteDialog 를
-  //     띄워 사용자가 "계속 편집" 또는 "내 쇼츠로 이동" 을 선택하게
-  //     한다 (figma 2107:410685). UnsavedExitDialog 의 "저장하고
-  //     나가기" 분기도 submitComposition("save") 후 이 다이얼로그를
-  //     공유한다.
+  //   * "내보내기" (submitMode === "export") — download the MP4 and STAY
+  //     in the editor. The render is already persisted to the my-shorts
+  //     list server-side by submitRender (POST /api/shorts/render), so no
+  //     navigation is needed; the header switches to its completed state
+  //     (다운로드 / 다시 렌더링) and the user keeps editing. Previously this
+  //     branch also did router.push("/export/shorts"), which yanked the
+  //     user off the editor — removed per the operator's "just give me the
+  //     file, don't move me" request.
+  //   * "저장하기" (submitMode === "save") — open RenderCompleteDialog so
+  //     the user picks "계속 편집" or "내 쇼츠로 이동" (figma 2107:410685).
+  //     The UnsavedExitDialog "저장하고 나가기" branch also runs
+  //     submitComposition("save") and shares this dialog.
   // ``didPostRenderRef`` keeps the effect single-shot per render.
   const didPostRenderRef = useRef(false);
   useEffect(() => {
@@ -406,11 +411,10 @@ export function ShortsEditorPage() {
     didPostRenderRef.current = true;
     if (submitMode === "export") {
       handleRenderDownload();
-      router.push("/export/shorts");
       return;
     }
     setShowRenderCompleteDialog(true);
-  }, [renderStatus, submitMode, handleRenderDownload, router]);
+  }, [renderStatus, submitMode, handleRenderDownload]);
 
   // figma 2107:410685 — RenderCompleteDialog 액션. 계속 편집 시
   // resetRender 로 상태를 idle 로 돌려 다시 저장이 가능하게 한다.

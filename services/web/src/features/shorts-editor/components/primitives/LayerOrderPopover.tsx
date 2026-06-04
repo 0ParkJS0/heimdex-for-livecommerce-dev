@@ -6,11 +6,49 @@
 // CanvasAlignPopover's UX so the operator's mental model carries over.
 
 import { useEffect, useRef, useState } from "react";
-import { BringToFront, SendToBack } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { ChevronDownIcon } from "./icons";
 import { ToolbarButton } from "./ToolbarButton";
+
+// 2026-06-04 — operator-supplied tabler glyphs replace lucide
+// SendToBack / BringToFront. Same 16px footprint (h-4 w-4 via className)
+// and currentColor stroke; only the drawing changed.
+//   StackPushIcon = "맨 뒤로" (send-to-back)    ← tabler stack-push
+//   StackPopIcon  = "맨 앞으로" (bring-to-front) ← tabler stack-pop
+function StackPushIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.66667}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4.99967 8.33398L3.33301 9.16732L9.99967 12.5007L16.6663 9.16732L14.9997 8.33398M3.33301 12.5007L9.99967 15.834L16.6663 12.5007M9.99967 3.33398V9.16732M7.49967 6.66732L9.99967 9.16732L12.4997 6.66732" />
+    </svg>
+  );
+}
+
+function StackPopIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.66667}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5.83398 7.91732L3.33398 9.16732L10.0007 12.5007L16.6673 9.16732L14.1673 7.91732M3.33398 12.5007L10.0007 15.834L16.6673 12.5007M10.0007 9.16732V3.33398M12.5007 5.83398L10.0007 3.33398L7.50065 5.83398" />
+    </svg>
+  );
+}
 
 export type LayerOrderDirection = "front" | "back" | "forward" | "backward";
 
@@ -25,10 +63,10 @@ interface LayerOrderPopoverProps {
 const OPTIONS: ReadonlyArray<{
   direction: LayerOrderDirection;
   label: string;
-  Icon: typeof BringToFront;
+  Icon: (props: { className?: string }) => JSX.Element;
 }> = [
-  { direction: "front", label: "맨 앞으로", Icon: BringToFront },
-  { direction: "back", label: "맨 뒤로", Icon: SendToBack },
+  { direction: "front", label: "맨 앞으로", Icon: StackPopIcon },
+  { direction: "back", label: "맨 뒤로", Icon: StackPushIcon },
 ];
 
 export function LayerOrderPopover({ onReorder, disabled = false }: LayerOrderPopoverProps) {
@@ -73,7 +111,7 @@ export function LayerOrderPopover({ onReorder, disabled = false }: LayerOrderPop
         className="w-auto px-1"
       >
         <span className="flex items-center gap-1">
-          <SendToBack className="h-4 w-4" />
+          <StackPushIcon className="h-4 w-4" />
           <ChevronDownIcon className="h-3 w-3" />
         </span>
       </ToolbarButton>

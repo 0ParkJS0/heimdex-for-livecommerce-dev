@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import { ChevronsUpDown, X as XIcon } from "lucide-react";
+import { ChevronsUpDown, SkipBack, SkipForward } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditorClip, EditorState, EditorSubtitle, HistoryEntry, LayerOrderId, Playback, PlaybackEvent } from "../lib/types";
 import type { EditorOverlay } from "../lib/overlay-types";
@@ -780,37 +780,51 @@ export function PreviewPanel({
         // fixed viewport-filling shell so the video element + its
         // usePlaybackSync wiring stay mounted across the toggle. No
         // new <video>, no src race, no black-frame-on-open.
+        // 2026-06-04 — the shell dims the backdrop and centers the white
+        // player card (figma 2015:247433).
         fullscreen &&
-          "fixed inset-0 z-50 flex flex-col items-center justify-center bg-black p-4",
+          "fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6",
       )}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
     >
-      {fullscreen && (
-        <>
-          {filename && (
-            <div
+      {/* 2026-06-04 — fullscreen player card (figma 2015:247433): a white
+          rounded wrapper holding a filename + 닫기 header above the 9:16
+          video; the transport is overlaid at the video's bottom as dark
+          pills (see the fullscreen controls block inside the canvas).
+          Inline (non-fullscreen) the wrapper is ``display: contents`` so it
+          generates no box and the editor's center-cell layout is unchanged. */}
+      <div
+        className={cn(
+          fullscreen
+            ? "flex max-h-[calc(100vh-48px)] flex-col gap-[10px] overflow-hidden rounded-[20px] bg-white p-[20px] shadow-[2px_2px_20px_0px_rgba(0,0,0,0.25)]"
+            : "contents",
+        )}
+      >
+        {fullscreen && (
+          <div className="flex w-full items-start justify-between gap-2">
+            <span
               data-testid="preview-fullscreen-filename"
-              className="pointer-events-none absolute left-4 top-4 z-10 max-w-[60%] truncate text-sm font-semibold text-white"
+              className="min-w-0 truncate text-[16px] font-semibold leading-[1.4] tracking-[-0.4px] text-neutral-h-black"
             >
               {filename}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={onCloseFullscreen}
-            aria-label="전체화면 닫기"
-            data-testid="preview-fullscreen-close"
-            className="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-          >
-            <XIcon className="h-5 w-5" />
-          </button>
-        </>
-      )}
+            </span>
+            <button
+              type="button"
+              onClick={onCloseFullscreen}
+              aria-label="전체화면 닫기"
+              data-testid="preview-fullscreen-close"
+              className="inline-flex h-8 shrink-0 items-center justify-center rounded-[8px] border border-neutral-h-500 px-[10px] py-[6px] text-[12px] font-semibold text-neutral-h-500 transition-colors hover:bg-grayscale-10"
+            >
+              닫기
+            </button>
+          </div>
+        )}
       {/* Preview container — figma 1602:37722: shorts canvas fills the card
           surface so the editor center is the 9:16 stage with no padding. */}
       <div
         ref={containerRef}
+        data-testid="preview-canvas"
         // ``container-type: size`` opts this surface into CSS
         // container queries so overlays inside can size themselves
         // with ``cqw`` / ``cqh`` units relative to the actual preview
@@ -822,9 +836,12 @@ export function PreviewPanel({
           "relative overflow-hidden bg-black",
           aspectRatio === "9:16"
             ? fullscreen
-              ? // 9:16 fills the viewport height; width follows the
-                // 9:16 ratio so the short shape stays exact.
-                "h-full max-h-full aspect-[9/16]"
+              ? // 9:16 with a DEFINITE height (viewport minus the card
+                // chrome: shell p-6 = 48, card p-20 = 40, header ~32, gap
+                // 10 → 130px). A definite height + aspect-ratio yields a
+                // definite WIDTH, which the white card wraps tightly so the
+                // overlaid controls sit on the video, not the padding.
+                "aspect-[9/16] h-[calc(100vh-130px)] max-h-full max-w-full rounded-[10px]"
               : "h-full w-full"
             : fullscreen
               ? "aspect-video w-full max-w-[626px] rounded-[10px]"
@@ -1344,43 +1361,119 @@ export function PreviewPanel({
           muted
           playsInline
         />
+
+        {/* figma 2015:247442 — fullscreen control overlay: progress bar +
+            dark translucent pills (play / skip / time) anchored to the
+            video's bottom-left, mirroring the /videos detail player. Only
+            in fullscreen; the inline editor keeps its own transport bar. */}
+        {fullscreen && (
+          <div
+            className="pointer-events-none absolute inset-0 z-20 flex flex-col items-start justify-end gap-3 p-2.5"
+          >
+            <div
+              role="slider"
+              tabIndex={0}
+              aria-valuemin={0}
+              aria-valuemax={Math.max(0, Math.round(totalDurationMs / 1000))}
+              aria-valuenow={Math.round(playheadMs / 1000)}
+              aria-label="재생 진행"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (totalDurationMs <= 0) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+                onPlayheadChange(ratio * totalDurationMs);
+              }}
+              className="pointer-events-auto relative h-1 w-full cursor-pointer overflow-hidden bg-white"
+            >
+              <div
+                className="absolute left-0 top-0 h-full bg-heimdex-navy-500"
+                style={{ width: `${Math.min(100, progressPct)}%` }}
+              />
+            </div>
+            <div
+              className="pointer-events-auto flex items-center gap-2.5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={togglePlay}
+                disabled={clips.length === 0}
+                aria-label={isPlaying ? "일시정지" : "재생"}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(38,38,38,0.5)] text-white"
+              >
+                {isPlaying ? <PauseIcon /> : <PlayIcon />}
+              </button>
+              <div className="flex h-8 w-[72px] items-center justify-between rounded-full bg-[rgba(38,38,38,0.5)] px-2 py-0.5">
+                <button
+                  type="button"
+                  onClick={() => onPlayheadChange(Math.max(0, playheadMs - 5000))}
+                  aria-label="5초 뒤로"
+                  className="text-white"
+                >
+                  <SkipBack className="h-5 w-5" strokeWidth={1.667} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onPlayheadChange(Math.min(totalDurationMs, playheadMs + 5000))
+                  }
+                  aria-label="5초 앞으로"
+                  className="text-white"
+                >
+                  <SkipForward className="h-5 w-5" strokeWidth={1.667} />
+                </button>
+              </div>
+              <div className="flex h-8 items-center rounded-full bg-[rgba(38,38,38,0.5)] px-2 py-0.5">
+                <span className="text-sm font-medium tracking-[-0.35px] text-white">
+                  {formatTimelineTimestamp(playheadMs)} / {formatTimelineTimestamp(totalDurationMs)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Transport controls — fade on idle, always shown while playing */}
-      <div
-        className={cn(
-          "flex w-full flex-col gap-2 transition-opacity duration-200 max-w-[352px]",
-          showTransport ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-      >
-        {/* Progress bar */}
-        <div className="relative h-1 w-full rounded-full bg-grayscale-200">
-          <div
-            className="absolute left-0 top-0 h-full rounded-full bg-heimdex-navy-500 transition-[width] duration-75"
-            style={{ width: `${Math.min(100, progressPct)}%` }}
-          />
-        </div>
+      {/* Transport controls (inline editor only) — fade on idle, always
+          shown while playing. Fullscreen uses the overlaid pill controls
+          inside the canvas above (figma 2015:247442). */}
+      {!fullscreen && (
+        <div
+          className={cn(
+            "flex w-full max-w-[352px] flex-col gap-2 transition-opacity duration-200",
+            showTransport ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+        >
+          {/* Progress bar */}
+          <div className="relative h-1 w-full rounded-full bg-grayscale-200">
+            <div
+              className="absolute left-0 top-0 h-full rounded-full bg-heimdex-navy-500 transition-[width] duration-75"
+              style={{ width: `${Math.min(100, progressPct)}%` }}
+            />
+          </div>
 
-        {/* Play button + time display */}
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={togglePlay}
-            disabled={clips.length === 0}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-              clips.length > 0
-                ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
-                : "cursor-not-allowed bg-grayscale-100 text-grayscale-400",
-            )}
-          >
-            {isPlaying ? <PauseIcon /> : <PlayIcon />}
-          </button>
+          {/* Play button + time display */}
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={togglePlay}
+              disabled={clips.length === 0}
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                clips.length > 0
+                  ? "bg-heimdex-navy-500 text-white hover:bg-heimdex-navy-600"
+                  : "cursor-not-allowed bg-grayscale-100 text-grayscale-400",
+              )}
+            >
+              {isPlaying ? <PauseIcon /> : <PlayIcon />}
+            </button>
 
-          <span className="font-mono text-xs text-grayscale-500">
-            {formatTimelineTimestamp(playheadMs)} / {formatTimelineTimestamp(totalDurationMs)}
-          </span>
+            <span className="font-mono text-xs text-grayscale-500">
+              {formatTimelineTimestamp(playheadMs)} / {formatTimelineTimestamp(totalDurationMs)}
+            </span>
+          </div>
         </div>
+      )}
       </div>
     </div>
   );
