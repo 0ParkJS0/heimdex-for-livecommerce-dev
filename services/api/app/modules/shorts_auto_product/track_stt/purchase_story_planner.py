@@ -140,6 +140,12 @@ _INTRO_PATTERNS = (
 )
 
 _ROLES = ("intro", "proof", "offer")
+_EXPANSION_ROLES = ("proof", "detail")
+_MIN_DURATION_FRACTION = 0.85
+_LONG_TARGET_FLOOR_THRESHOLD_MS = 60_000
+_MAX_DURATION_EXTRA_MS = 10_000
+_MAX_STORY_BEATS = 8
+_EXPANSION_CANDIDATE_LIMIT = 24
 _STRICT_MAX_SPAN_EXTRA_MS = 60_000
 _FIRST_PLAN_RESCUE_MAX_SPAN_MS = 12 * 60_000
 _FIRST_PLAN_RESCUE_MAX_GAP_PENALTY = 35.0
@@ -222,7 +228,7 @@ def plan_purchase_story_shorts(
             ),
             key=lambda c: (-c.score, c.start_ms),
         )
-        for role in _ROLES
+        for role in (*_ROLES, "detail")
     }
     filtered_by_role = {
         role: [
@@ -236,8 +242,10 @@ def plan_purchase_story_shorts(
         for role, candidates in scored_by_role.items()
     }
 
-    strict_combos: list[tuple[float, tuple[ProductStoryCandidate, ...]]] = []
-    first_plan_rescue_combos: list[tuple[float, tuple[ProductStoryCandidate, ...]]] = []
+    strict_combos: list[tuple[float, tuple[ProductStoryCandidate, ...], int]] = []
+    first_plan_rescue_combos: list[
+        tuple[float, tuple[ProductStoryCandidate, ...], int]
+    ] = []
     for intro in filtered_by_role["intro"][:10]:
         for proof1 in filtered_by_role["proof"][:12]:
             if _overlaps(intro, proof1):
@@ -257,8 +265,20 @@ def plan_purchase_story_shorts(
                     ):
                         combo.insert(2, proof2)
                     break
+                combo, expanded_count = _expand_combo_to_duration_floor(
+                    combo=combo,
+                    expansion_candidates=[
+                        candidate
+                        for role in _EXPANSION_ROLES
+                        for candidate in filtered_by_role[role][:_EXPANSION_CANDIDATE_LIMIT]
+                    ],
+                    target_duration_ms=target_duration_ms,
+                )
                 duration_ms = sum(c.duration_ms for c in combo)
-                if duration_ms < 32_000 or duration_ms > target_duration_ms + 10_000:
+                min_duration_ms = _min_duration_ms(target_duration_ms)
+                if duration_ms < 32_000 or duration_ms > target_duration_ms + _MAX_DURATION_EXTRA_MS:
+                    continue
+                if _requires_duration_floor(target_duration_ms) and duration_ms < min_duration_ms:
                     continue
                 span_ms = max(c.end_ms for c in combo) - min(c.start_ms for c in combo)
                 gap_penalty = max(0.0, (span_ms - duration_ms) / 1000.0)
@@ -272,7 +292,7 @@ def plan_purchase_story_shorts(
                     span_ms <= target_duration_ms + _STRICT_MAX_SPAN_EXTRA_MS
                     and strict_score >= min_combo_score
                 ):
-                    strict_combos.append((strict_score, tuple(combo)))
+                    strict_combos.append((strict_score, tuple(combo), expanded_count))
                     continue
 
                 # Rescue only the first requested short. The experiment showed
@@ -287,21 +307,34 @@ def plan_purchase_story_shorts(
                 if (
                     span_ms <= _FIRST_PLAN_RESCUE_MAX_SPAN_MS
                     and rescue_score >= first_plan_rescue_min_combo_score
+                    and (
+                        not _requires_duration_floor(target_duration_ms)
+                        or duration_ms >= min_duration_ms
+                    )
                 ):
-                    first_plan_rescue_combos.append((rescue_score, tuple(combo)))
+                    first_plan_rescue_combos.append((rescue_score, tuple(combo), expanded_count))
 
     combos = strict_combos or first_plan_rescue_combos
     combos.sort(key=lambda item: (-item[0], item[1][0].start_ms))
     plans: list[FullSttClipPlan] = []
     used_ranges: list[tuple[int, int]] = []
-    for combo_score, combo in combos:
+    for combo_score, combo, expanded_count in combos:
         combo_range = (min(c.start_ms for c in combo), max(c.end_ms for c in combo))
         if any(
             combo_range[0] < used_end and used_start < combo_range[1]
             for used_start, used_end in used_ranges
         ):
             continue
-        plans.append(_plan_from_combo(product=product, combo=combo, combo_score=combo_score))
+        plans.append(
+            _plan_from_combo(
+                product=product,
+                combo=combo,
+                combo_score=combo_score,
+                target_duration_ms=target_duration_ms,
+                min_duration_ms=_min_duration_ms(target_duration_ms),
+                expanded_count=expanded_count,
+            )
+        )
         if not strict_combos:
             break
         used_ranges.append(combo_range)
@@ -375,6 +408,14 @@ def _signals(text: str) -> tuple[str, ...]:
     return tuple(found)
 
 
+def _min_duration_ms(target_duration_ms: int) -> int:
+    return max(32_000, int(target_duration_ms * _MIN_DURATION_FRACTION))
+
+
+def _requires_duration_floor(target_duration_ms: int) -> bool:
+    return target_duration_ms > _LONG_TARGET_FLOOR_THRESHOLD_MS
+
+
 def _candidate_scene_windows(
     scenes: list[PurchaseNarrativeScene],
 ) -> list[tuple[PurchaseNarrativeScene, ...]]:
@@ -411,9 +452,11 @@ def _score_candidate(
     if role == "intro":
         role_bonus += 12.0 if "intro" in sigs else 0.0
         role_bonus += 10.0 if product_score >= 8.0 else 0.0
-    elif role == "proof":
+    elif role in {"proof", "detail"}:
         role_bonus += 12.0 if {"benefit", "demo", "feature"} & set(sigs) else 0.0
         role_bonus += min(18.0, visual_score)
+        if role == "detail":
+            role_bonus += 8.0 if {"demo", "feature"} & set(sigs) else 0.0
     elif role == "offer":
         role_bonus += 14.0 if {"offer", "cta"} & set(sigs) else 0.0
         role_bonus += 8.0 if product_score >= 5.0 else 0.0
@@ -433,6 +476,8 @@ def _score_candidate(
     if competitor_score > max(10.0, product_score * 1.2):
         score -= 40.0
     if role == "proof" and not ({"benefit", "demo", "feature"} & set(sigs)):
+        score -= 30.0
+    if role == "detail" and not ({"benefit", "demo", "feature"} & set(sigs)):
         score -= 30.0
     if role == "offer" and not ({"offer", "cta"} & set(sigs)):
         score -= 30.0
@@ -458,11 +503,88 @@ def _overlaps(left: ProductStoryCandidate, right: ProductStoryCandidate) -> bool
     return left.start_ms < right.end_ms and right.start_ms < left.end_ms
 
 
+def _expand_combo_to_duration_floor(
+    *,
+    combo: list[ProductStoryCandidate],
+    expansion_candidates: list[ProductStoryCandidate],
+    target_duration_ms: int,
+) -> tuple[list[ProductStoryCandidate], int]:
+    """Add qualified proof/detail beats until long targets meet duration.
+
+    The base story shape remains intro -> proof -> offer, with the existing
+    optional proof2. Expansion only inserts additional product-grounded proof
+    or detail beats before the offer, preserving the narrative close while
+    avoiding renderer/service coupling.
+    """
+    if not _requires_duration_floor(target_duration_ms):
+        return combo, 0
+    min_duration_ms = _min_duration_ms(target_duration_ms)
+    if sum(c.duration_ms for c in combo) >= min_duration_ms:
+        return combo, 0
+
+    expanded = list(combo)
+    added = 0
+    ranked = sorted(
+        expansion_candidates,
+        key=lambda c: (
+            _expansion_distance_ms(c, expanded),
+            -c.score,
+            c.start_ms,
+        ),
+    )
+    for candidate in ranked:
+        if len(expanded) >= _MAX_STORY_BEATS:
+            break
+        if candidate in expanded or any(_overlaps(candidate, existing) for existing in expanded):
+            continue
+        if candidate.gift_penalty != 0:
+            continue
+        if candidate.product_score < 5.0:
+            continue
+        if candidate.competitor_score > max(10.0, candidate.product_score * 1.2):
+            continue
+        if not ({"benefit", "demo", "feature"} & set(candidate.signals)):
+            continue
+        next_duration = sum(c.duration_ms for c in expanded) + candidate.duration_ms
+        if next_duration > target_duration_ms + _MAX_DURATION_EXTRA_MS:
+            continue
+        _insert_before_offer(expanded, candidate)
+        added += 1
+        if next_duration >= min_duration_ms:
+            break
+    return expanded, added
+
+
+def _expansion_distance_ms(
+    candidate: ProductStoryCandidate,
+    combo: list[ProductStoryCandidate],
+) -> int:
+    return min(
+        abs(candidate.start_ms - existing.start_ms)
+        for existing in combo
+        if existing.role in {"proof", "detail"}
+    )
+
+
+def _insert_before_offer(
+    combo: list[ProductStoryCandidate],
+    candidate: ProductStoryCandidate,
+) -> None:
+    for idx, existing in enumerate(combo):
+        if existing.role == "offer":
+            combo.insert(idx, candidate)
+            return
+    combo.append(candidate)
+
+
 def _plan_from_combo(
     *,
     product: ProductNarrativeContext,
     combo: tuple[ProductStoryCandidate, ...],
     combo_score: float,
+    target_duration_ms: int,
+    min_duration_ms: int,
+    expanded_count: int,
 ) -> FullSttClipPlan:
     segments: list[FullSttSegment] = []
     for candidate in combo:
@@ -478,7 +600,11 @@ def _plan_from_combo(
     rationale = (
         f"Story purchase plan for {product.label}; roles="
         + " > ".join(candidate.role for candidate in combo)
-        + f"; combo_score={combo_score:.1f}"
+        + f"; combo_score={combo_score:.1f}; "
+        + f"target_duration_ms={target_duration_ms}; "
+        + f"min_duration_ms={min_duration_ms}; "
+        + f"actual_duration_ms={sum(segment.duration_ms for segment in segments)}; "
+        + f"expanded_beats={expanded_count}"
     )
     return FullSttClipPlan(
         segments=segments,

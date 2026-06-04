@@ -471,3 +471,44 @@ class TestPurchasePlannerSwitch:
         assert [s.scene_id for s in plans[0].segments] == ["sc_0", "sc_2", "sc_4"]
         assert "Story purchase plan" in plans[0].global_rationale
         picker.pick_many.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_purchase_story_mode_expands_120s_target_and_bypasses_picker(self):
+        hits = [
+            {
+                "scene_id": f"sc_{i}",
+                "start_ms": i * 15_000,
+                "end_ms": (i + 1) * 15_000,
+                "transcript_raw": (
+                    f"립밤 컬러 립밤 보여드릴게요 발림이 부드럽고 "
+                    f"색상 활용이 좋아서 추천드려요 {i}"
+                ),
+                "ocr_text_raw": "",
+                "scene_caption": "",
+                "speech_segment_count": 1,
+            }
+            for i in range(8)
+        ]
+        os_client = _FakeOSClient(hits)
+        picker = AsyncMock()
+        picker.pick_many = AsyncMock(side_effect=AssertionError("picker should not run"))
+
+        plans = await service.plan_full_stt_clips(
+            org_id=uuid4(),
+            catalog_entry_id=uuid4(),
+            llm_label="립밤",
+            spoken_aliases=["컬러 립밤"],
+            os_video_id="gd_test",
+            target_duration_ms=120_000,
+            os_client=os_client,
+            picker=picker,
+            n=1,
+            purchase_planner_enabled=True,
+            purchase_planner_mode="story",
+        )
+
+        assert len(plans) == 1
+        assert plans[0].fallback_used is False
+        assert plans[0].total_duration_ms >= 102_000
+        assert len(plans[0].segments) >= 7
+        picker.pick_many.assert_not_called()

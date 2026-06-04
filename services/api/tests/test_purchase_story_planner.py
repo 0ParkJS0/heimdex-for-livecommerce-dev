@@ -205,3 +205,100 @@ def test_story_planner_uses_visual_text_for_product_grounding():
         "gd_story_scene_001",
         "gd_story_scene_002",
     ]
+
+
+def test_story_planner_expands_long_target_to_duration_floor():
+    scenes = [
+        _scene(i, f"립밤 컬러 립밤 오늘 보여드릴게요 발림이 부드럽고 색상 활용이 좋아요 {i}")
+        for i in range(8)
+    ]
+
+    plans = plan_purchase_story_shorts(
+        scenes=scenes,
+        product=ProductNarrativeContext(label="립밤", aliases=("컬러 립밤",)),
+        target_duration_ms=120_000,
+        n=1,
+        min_combo_score=40.0,
+    )
+
+    assert len(plans) == 1
+    assert plans[0].fallback_used is False
+    assert plans[0].total_duration_ms >= 102_000
+    assert len(plans[0].segments) >= 7
+    assert "target_duration_ms=120000" in plans[0].global_rationale
+    assert "expanded_beats=" in plans[0].global_rationale
+
+
+def test_story_planner_expands_90s_target_to_duration_floor():
+    scenes = [
+        _scene(i, f"립밤 컬러 립밤 보여드릴게요 발림과 색상 활용이 좋아요 {i}")
+        for i in range(6)
+    ]
+
+    plans = plan_purchase_story_shorts(
+        scenes=scenes,
+        product=ProductNarrativeContext(label="립밤", aliases=("컬러 립밤",)),
+        target_duration_ms=90_000,
+        n=1,
+        min_combo_score=40.0,
+    )
+
+    assert len(plans) == 1
+    assert plans[0].fallback_used is False
+    assert plans[0].total_duration_ms >= 76_500
+    assert len(plans[0].segments) >= 6
+
+
+def test_story_planner_does_not_pad_long_target_with_unrelated_filler():
+    scenes = [
+        _scene(0, "립밤 컬러 립밤 오늘 보여드릴게요 색상이 예뻐요"),
+        _scene(1, "립밤 컬러 립밤 발림이 부드럽고 촉촉합니다"),
+        _scene(2, "립밤 컬러 립밤 데일리로 쓰기 좋아서 추천드려요"),
+        _scene(3, "립밤 컬러 립밤 지금 구매하시면 활용하기 좋아요"),
+        _scene(4, "배송 안내와 일반 공지입니다"),
+        _scene(5, "채팅창 인사와 방송 진행 이야기입니다"),
+        _scene(6, "다음 순서 준비 중입니다"),
+        _scene(7, "잡담입니다"),
+    ]
+
+    plans = plan_purchase_story_shorts(
+        scenes=scenes,
+        product=ProductNarrativeContext(label="립밤", aliases=("컬러 립밤",)),
+        target_duration_ms=120_000,
+        n=1,
+        min_combo_score=40.0,
+    )
+
+    assert plans == []
+
+
+def test_story_planner_long_target_excludes_competitor_expansion_candidates():
+    scenes = [
+        _scene(0, "후드티 오늘 보여드릴게요 기본으로 입기 좋아요"),
+        _scene(1, "후드티 원단이 탄탄하고 데일리로 편합니다"),
+        _scene(2, "후드티 핏과 소재를 자세히 보여드릴게요"),
+        _scene(3, "후드티 추천드려요 지금 구매하시면 좋아요"),
+        _scene(4, "가디건 니트 가디건 가격이 좋고 컬러가 예뻐요"),
+        _scene(5, "가디건 착용감과 소재가 탄탄해서 추천드려요"),
+        _scene(6, "후드티 소매와 지퍼 디테일을 보여드릴게요"),
+        _scene(7, "후드티 컬러 구성과 사이즈 선택하기 좋아요"),
+        _scene(8, "후드티 가볍고 부드러워서 매일 입기 편합니다"),
+        _scene(9, "후드티 오늘 혜택으로 가져가시면 좋습니다"),
+    ]
+
+    plans = plan_purchase_story_shorts(
+        scenes=scenes,
+        product=ProductNarrativeContext(label="후드티", aliases=("후드",)),
+        sibling_products=[
+            ProductNarrativeContext(label="가디건", aliases=("니트 가디건",)),
+        ],
+        target_duration_ms=120_000,
+        n=1,
+        min_combo_score=40.0,
+    )
+
+    assert len(plans) == 1
+    assert plans[0].total_duration_ms >= 102_000
+    scene_ids = {segment.scene_id for segment in plans[0].segments}
+    assert "gd_story_scene_004" not in scene_ids
+    assert "gd_story_scene_005" not in scene_ids
