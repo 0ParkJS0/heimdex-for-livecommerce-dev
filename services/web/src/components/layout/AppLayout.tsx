@@ -93,20 +93,19 @@ export function AppLayout({ children }: AppLayoutProps) {
     <TopHeaderActionsProvider>
       <div className="flex min-h-screen overflow-hidden">
         {editorMode ? (
-          <EditorSidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+          <EditorSidebar />
         ) : (
           <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
         )}
         <div
           className={cn(
             "flex min-w-0 flex-1 flex-col transition-[margin-left] duration-300 ease-in-out",
-            sidebarCollapsed ? "ml-0" : editorMode ? "ml-16" : "ml-[270px]",
+            // Collapsed is now a 64px rail (not fully hidden) → always ml-16.
+            // The editor expands as an overlay, so main stays ml-16 either way.
+            editorMode || sidebarCollapsed ? "ml-16" : "ml-[270px]",
           )}
         >
-          <TopHeader
-            sidebarCollapsed={sidebarCollapsed}
-            onToggleSidebar={toggleSidebar}
-          />
+          <TopHeader />
           <main
             className={cn(
               "min-w-0 flex-1 overflow-hidden",

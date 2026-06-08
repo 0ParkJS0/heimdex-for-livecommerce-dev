@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -27,23 +27,60 @@ vi.mock("@/lib/api/devices", () => ({
   getDevices: vi.fn().mockResolvedValue({ devices: [] }),
 }));
 
-describe("Sidebar", () => {
-  it("renders expanded by default with nav items visible", () => {
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    expect(screen.getByText("동영상 검색")).toBeInTheDocument();
-    expect(screen.getByText("파일 동기화")).toBeInTheDocument();
-    expect(screen.getByText("인물 라벨 관리")).toBeInTheDocument();
-    expect(screen.getByText("내보내기")).toBeInTheDocument();
-    expect(screen.getByText("에이전트")).toBeInTheDocument();
+// figma 1607:67462 (expanded) / 1670:185900 (collapsed 64px rail).
+describe("Sidebar — redesigned LNB", () => {
+  beforeEach(() => {
+    mockUsePathname.mockReturnValue("/");
   });
 
-  it("applies w-0 overflow-hidden when collapsed", () => {
+  it("renders the 메인 / 라이브러리 sections with their items when expanded", () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.getByText("메인")).toBeInTheDocument();
+    expect(screen.getByText("라이브러리")).toBeInTheDocument();
+    expect(screen.getByText("동영상 검색")).toBeInTheDocument();
+    expect(screen.getByText("이미지 검색")).toBeInTheDocument();
+    expect(screen.getByText("인물 라벨 관리")).toBeInTheDocument();
+    expect(screen.getByText("교차 편집")).toBeInTheDocument();
+    expect(screen.getByText("내 쇼츠")).toBeInTheDocument();
+    expect(screen.getByText("설정")).toBeInTheDocument();
+  });
+
+  it("no longer renders the removed menus or the Pro badge", () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.queryByText("파일 동기화")).not.toBeInTheDocument();
+    expect(screen.queryByText("내보내기")).not.toBeInTheDocument();
+    expect(screen.queryByText("문서")).not.toBeInTheDocument();
+    expect(screen.queryByText("에이전트")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pro")).not.toBeInTheDocument();
+  });
+
+  it("routes the renamed items to the correct hrefs", () => {
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.getByText("동영상 검색").closest("a")).toHaveAttribute("href", "/");
+    expect(screen.getByText("교차 편집").closest("a")).toHaveAttribute(
+      "href",
+      "/export/preedit",
+    );
+    expect(screen.getByText("내 쇼츠").closest("a")).toHaveAttribute(
+      "href",
+      "/export/shorts",
+    );
+  });
+
+  it("collapses to a 64px rail (not fully hidden) with icon-only links", () => {
     const { container } = render(<Sidebar collapsed={true} onToggle={vi.fn()} />);
 
     const aside = container.querySelector("aside");
-    expect(aside).toHaveClass("w-0");
-    expect(aside).toHaveClass("overflow-hidden");
+    expect(aside).toHaveClass("w-16");
+    expect(aside).not.toHaveClass("w-0");
+    expect(aside).not.toHaveClass("overflow-hidden");
+
+    // Labels collapse to aria-label/title; visible text is gone.
+    expect(screen.queryByText("동영상 검색")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("동영상 검색")).toBeInTheDocument();
   });
 
   it("applies w-[270px] when expanded", () => {
@@ -63,122 +100,41 @@ describe("Sidebar", () => {
     expect(aside).toHaveClass("ease-in-out");
   });
 
-  it("calls onToggle when collapse button is clicked", async () => {
+  it("calls onToggle when the collapse button is clicked", async () => {
     const onToggle = vi.fn();
     const user = userEvent.setup();
 
     render(<Sidebar collapsed={false} onToggle={onToggle} />);
 
-    const collapseBtn = screen.getByLabelText("사이드바 접기");
-    await user.click(collapseBtn);
+    await user.click(screen.getByLabelText("사이드바 접기"));
 
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("has collapse button with aria-label", () => {
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    const collapseBtn = screen.getByLabelText("사이드바 접기");
-    expect(collapseBtn).toBeInTheDocument();
-  });
-});
-
-describe("TopHeader", () => {
-  it("shows hamburger button when sidebar is collapsed", () => {
-    render(<TopHeader sidebarCollapsed={true} onToggleSidebar={vi.fn()} />);
-
-    const hamburgerBtn = screen.getByLabelText("사이드바 열기");
-    expect(hamburgerBtn).toBeInTheDocument();
-  });
-
-  it("hides hamburger button when sidebar is expanded", () => {
-    render(<TopHeader sidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
-
-    expect(screen.queryByLabelText("사이드바 열기")).not.toBeInTheDocument();
-  });
-
-  it("calls onToggleSidebar when hamburger is clicked", async () => {
+  it("calls onToggle when the rail expand button is clicked", async () => {
     const onToggle = vi.fn();
     const user = userEvent.setup();
 
-    render(<TopHeader sidebarCollapsed={true} onToggleSidebar={onToggle} />);
+    render(<Sidebar collapsed={true} onToggle={onToggle} />);
 
-    const hamburgerBtn = screen.getByLabelText("사이드바 열기");
-    await user.click(hamburgerBtn);
+    await user.click(screen.getByLabelText("사이드바 펼치기"));
 
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
+
+  it("highlights the active item via the pathname", () => {
+    mockUsePathname.mockReturnValue("/export/preedit");
+    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
+
+    expect(screen.getByText("교차 편집").closest("a")).toHaveClass("bg-neutral-h-100");
+  });
 });
 
-describe("NavGroup — 내보내기", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    mockUsePathname.mockReturnValue("/");
-  });
+describe("TopHeader — no reopen button after rail unification", () => {
+  it("no longer renders the sidebar reopen button", () => {
+    render(<TopHeader />);
 
-  it("shows children when group is expanded by default", () => {
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    expect(screen.getByText("내보내기")).toBeInTheDocument();
-    expect(screen.getByText("쇼츠")).toBeInTheDocument();
-    expect(screen.getByText("문서")).toBeInTheDocument();
-  });
-
-  it("hides children when group is collapsed", async () => {
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText("내보내기"));
-
-    expect(screen.queryByText("쇼츠")).not.toBeInTheDocument();
-    expect(screen.queryByText("문서")).not.toBeInTheDocument();
-  });
-
-  it("auto-expands when child route is active", () => {
-    localStorage.setItem("heimdex-export-group-expanded", "false");
-
-    mockUsePathname.mockReturnValue("/export/shorts");
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    expect(screen.getByText("쇼츠")).toBeInTheDocument();
-    expect(screen.getByText("문서")).toBeInTheDocument();
-  });
-
-  it("auto-expands on deep child route", () => {
-    localStorage.setItem("heimdex-export-group-expanded", "false");
-
-    mockUsePathname.mockReturnValue("/export/shorts/editor");
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    expect(screen.getByText("쇼츠")).toBeInTheDocument();
-  });
-
-  it("persists collapsed state to localStorage", async () => {
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText("내보내기"));
-
-    expect(localStorage.getItem("heimdex-export-group-expanded")).toBe("false");
-  });
-
-  it("reads initial state from localStorage", () => {
-    localStorage.setItem("heimdex-export-group-expanded", "false");
-
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    expect(screen.queryByText("쇼츠")).not.toBeInTheDocument();
-    expect(screen.queryByText("문서")).not.toBeInTheDocument();
-  });
-
-  it("renders children with correct hrefs", () => {
-    render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
-
-    const shortsLink = screen.getByText("쇼츠").closest("a");
-    const docsLink = screen.getByText("문서").closest("a");
-
-    expect(shortsLink).toHaveAttribute("href", "/export/shorts");
-    expect(docsLink).toHaveAttribute("href", "/export/documents");
+    expect(screen.queryByLabelText("사이드바 열기")).not.toBeInTheDocument();
   });
 });
 

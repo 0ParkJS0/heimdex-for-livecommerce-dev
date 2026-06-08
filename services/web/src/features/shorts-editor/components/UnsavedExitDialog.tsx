@@ -18,7 +18,7 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 
-import { Info } from "lucide-react";
+import { InfoIcon } from "@/components/icons/figma";
 
 export type UnsavedExitVariant = "new" | "existing";
 
@@ -82,13 +82,8 @@ export function UnsavedExitDialog({
         onClick={(e) => e.stopPropagation()}
         className="flex flex-col items-center justify-center gap-[20px] rounded-[20px] bg-white p-[24px] shadow-[2px_2px_20px_0px_rgba(0,0,0,0.25)]"
       >
-        {/* figma 955:121744 — 24px rounded badge, fill heimdex-navy-500 (#234C77). */}
-        <div
-          className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-heimdex-navy-500"
-          aria-hidden
-        >
-          <Info className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
-        </div>
+        {/* figma 955:121744 — navy-500 disc + white "i". Shared InfoIcon component. */}
+        <InfoIcon className="h-6 w-6 shrink-0" />
 
         <div className="flex flex-col items-center gap-[8px]">
           <p
@@ -97,9 +92,12 @@ export function UnsavedExitDialog({
           >
             {copy.title}
           </p>
-          <div className="flex w-[238px] flex-col items-center text-center font-pretendard text-[14px] font-medium leading-[1.4] tracking-[-0.35px] text-grayscale-800">
+          {/* Lines are already split in COPY. whitespace-nowrap stops a single
+              line from breaking at a word boundary into 3 lines (matches figma
+              2105:410616). */}
+          <div className="flex flex-col items-center text-center font-pretendard text-[14px] font-medium leading-[1.4] tracking-[-0.35px] text-grayscale-800">
             {copy.body.map((line, idx) => (
-              <p key={idx} className="leading-[1.4]">
+              <p key={idx} className="whitespace-nowrap leading-[1.4]">
                 {line}
               </p>
             ))}

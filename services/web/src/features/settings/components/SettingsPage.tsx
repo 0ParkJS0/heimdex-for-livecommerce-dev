@@ -62,6 +62,22 @@ function DisplayIcon() {
   );
 }
 
+function SyncIcon() {
+  return (
+    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+    </svg>
+  );
+}
+
+function AgentIcon() {
+  return (
+    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+    </svg>
+  );
+}
+
 interface SettingsLinkCardProps {
   href: string;
   icon: React.ReactNode;
@@ -214,6 +230,19 @@ export function SettingsPage() {
             icon={<DeviceIcon />}
             title="디바이스 관리"
             description="연결된 에이전트 디바이스를 관리합니다."
+          />
+          {/* Items moved from the LNB into settings (2026-06-08) — routes/pages unchanged. */}
+          <SettingsLinkCard
+            href="/sync"
+            icon={<SyncIcon />}
+            title="파일 동기화"
+            description="동기화할 폴더와 파일 연결을 관리합니다."
+          />
+          <SettingsLinkCard
+            href="/agent"
+            icon={<AgentIcon />}
+            title="에이전트"
+            description="에이전트 연결 상태를 확인하고 관리합니다."
           />
         </div>
       </section>

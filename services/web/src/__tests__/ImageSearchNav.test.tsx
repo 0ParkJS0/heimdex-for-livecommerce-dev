@@ -36,37 +36,37 @@ describe("Sidebar - 이미지 검색 nav item", () => {
     expect(link).toHaveAttribute("href", "/images");
   });
 
-  it('appears between "동영상 검색" and "파일 동기화" in DOM order', () => {
+  it('appears after "동영상 검색" and before "인물 라벨 관리" in DOM order', () => {
     mockPathname = "/";
     const { container } = render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
 
     const links = container.querySelectorAll("nav a");
     const labels = Array.from(links).map((el) => el.textContent?.trim());
 
-    const archiveIdx = labels.findIndex((t) => t?.includes("동영상 검색"));
+    const videoIdx = labels.findIndex((t) => t?.includes("동영상 검색"));
     const imageIdx = labels.findIndex((t) => t?.includes("이미지 검색"));
-    const syncIdx = labels.findIndex((t) => t?.includes("파일 동기화"));
+    const peopleIdx = labels.findIndex((t) => t?.includes("인물 라벨 관리"));
 
-    expect(archiveIdx).toBeGreaterThanOrEqual(0);
+    expect(videoIdx).toBeGreaterThanOrEqual(0);
     expect(imageIdx).toBeGreaterThanOrEqual(0);
-    expect(syncIdx).toBeGreaterThanOrEqual(0);
-    expect(archiveIdx).toBeLessThan(imageIdx);
-    expect(imageIdx).toBeLessThan(syncIdx);
+    expect(peopleIdx).toBeGreaterThanOrEqual(0);
+    expect(videoIdx).toBeLessThan(imageIdx);
+    expect(imageIdx).toBeLessThan(peopleIdx);
   });
 
-  it('is active when pathname is "/images"', () => {
+  it('is active (bg highlight) when pathname is "/images"', () => {
     mockPathname = "/images";
     render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
 
     const link = screen.getByRole("link", { name: /이미지 검색/ });
-    expect(link).toHaveClass("border-indigo-500");
+    expect(link).toHaveClass("bg-neutral-h-100");
   });
 
   it('"동영상 검색" is NOT active when pathname is "/images"', () => {
     mockPathname = "/images";
     render(<Sidebar collapsed={false} onToggle={vi.fn()} />);
 
-    const archiveLink = screen.getByRole("link", { name: /동영상 검색/ });
-    expect(archiveLink).not.toHaveClass("border-indigo-500");
+    const videoLink = screen.getByRole("link", { name: /동영상 검색/ });
+    expect(videoLink).not.toHaveClass("bg-neutral-h-100");
   });
 });

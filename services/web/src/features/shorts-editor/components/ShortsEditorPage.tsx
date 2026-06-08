@@ -8,6 +8,7 @@ import { getAllVideoScenes } from "@/lib/api/videos";
 import { getShortComposition } from "@/lib/api/shorts-render";
 import type { VideoScenesResponse } from "@/lib/types";
 import {
+  useRegisterNavGuard,
   useTopHeaderActions,
   useTopHeaderBack,
   useTopHeaderLeftActions,
@@ -108,6 +109,9 @@ export function ShortsEditorPage() {
   // 뒤로가기 / beforeunload 가 띄우는 3-action 모달. variant 는 shortId
   // 유무로 결정 (신규 vs 편집 재진입).
   const [showUnsavedExitDialog, setShowUnsavedExitDialog] = useState(false);
+  // Destination of an LNB link intercepted by the guard. "저장 안 함" navigates
+  // here (header back leaves it null → defaults to /export/shorts).
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   // Playback rate derived from the state machine; the operator changes
   // it via the SpeedPopover which dispatches SET_RATE.
   // figma: 1670:185907 — 마스터 볼륨 (하단 컨트롤 슬라이더와 동기화)
@@ -328,6 +332,10 @@ export function ShortsEditorPage() {
   // shortId 유무로 분기 (신규 vs 편집 재진입). 깨끗한 상태 (isDirty=
   // false) 면 바로 /export/shorts 로 이동.
   const handleHeaderBack = useCallback(() => {
+    // Header back always returns to /export/shorts. Clear any pendingHref left
+    // over from a prior intercepted LNB click so the dialog's "저장 안 함"
+    // defaults to /export/shorts instead of the stale LNB destination.
+    setPendingHref(null);
     if (state.isDirty) {
       setShowUnsavedExitDialog(true);
       return;
@@ -435,15 +443,22 @@ export function ShortsEditorPage() {
   //     사용자가 "내 쇼츠로 이동" 을 누르면 최종 redirect 가 일어난다.
   const handleUnsavedExitCancel = useCallback(() => {
     setShowUnsavedExitDialog(false);
+    setPendingHref(null);
   }, []);
 
   const handleUnsavedExitDiscard = useCallback(() => {
     setShowUnsavedExitDialog(false);
-    router.push("/export/shorts");
-  }, [router]);
+    const target = pendingHref ?? "/export/shorts";
+    setPendingHref(null);
+    router.push(target);
+  }, [router, pendingHref]);
 
   const handleUnsavedExitSaveAndExit = useCallback(() => {
     setShowUnsavedExitDialog(false);
+    // Save owns navigation from here (render → RenderCompleteDialog →
+    // /export/shorts). Clear pendingHref so it can't leak into a later
+    // header-back discard if the user picks "계속 편집".
+    setPendingHref(null);
     submitComposition("save");
   }, [submitComposition]);
 
@@ -459,6 +474,23 @@ export function ShortsEditorPage() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [state.isDirty]);
+
+  // LNB guard — intercepts every LNB link click that would leave the editor.
+  // While dirty it blocks the default navigation (Sidebar's GuardedLink calls
+  // preventDefault), stores the destination, and raises the UnsavedExitDialog.
+  // Shares the same dialog as the header back button (handleHeaderBack).
+  useRegisterNavGuard(
+    useMemo(
+      () => ({
+        shouldIntercept: () => state.isDirty,
+        onIntercept: (href: string) => {
+          setPendingHref(href);
+          setShowUnsavedExitDialog(true);
+        },
+      }),
+      [state.isDirty],
+    ),
+  );
 
   const headerRightSlot = useMemo(() => {
     if (isLoading || loadError) return null;

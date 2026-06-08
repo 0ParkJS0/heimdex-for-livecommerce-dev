@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useContext } from "react";
 import Link from "next/link";
-import { PanelLeft, ChevronLeft } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { getDevices } from "@/lib/api/devices";
 import { ApiError } from "@/lib/types";
@@ -89,12 +89,10 @@ function AgentStatusBadge() {
   );
 }
 
-interface TopHeaderProps {
-  sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
-}
-
-export function TopHeader({ sidebarCollapsed, onToggleSidebar }: TopHeaderProps) {
+// The LNB now stays visible as a 64px rail even when collapsed and carries its
+// own PanelLeft toggle, so the header's sidebar-reopen button is removed
+// (de-duplicated). The related props are no longer needed.
+export function TopHeader() {
   const { user, logout } = useAuth();
   const displayName = user?.name || user?.email || "User";
   const displayEmail = user?.email || "";
@@ -123,16 +121,6 @@ export function TopHeader({ sidebarCollapsed, onToggleSidebar }: TopHeaderProps)
   return (
     <header className="flex h-20 items-center justify-between px-8">
       <div className="flex items-center gap-5">
-        {sidebarCollapsed && (
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-            aria-label="사이드바 열기"
-          >
-            <PanelLeft className="h-5 w-5" strokeWidth={2} />
-          </button>
-        )}
         {backSlot && (
           <button
             type="button"
