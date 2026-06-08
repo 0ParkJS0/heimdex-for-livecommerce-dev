@@ -302,6 +302,68 @@ describe("VideoDetailPage tab bar", () => {
     });
   });
 
+  it("keeps manual pagination after a ?t= deep-link jump (no snap-back to the active scene's page)", async () => {
+    // Regression: arriving via a scene click deep-links to ?t=<scene start_ms>.
+    // The active scene stays pinned for the whole session, so the auto-paginate
+    // effect must fire ONCE (jump to that scene's page) and never again — else
+    // every manual page change is reverted back to the deep-linked page.
+    const user = userEvent.setup();
+
+    // 25 scenes → 3 pages of 10; serve each page by backend offset.
+    vi.mocked(getVideoScenes).mockImplementation(async (_videoId, pageSize, offset) => {
+      const start = offset ?? 0;
+      const count = Math.min(pageSize ?? 10, 25 - start);
+      return {
+        ...makeSceneResponse(),
+        total: 25,
+        scenes: Array.from({ length: Math.max(count, 0) }, (_, i) => {
+          const n = start + i;
+          return {
+            scene_id: `s${n}`,
+            start_ms: n * 10000,
+            end_ms: (n + 1) * 10000,
+            transcript_raw: "",
+            transcript_char_count: 0,
+            keyword_tags: [],
+            product_tags: [],
+            product_entities: [],
+            speech_segment_count: 0,
+            people_cluster_ids: [],
+            ingest_time: null,
+            keyframe_timestamp_ms: n * 10000,
+          };
+        }),
+      } as any;
+    });
+    // navigationScenes (full list) drives the deep-link page resolution;
+    // contextReady requires scenes.length >= total.
+    vi.mocked(getAllVideoScenes).mockResolvedValue(makeSceneResponse() as any);
+
+    // Deep-link to scene index 20 (start_ms 200000) → page 3 of 3.
+    await renderVideoDetail("t=200000");
+
+    const offset20Calls = () =>
+      vi.mocked(getVideoScenes).mock.calls.filter(([, , offset]) => offset === 20).length;
+
+    // Auto-jump to the deep-linked scene's page (page 3 → offset 20) fires once.
+    await waitFor(() => expect(offset20Calls()).toBe(1));
+    expect(screen.getByRole("button", { name: "3 페이지" })).toHaveAttribute("aria-current", "page");
+
+    // Manually navigate to page 1.
+    await user.click(screen.getByRole("button", { name: "1 페이지" }));
+
+    // Page 1 loads (offset 0 fetch resolves → 장면1 rendered).
+    await waitFor(() => expect(screen.getByText("장면1")).toBeInTheDocument());
+
+    // Settle past any snap-back: the bug re-runs the auto-paginate effect on the
+    // page change and reverts to page 3 with a SECOND offset=20 fetch. The fix
+    // jumps only once, so offset=20 stays at exactly one call and page 1 sticks.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(offset20Calls()).toBe(1);
+    expect(screen.getByRole("button", { name: "1 페이지" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByText("장면21")).not.toBeInTheDocument();
+  });
+
   it("removes view param from URL when switching to overview", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "location", {

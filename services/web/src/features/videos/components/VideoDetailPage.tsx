@@ -952,18 +952,26 @@ function ScenesPanel({
     };
   }, [activeSearch, currentPage, getToken, videoId]);
 
-  // Auto-paginate to the active scene's page when navigating from search
+  // Auto-paginate ONCE to the deep-linked scene's page (search → ?t=).
+  // ``seekMs``/``activeSceneMs`` stays set for the whole session (it is
+  // never cleared), so depending on ``currentPage``/``displayScenes`` here
+  // made this effect re-run after every manual page change and revert it
+  // back to the deep-linked page — the pagination snap-back bug. Guarding
+  // on a ref keyed by the seek value fires the jump exactly once, when the
+  // full scene list (``navigationScenes``) first becomes available, and
+  // never fights subsequent user pagination.
   const activeSceneRef = useRef<HTMLDivElement>(null);
+  const autoPaginatedSeekRef = useRef<number | null>(null);
   useEffect(() => {
     if (activeSceneMs == null) return;
-    const idx = displayScenes.findIndex((s) => s.start_ms === activeSceneMs);
-    const globalIdx = idx >= 0
-      ? (currentPage - 1) * SCENES_PER_PAGE + idx
-      : (navigationScenes ?? []).findIndex((s) => s.start_ms === activeSceneMs);
-    if (globalIdx < 0) return;
-    const targetPage = Math.floor(globalIdx / SCENES_PER_PAGE) + 1;
-    if (targetPage !== currentPage) setCurrentPage(targetPage);
-  }, [activeSceneMs, currentPage, displayScenes, navigationScenes]);
+    if (autoPaginatedSeekRef.current === activeSceneMs) return;
+    const globalIdx = (navigationScenes ?? []).findIndex(
+      (s) => s.start_ms === activeSceneMs,
+    );
+    if (globalIdx < 0) return; // full list not ready, or t doesn't match a scene
+    autoPaginatedSeekRef.current = activeSceneMs;
+    setCurrentPage(Math.floor(globalIdx / SCENES_PER_PAGE) + 1);
+  }, [activeSceneMs, navigationScenes]);
 
   // Scroll the active scene card into view after pagination settles
   useEffect(() => {
