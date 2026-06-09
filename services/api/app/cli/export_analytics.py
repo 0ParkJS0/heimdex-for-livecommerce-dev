@@ -15,7 +15,6 @@ import argparse
 import io
 import json
 import logging
-import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -108,45 +107,36 @@ def _upload_to_s3(data: bytes, bucket: str, key: str, region: str) -> None:
 
 def _upload_to_bq(data: bytes, project: str, dataset: str, target: date) -> None:
     """Load Parquet bytes into a BQ native table via APPEND."""
-    import boto3
     from google.api_core.retry import Retry
     from google.cloud import bigquery
 
-    # google-auth's AWS provider cannot read IMDSv2 metadata inside Docker
-    # containers, while boto3 handles it correctly.  Bridge boto3 credentials
-    # to env vars so google-auth skips the metadata service entirely.
-    session = boto3.Session()
-    creds = session.get_credentials()
-    if creds:
-        frozen = creds.get_frozen_credentials()
-        os.environ["AWS_ACCESS_KEY_ID"] = frozen.access_key
-        os.environ["AWS_SECRET_ACCESS_KEY"] = frozen.secret_key
-        if frozen.token:
-            os.environ["AWS_SESSION_TOKEN"] = frozen.token
+    from app.cli._bq_env import bridge_boto3_credentials_to_env
 
-    client = bigquery.Client(project=project)
     table_id = f"{project}.{dataset}.search_events"
-
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.PARQUET,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         # TODO: remove ALLOW_FIELD_ADDITION after BQ table has org_name+user_email columns
         schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
     )
-
     bq_retry = Retry(initial=1.0, maximum=4.0, multiplier=2.0, deadline=30.0)
 
-    @bq_retry
-    def _do_load() -> bigquery.LoadJob:
-        job = client.load_table_from_file(
-            io.BytesIO(data),
-            table_id,
-            job_config=job_config,
-        )
-        job.result(timeout=60)
-        return job
+    # AWS creds are bridged to env only for the load, then restored. google-auth
+    # (WIF) reads them lazily during the BQ calls, so the whole load stays inside.
+    with bridge_boto3_credentials_to_env():
+        client = bigquery.Client(project=project)
 
-    load_job = _do_load()
+        @bq_retry
+        def _do_load() -> bigquery.LoadJob:
+            job = client.load_table_from_file(
+                io.BytesIO(data),
+                table_id,
+                job_config=job_config,
+            )
+            job.result(timeout=60)
+            return job
+
+        load_job = _do_load()
 
     logger.info(
         "bq_load_complete",

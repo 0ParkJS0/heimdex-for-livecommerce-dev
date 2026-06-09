@@ -1,0 +1,53 @@
+name: Ensure DB Partitions
+
+on:
+  schedule:
+    # Daily at 00:30 UTC (09:30 KST), ahead of the 01:00 analytics export so a
+    # newly-rolled month always has its partition before any write/export.
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ensure-partitions
+  cancel-in-progress: false
+
+jobs:
+  ensure-staging:
+    name: Ensure staging partitions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run partition ensure via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ec2-user
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          command_timeout: 8m
+          script: |
+            set -euo pipefail
+
+            APP_DIR=/opt/heimdex/dev-heimdex-for-livecommerce
+
+            cd "$APP_DIR"
+            docker compose exec -T api python -m app.cli.ensure_partitions
+
+  ensure-production:
+    name: Ensure production partitions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run partition ensure via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ec2-user
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          command_timeout: 8m
+          script: |
+            set -euo pipefail
+
+            APP_DIR=/opt/heimdex/dev-heimdex-for-livecommerce
+
+            cd "$APP_DIR"
+            docker compose exec -T api python -m app.cli.ensure_partitions
