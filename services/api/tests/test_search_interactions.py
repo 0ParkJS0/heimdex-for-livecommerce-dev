@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from app.modules.search.models import SearchInteraction
 from app.modules.search.router import (
@@ -41,12 +42,46 @@ def _load_migration_067():
     return module
 
 
+def _load_migration_068():
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "db"
+        / "migrations"
+        / "versions"
+        / "068_search_interactions_event_type_check.py"
+    )
+    spec = importlib.util.spec_from_file_location("_migration_068", migration_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class TestMigration067Chain:
     def test_revision_and_down_revision(self):
         m = _load_migration_067()
         assert m.revision == "067_create_search_interactions"
         # Wrong down_revision = silent skip on `alembic upgrade head`.
         assert m.down_revision == "066_widen_scan_order_duration_preset_check"
+
+
+class TestMigration068EventTypeCheck:
+    def test_revision_and_down_revision(self):
+        m = _load_migration_068()
+        assert m.revision == "068_search_interactions_event_type_check"
+        assert m.down_revision == "067_create_search_interactions"
+
+    def test_allowed_set_matches_schema_literal(self):
+        # Drift guard: the DB CHECK set must equal the Pydantic Literal so the
+        # two enforcement layers never diverge.
+        from typing import get_args
+
+        m = _load_migration_068()
+        literal_values = set(
+            get_args(InteractionItem.model_fields["event_type"].annotation)
+        )
+        assert set(m._ALLOWED_EVENT_TYPES) == literal_values
 
 
 class TestSearchInteractionModel:
@@ -199,6 +234,17 @@ def _mock_savepoint(mock_session: AsyncMock) -> MagicMock:
     return cm
 
 
+class TestSearchEventIdValidation:
+    def test_accepts_positive_and_none(self):
+        assert SearchInteractionRequest(search_event_id=1).search_event_id == 1
+        assert SearchInteractionRequest(search_event_id=None).search_event_id is None
+
+    def test_rejects_zero_and_negative(self):
+        for bad in (0, -1):
+            with pytest.raises(ValidationError):
+                SearchInteractionRequest(search_event_id=bad)
+
+
 class TestRecordSearchEventReturnsId:
     @pytest.mark.asyncio
     async def test_returns_created_event_id(self):
@@ -284,7 +330,9 @@ class TestRecordInteractionsEndpoint:
             "app.modules.search.router.get_settings",
             return_value=MagicMock(analytics_enabled=True),
         ):
-            out = await record_interactions(req, org_ctx=org_ctx, user=user, db=db)
+            out = await record_interactions(
+                req, org_ctx=org_ctx, user=user, db=db, _rate_limit=None
+            )
 
         assert out == {"recorded": 2}
         db.add_all.assert_called_once()
@@ -301,6 +349,7 @@ class TestRecordInteractionsEndpoint:
             org_ctx=MagicMock(org_id=uuid4()),
             user=MagicMock(id=uuid4()),
             db=db,
+            _rate_limit=None,
         )
         assert out == {"recorded": 0}
         db.add_all.assert_not_called()
@@ -345,3 +394,31 @@ class TestListForExport:
         assert "ORDER BY" in sql
         # Keyset predicate uses the (created_at, id) tuple.
         assert "CREATED_AT" in sql and "ID" in sql
+
+
+class TestInteractionItemValidation:
+    def test_accepts_valid_item(self):
+        InteractionItem(
+            event_type="click",
+            scene_id="vid_scene_001",
+            video_id="vid",
+            result_position=0,
+            content_type="video",
+            dwell_ms=1500,
+        )
+
+    def test_rejects_overlong_scene_id(self):
+        with pytest.raises(ValidationError):
+            InteractionItem(event_type="impression", scene_id="x" * 201)
+
+    def test_rejects_negative_result_position(self):
+        with pytest.raises(ValidationError):
+            InteractionItem(event_type="click", result_position=-1)
+
+    def test_rejects_out_of_range_dwell_ms(self):
+        with pytest.raises(ValidationError):
+            InteractionItem(event_type="play_complete", dwell_ms=86_400_001)
+
+    def test_rejects_unknown_content_type(self):
+        with pytest.raises(ValidationError):
+            InteractionItem(event_type="impression", content_type="audio")

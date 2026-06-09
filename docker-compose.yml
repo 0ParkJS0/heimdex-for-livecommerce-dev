@@ -107,6 +107,12 @@ services:
       # the previous per-org bucket starved concurrent teammates.
       - SEARCH_RATE_LIMIT_MAX_REQUESTS=${SEARCH_RATE_LIMIT_MAX_REQUESTS:-60}
       - SEARCH_RATE_LIMIT_WINDOW_SECONDS=${SEARCH_RATE_LIMIT_WINDOW_SECONDS:-60}
+      # POST /search/interactions limiter — separate, higher bucket (one search
+      # emits an impression batch plus per-result clicks). Env-tunable like the
+      # search limiter above; compose passthrough is allowlist-based, so these
+      # MUST be listed here or get_settings() can't see a host/.env override.
+      - SEARCH_INTERACTION_RATE_LIMIT_MAX_REQUESTS=${SEARCH_INTERACTION_RATE_LIMIT_MAX_REQUESTS:-300}
+      - SEARCH_INTERACTION_RATE_LIMIT_WINDOW_SECONDS=${SEARCH_INTERACTION_RATE_LIMIT_WINDOW_SECONDS:-60}
       # Speech-aware scene splitting + VLM tags
       - DRIVE_SPEECH_SPLIT_ENABLED=${DRIVE_SPEECH_SPLIT_ENABLED:-false}
       - VLM_TAGS_ENABLED=${VLM_TAGS_ENABLED:-false}

@@ -16,7 +16,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.modules.search import rate_limit as rl
-from app.modules.search.rate_limit import check_search_rate_limit, reset
+from app.modules.search.rate_limit import (
+    check_interaction_rate_limit,
+    check_search_rate_limit,
+    reset,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -143,3 +147,29 @@ class TestLogging:
         assert call_kwargs.get("user_id") == str(user)
         assert call_kwargs.get("max_requests") == 60
         assert call_kwargs.get("window_seconds") == 60
+
+
+class TestInteractionBucket:
+    def test_first_request_allowed(self):
+        check_interaction_rate_limit(uuid4(), uuid4())
+
+    def test_cap_enforced(self):
+        org, user = uuid4(), uuid4()
+        # Default interaction cap = 300/60s.
+        for _ in range(300):
+            check_interaction_rate_limit(org, user)
+        with pytest.raises(HTTPException) as exc:
+            check_interaction_rate_limit(org, user)
+        assert exc.value.status_code == 429
+
+    def test_independent_from_search_bucket(self):
+        """A search bucket at cap must not throttle interactions - they are
+        separate buckets so impression/click logging never contends with the
+        search budget."""
+        org, user = uuid4(), uuid4()
+        for _ in range(60):
+            check_search_rate_limit(org, user)
+        with pytest.raises(HTTPException):
+            check_search_rate_limit(org, user)  # search at cap
+        # interactions unaffected
+        check_interaction_rate_limit(org, user)

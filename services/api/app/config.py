@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     # Ops can raise temporarily via env without a redeploy.
     search_rate_limit_max_requests: int = 60
     search_rate_limit_window_seconds: int = 60
+    # POST /search/interactions cap. Higher than search because one search
+    # yields one impression batch plus per-result clicks; ~5x the search cap
+    # leaves headroom so logging never throttles real searches.
+    search_interaction_rate_limit_max_requests: int = 300
+    search_interaction_rate_limit_window_seconds: int = 60
     ocr_search_enabled: bool = True
     ocr_bm25_boost: float = 0.6
     opensearch_facet_size: int = 500

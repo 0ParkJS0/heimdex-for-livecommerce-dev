@@ -34,18 +34,28 @@ logger = get_logger(__name__)
 
 _lock = threading.Lock()
 _buckets: dict[str, list[float]] = defaultdict(list)
+# Separate bucket for POST /search/interactions. Each search emits one
+# impression batch plus per-result clicks, so interaction requests outnumber
+# searches several-fold; sharing the search bucket would let logging throttle
+# real searches. Kept independent and more permissive (see config defaults).
+_interaction_buckets: dict[str, list[float]] = defaultdict(list)
 
 
 def _bucket_key(org_id: UUID, user_id: UUID) -> str:
     return f"{org_id}:{user_id}"
 
 
-def _cleanup_expired(key: str, now: float, window_seconds: int) -> None:
+def _cleanup_expired(
+    key: str,
+    now: float,
+    window_seconds: int,
+    buckets: dict[str, list[float]] = _buckets,
+) -> None:
     cutoff = now - window_seconds
-    entries = _buckets[key]
-    _buckets[key] = [t for t in entries if t > cutoff]
-    if not _buckets[key]:
-        del _buckets[key]
+    entries = buckets[key]
+    buckets[key] = [t for t in entries if t > cutoff]
+    if not buckets[key]:
+        del buckets[key]
 
 
 def check_search_rate_limit(org_id: UUID, user_id: UUID) -> None:
@@ -93,7 +103,52 @@ def require_search_rate_limit(
     check_search_rate_limit(org_ctx.org_id, user.id)  # pyright: ignore[reportArgumentType]
 
 
+def check_interaction_rate_limit(org_id: UUID, user_id: UUID) -> None:
+    """Raise 429 if the ``(org_id, user_id)`` interaction bucket is at the cap.
+
+    Independent of the search bucket and more permissive (see
+    ``SEARCH_INTERACTION_RATE_LIMIT_*`` settings) because a single search can
+    legitimately produce one impression batch plus several click requests.
+    """
+    settings = get_settings()
+    max_requests = settings.search_interaction_rate_limit_max_requests
+    window_seconds = settings.search_interaction_rate_limit_window_seconds
+
+    key = _bucket_key(org_id, user_id)
+    now = time.monotonic()
+    with _lock:
+        _cleanup_expired(key, now, window_seconds, _interaction_buckets)
+        current = len(_interaction_buckets.get(key, []))
+        if current >= max_requests:
+            logger.warning(
+                "search_interaction_rate_limit_exceeded",
+                org_id=str(org_id),
+                user_id=str(user_id),
+                current=current,
+                max_requests=max_requests,
+                window_seconds=window_seconds,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"Interaction rate limit exceeded "
+                    f"({max_requests}/{window_seconds}s per user). "
+                    f"Try again in a moment."
+                ),
+                headers={"Retry-After": str(window_seconds)},
+            )
+        _interaction_buckets[key].append(now)
+
+
+def require_interaction_rate_limit(
+    org_ctx: OrgContext = Depends(get_current_org),
+    user: User = Depends(get_current_user),
+) -> None:
+    check_interaction_rate_limit(org_ctx.org_id, user.id)  # pyright: ignore[reportArgumentType]
+
+
 def reset() -> None:
     """Test-only: clear all buckets."""
     with _lock:
         _buckets.clear()
+        _interaction_buckets.clear()

@@ -10,7 +10,10 @@ from app.db.base import get_db_session
 from app.dependencies import get_scene_search_service, get_search_service
 from app.logging_config import get_logger
 from app.modules.auth import get_current_user
-from app.modules.search.rate_limit import require_search_rate_limit
+from app.modules.search.rate_limit import (
+    require_interaction_rate_limit,
+    require_search_rate_limit,
+)
 from app.modules.search.scene_service import SceneSearchService
 from app.modules.search.schemas import (
     SceneSearchResponse,
@@ -195,6 +198,7 @@ async def record_interactions(
     org_ctx: Annotated[OrgContext, Depends(get_current_org)],
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db_session)],
+    _rate_limit: Annotated[None, Depends(require_interaction_rate_limit)],
 ) -> dict[str, int]:
     """Record search-result interactions (impression / click / play_*).
 

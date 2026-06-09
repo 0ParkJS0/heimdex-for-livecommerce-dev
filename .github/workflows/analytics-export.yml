@@ -20,19 +20,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Validate before anything touches a shell: the dispatch input flows into
+      # a remote `script:` below, so an unconstrained value would be a command
+      # injection vector. Assigning via env (not `${{ }}` in the run body) keeps
+      # the check itself injection-safe; empty is allowed (= yesterday).
+      - name: Validate date input
+        env:
+          DATE_INPUT: ${{ github.event.inputs.date }}
+        run: |
+          if [ -n "$DATE_INPUT" ] && ! printf '%s' "$DATE_INPUT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+            echo "::error::Invalid date input '$DATE_INPUT' - expected YYYY-MM-DD"
+            exit 1
+          fi
       - name: Run export via SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DATE_ARG: ${{ github.event.inputs.date }}
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ec2-user
           key: ${{ secrets.STAGING_SSH_KEY }}
-          # script_stop: true breaks if/else — drone-ssh injects $? checks per-line
+          # script_stop: true breaks if/else - drone-ssh injects $? checks per-line
           command_timeout: 8m
+          # Forward DATE_ARG as a remote env var instead of interpolating
+          # `${{ }}` into the script text - the value never becomes shell source.
+          envs: DATE_ARG
           script: |
             set -euo pipefail
 
             APP_DIR=/opt/heimdex/dev-heimdex-for-livecommerce
-            DATE_ARG="${{ github.event.inputs.date }}"
             DATE_FLAG="${DATE_ARG:+--date $DATE_ARG}"
 
             cd "$APP_DIR"
@@ -44,18 +60,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Validate date input
+        env:
+          DATE_INPUT: ${{ github.event.inputs.date }}
+        run: |
+          if [ -n "$DATE_INPUT" ] && ! printf '%s' "$DATE_INPUT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+            echo "::error::Invalid date input '$DATE_INPUT' - expected YYYY-MM-DD"
+            exit 1
+          fi
       - name: Run export via SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DATE_ARG: ${{ github.event.inputs.date }}
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ec2-user
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           command_timeout: 8m
+          # See export-staging: forward as a remote env var, never interpolate.
+          envs: DATE_ARG
           script: |
             set -euo pipefail
 
             APP_DIR=/opt/heimdex/dev-heimdex-for-livecommerce
-            DATE_ARG="${{ github.event.inputs.date }}"
             DATE_FLAG="${DATE_ARG:+--date $DATE_ARG}"
 
             cd "$APP_DIR"

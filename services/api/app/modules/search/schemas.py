@@ -284,18 +284,31 @@ _MAX_INTERACTION_BATCH = 200
 
 class InteractionItem(BaseModel):
     event_type: Literal["impression", "click", "play_start", "play_complete"]
-    scene_id: str | None = None
-    video_id: str | None = None
-    # 0-indexed position within the search results.
-    result_position: int | None = None
-    # "video" | "image" — which search surface the result came from.
-    content_type: str | None = None
-    dwell_ms: int | None = None
+    # Bounded so a client cannot store arbitrarily large strings in TEXT
+    # columns (scene_id is e.g. "{video_id}_scene_NNN", well under 200).
+    scene_id: str | None = Field(default=None, max_length=200)
+    video_id: str | None = Field(default=None, max_length=200)
+    # 0-indexed position within the search results. Bounded to keep values
+    # inside the INTEGER column (an out-of-range int would error at INSERT).
+    result_position: int | None = Field(default=None, ge=0, le=10_000)
+    # "video" | "image": which search surface the result came from. Closed
+    # set (Literal) instead of free TEXT, matching the backend.
+    content_type: Literal["video", "image"] | None = None
+    # Dwell time; 24h sanity ceiling, also keeps it inside INTEGER.
+    dwell_ms: int | None = Field(default=None, ge=0, le=86_400_000)
 
 
 class SearchInteractionRequest(BaseModel):
     # Links the interactions back to the search they came from (from
     # SceneSearchResponse.search_event_id). None when unavailable.
-    search_event_id: int | None = None
+    #
+    # Cross-org spoofing (a client posting another org's event id) is handled at
+    # the analytics-join layer, not by a server-side ownership check: that check
+    # would be a cross-partition scan on search_events (no id-alone index; the
+    # client never sends created_at, the partition key). Instead, each
+    # interaction row stores the AUTHENTICATED org_id, so any downstream join
+    # keyed on (search_event_id, org_id) drops an event id that belongs to a
+    # different org. ge=1 just rejects obviously-invalid ids (<=0) early.
+    search_event_id: int | None = Field(default=None, ge=1)
     # Batched so a single search-result render can post all impressions at once.
     results: list[InteractionItem] = Field(default_factory=list, max_length=_MAX_INTERACTION_BATCH)
