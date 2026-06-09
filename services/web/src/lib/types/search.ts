@@ -163,6 +163,10 @@ export interface SearchResponse {
   query: string;
   alpha: number;
   result_type?: "segment";
+  // Id of the search_events row this response was logged under, used to link
+  // interaction events (impression/click) back to the search. Null when
+  // analytics is disabled or the event write failed.
+  search_event_id?: number | null;
 }
 
 export interface SceneSearchResponse {
@@ -172,6 +176,8 @@ export interface SceneSearchResponse {
   query: string;
   alpha: number;
   result_type: "scene";
+  // See SearchResponse.search_event_id.
+  search_event_id?: number | null;
 }
 
 export interface VideoResult {
@@ -193,6 +199,8 @@ export interface VideoSearchResponse {
   query: string;
   alpha: number;
   result_type: "video";
+  // See SearchResponse.search_event_id.
+  search_event_id?: number | null;
 }
 
 export type AnySearchResponse = SearchResponse | SceneSearchResponse | VideoSearchResponse;

@@ -46,10 +46,14 @@ class SearchFilters(BaseModel):
     ai_tags_not_in: list[str] = Field(default_factory=list, max_length=_MAX_TAG_LIST_SIZE)
 
     @field_validator(
-        "keyword_tags_in", "keyword_tags_not_in",
-        "product_tags_in", "product_tags_not_in",
-        "product_entities_in", "product_entities_not_in",
-        "ai_tags_in", "ai_tags_not_in",
+        "keyword_tags_in",
+        "keyword_tags_not_in",
+        "product_tags_in",
+        "product_tags_not_in",
+        "product_entities_in",
+        "product_entities_not_in",
+        "ai_tags_in",
+        "ai_tags_not_in",
         mode="before",
     )
     @classmethod
@@ -143,6 +147,7 @@ class DebugInfo(BaseModel):
     adjusted_score: float
     diversification_penalty: bool = False
 
+
 class SegmentResult(BaseModel):
     segment_id: str
     video_id: str
@@ -195,6 +200,7 @@ class SceneResult(BaseModel):
     Structurally parallel to SegmentResult but uses scene_id instead of
     segment_id and carries scene-specific metadata (speech_segment_count).
     """
+
     scene_id: str
     video_id: str
     video_title: str | None = None
@@ -235,6 +241,10 @@ class SceneSearchResponse(BaseModel):
     query: str
     alpha: float
     result_type: Literal["scene"] = "scene"
+    # Id of the search_events row this response was logged under, so the client
+    # can attach interaction events (impression/click) back to this search.
+    # None when analytics is disabled or the event write failed.
+    search_event_id: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -261,3 +271,31 @@ class VideoSearchResponse(BaseModel):
     query: str
     alpha: float
     result_type: Literal["video"] = "video"
+    # See SceneSearchResponse.search_event_id.
+    search_event_id: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Search-result interaction logging (impression / click / play_*)
+# ---------------------------------------------------------------------------
+
+_MAX_INTERACTION_BATCH = 200
+
+
+class InteractionItem(BaseModel):
+    event_type: Literal["impression", "click", "play_start", "play_complete"]
+    scene_id: str | None = None
+    video_id: str | None = None
+    # 0-indexed position within the search results.
+    result_position: int | None = None
+    # "video" | "image" — which search surface the result came from.
+    content_type: str | None = None
+    dwell_ms: int | None = None
+
+
+class SearchInteractionRequest(BaseModel):
+    # Links the interactions back to the search they came from (from
+    # SceneSearchResponse.search_event_id). None when unavailable.
+    search_event_id: int | None = None
+    # Batched so a single search-result render can post all impressions at once.
+    results: list[InteractionItem] = Field(default_factory=list, max_length=_MAX_INTERACTION_BATCH)

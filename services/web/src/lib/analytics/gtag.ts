@@ -60,6 +60,8 @@ export function trackSearchResultClick(params: {
   colorFamily?: string;
   query?: string;
   videoId?: string;
+  sceneId?: string;
+  contentType?: string;
 }) {
   const eventParams: Record<string, unknown> = {
     page_number: params.pageNumber,
@@ -68,5 +70,7 @@ export function trackSearchResultClick(params: {
   if (params.colorFamily) eventParams.color_family = params.colorFamily;
   if (params.query) eventParams.query = params.query;
   if (params.videoId) eventParams.video_id = params.videoId;
+  if (params.sceneId) eventParams.scene_id = params.sceneId;
+  if (params.contentType) eventParams.content_type = params.contentType;
   gtag("event", "search_result_click", eventParams);
 }

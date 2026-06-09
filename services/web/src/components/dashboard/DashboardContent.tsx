@@ -24,6 +24,7 @@ import { OpenInDriveButton } from "@/components/OpenInDriveButton";
 import { useImageSelectionContext } from "@/features/images/ImageSelectionContext";
 import { parseSlashCommand, getSlashCommandSuggestions } from "@/lib/slash-commands";
 import { trackColorSearch, trackSearchPageView, trackSearchResultClick } from "@/lib/analytics/gtag";
+import { postSearchInteractions } from "@/lib/api/searchInteractions";
 import { useOrgSettings } from "@/lib/orgSettings";
 import { getThumbnailAspectClass, getDashboardGridClass, type ThumbnailAspectRatio } from "@/lib/thumbnailUtils";
 import { Pagination } from "@/components/ui/Pagination";
@@ -793,6 +794,31 @@ export default function DashboardContent({
     trackSearchPageView({ pageNumber: currentPage, colorFamily, query: activeQuery });
   }, [isSearchMode, activeQuery, searchResponse, currentPage, colorFamily]);
 
+  // Server-side impression logging — one batch per (search_event_id, page).
+  // Fire-and-forget; the signature guard prevents duplicate sends on re-render.
+  const lastImpressionSig = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isSearchMode || !searchResponse || paginatedResults.length === 0) return;
+    const eventId = searchResponse.search_event_id ?? null;
+    // Fall back to the query (not a constant) when there's no event id, so two
+    // distinct searches on the same page don't collapse to one dedup key and
+    // drop the second batch's impressions.
+    const sig = `${eventId ?? activeQuery}|${currentPage}`;
+    if (lastImpressionSig.current === sig) return;
+    lastImpressionSig.current = sig;
+    const results = paginatedResults.map((item, i) => {
+      const scene = "scene_id" in item ? item : (item as VideoResult).best_scene;
+      return {
+        event_type: "impression" as const,
+        scene_id: scene?.scene_id,
+        video_id: scene?.video_id,
+        result_position: i,
+        content_type: scene?.content_type,
+      };
+    });
+    void postSearchInteractions({ search_event_id: eventId, results }, getAccessToken);
+  }, [isSearchMode, searchResponse, currentPage, paginatedResults, getAccessToken]);
+
   const videoCount = isSearchMode ? sortedSearchResults.length : totalVideos;
   const libraryCount = stats?.total_libraries ?? 0;
   const hasResults = isSearchMode
@@ -1161,10 +1187,30 @@ export default function DashboardContent({
                 const idx = children.findIndex(child => child.contains(link));
                 if (idx < 0) return;
                 const videoId = link.pathname.split("/").pop() ?? "";
+                // Scene results carry scene_id directly; video results carry it
+                // on best_scene. Used for both GA4 and server-side logging.
+                const item = paginatedResults[idx];
+                const scene = item
+                  ? ("scene_id" in item ? item : (item as VideoResult).best_scene)
+                  : undefined;
                 trackSearchResultClick({
                   pageNumber: currentPage, position: idx + 1,
                   colorFamily, query: activeQuery, videoId,
+                  sceneId: scene?.scene_id, contentType: scene?.content_type,
                 });
+                void postSearchInteractions(
+                  {
+                    search_event_id: searchResponse?.search_event_id ?? null,
+                    results: [{
+                      event_type: "click",
+                      scene_id: scene?.scene_id,
+                      video_id: videoId,
+                      result_position: idx,
+                      content_type: scene?.content_type,
+                    }],
+                  },
+                  getAccessToken,
+                );
               }}
             >
               {isSearchMode

@@ -16,7 +16,7 @@ from app.modules.users.models import User  # noqa: F401
 from app.modules.basket.models import SceneBasket, SceneBasketItem  # noqa: F401
 from app.modules.editor_projects.models import EditorProject  # noqa: F401
 from app.modules.export.models import ExportRecord  # noqa: F401
-from app.modules.search.models import SearchEvent  # noqa: F401
+from app.modules.search.models import SearchEvent, SearchInteraction  # noqa: F401
 from app.modules.youtube.models import YouTubeChannel, YouTubeVideo  # noqa: F401
 from app.modules.shorts_render.models import ShortsRenderJob  # noqa: F401
 from app.modules.subtitle_presets.models import SubtitlePreset  # noqa: F401

@@ -18,7 +18,6 @@ from app.modules.search.schemas import SearchFilters, SearchRequest
 
 
 class TestSearchEventModel:
-
     def test_tablename(self):
         assert SearchEvent.__tablename__ == "search_events"
 
@@ -33,7 +32,6 @@ class TestSearchEventModel:
 
 
 class TestSearchEventRepository:
-
     @pytest.fixture
     def mock_session(self):
         session = AsyncMock()
@@ -114,7 +112,6 @@ class TestSearchEventRepository:
 
 
 class TestExtractResultCount:
-
     def test_with_total_candidates(self):
         resp = MagicMock(total_candidates=42)
         assert _extract_result_count(resp) == 42
@@ -125,7 +122,6 @@ class TestExtractResultCount:
 
 
 class TestBuildMetadata:
-
     def test_basic_metadata(self):
         req = SearchRequest(q="hello", alpha=0.7, group_by="video")
         meta = _build_metadata(req)
@@ -160,27 +156,30 @@ class TestBuildMetadata:
         assert "include_ocr" not in meta
 
 
+def _mock_savepoint(mock_session: AsyncMock) -> MagicMock:
+    """Make ``session.begin_nested()`` behave as a no-op SAVEPOINT context
+    manager: usable under ``async with`` and NOT suppressing exceptions."""
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=cm)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    mock_session.begin_nested = MagicMock(return_value=cm)
+    return cm
+
+
 class TestRecordSearchEvent:
-
     @pytest.mark.asyncio
-    async def test_records_event_successfully(self):
+    async def test_records_event_on_request_session(self):
         mock_session = AsyncMock()
-        mock_session.commit = AsyncMock()
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
-        mock_factory = MagicMock(return_value=mock_session)
-
+        _mock_savepoint(mock_session)
         with patch(
-            "app.db.base.get_async_session_factory",
-            return_value=mock_factory,
-        ), patch(
             "app.modules.search.search_event_repository.SearchEventRepository"
-        ) as MockRepo:
+        ) as mock_repo_cls:
             mock_repo = AsyncMock()
-            MockRepo.return_value = mock_repo
+            mock_repo.create = AsyncMock(return_value=MagicMock(id=7))
+            mock_repo_cls.return_value = mock_repo
 
-            await _record_search_event(
+            result = await _record_search_event(
+                session=mock_session,
                 org_id=uuid4(),
                 user_id=uuid4(),
                 query_text="test",
@@ -189,16 +188,26 @@ class TestRecordSearchEvent:
                 response_ms=100,
             )
 
+            assert result == 7
             mock_repo.create.assert_called_once()
-            mock_session.commit.assert_called_once()
+            # Commit is owned by the request's get_db_session, not here.
+            mock_session.commit.assert_not_called()
+            mock_session.rollback.assert_not_called()
+            mock_session.begin_nested.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_swallows_exceptions(self):
+    async def test_swallows_exceptions_and_rolls_back(self):
+        mock_session = AsyncMock()
+        _mock_savepoint(mock_session)
         with patch(
-            "app.db.base.get_async_session_factory",
-            side_effect=Exception("db error"),
-        ):
-            await _record_search_event(
+            "app.modules.search.search_event_repository.SearchEventRepository"
+        ) as mock_repo_cls:
+            mock_repo = AsyncMock()
+            mock_repo.create = AsyncMock(side_effect=Exception("db error"))
+            mock_repo_cls.return_value = mock_repo
+
+            result = await _record_search_event(
+                session=mock_session,
                 org_id=uuid4(),
                 user_id=uuid4(),
                 query_text="test",
@@ -206,3 +215,10 @@ class TestRecordSearchEvent:
                 result_count=None,
                 response_ms=None,
             )
+
+            assert result is None
+            # Rollback is owned by the SAVEPOINT context manager (begin_nested),
+            # not an explicit session.rollback() — the savepoint isolates the
+            # failed insert from the surrounding request transaction.
+            mock_session.begin_nested.assert_called_once()
+            mock_session.rollback.assert_not_called()

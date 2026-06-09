@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     await _startup_search_checks(opensearch_client)
     await _startup_scene_search_checks(scene_opensearch_client)
     await _ensure_search_event_partitions(engine)
+    await _ensure_search_interaction_partitions(engine)
     await _ensure_worker_event_partitions(engine)
     # Closed-vocab sidecar reachability probe. Logs ERROR (not raises) if
     # the flag is on but the service is unreachable — without this the
@@ -265,6 +266,32 @@ async def _ensure_search_event_partitions(engine) -> None:
             "search_event_partition_setup_failed",
             error=str(e),
             message="Search analytics will fail until partitions are created. "
+                    "This is non-fatal — the API will start normally.",
+        )
+
+
+async def _ensure_search_interaction_partitions(engine) -> None:
+    """Create search_interactions partitions for the current and next 2 months.
+
+    Uses a short-lived session independent of the request lifecycle.
+    Safe to call on every startup — all DDL is IF NOT EXISTS.
+    """
+    from app.modules.search.search_interaction_repository import (
+        SearchInteractionRepository,
+    )
+
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            repo = SearchInteractionRepository(session)
+            partitions = await repo.ensure_partitions(months_ahead=2)
+            await session.commit()
+            logger.info("search_interaction_partitions_ready", partitions=partitions)
+    except Exception as e:
+        logger.warning(
+            "search_interaction_partition_setup_failed",
+            error=str(e),
+            message="Search interaction writes will fail until partitions are created. "
                     "This is non-fatal — the API will start normally.",
         )
 

@@ -52,6 +52,7 @@ jobs:
             tests/test_moodboard_pagination.py \
             tests/test_visual_fusion_semantic.py \
             tests/test_search_analytics.py \
+            tests/test_search_interactions.py \
             tests/test_image_search.py \
             tests/test_fusion.py \
             tests/test_fusion_3way.py \

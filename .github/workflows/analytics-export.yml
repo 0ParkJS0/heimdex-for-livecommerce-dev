@@ -37,6 +37,7 @@ jobs:
 
             cd "$APP_DIR"
             docker compose exec -T api python -m app.cli.export_analytics $DATE_FLAG
+            docker compose exec -T api python -m app.cli.export_search_interactions $DATE_FLAG
 
   export-production:
     name: Export production analytics to S3
@@ -59,3 +60,4 @@ jobs:
 
             cd "$APP_DIR"
             docker compose exec -T api python -m app.cli.export_analytics $DATE_FLAG
+            docker compose exec -T api python -m app.cli.export_search_interactions $DATE_FLAG
